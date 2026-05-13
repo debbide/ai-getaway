@@ -13,6 +13,7 @@ const messageMap = {
   'order already waiting review': '该套餐已有待审核订单，请勿重复提交',
   'order not pending payment': '订单当前状态不允许继续支付，请刷新后查看',
   'payment config missing': '支付配置未完成，请联系管理员',
+  'payment not completed': '支付结果尚未确认，请完成支付后再试',
   'subscription expired': '订阅已到期，请续费后继续使用',
   'subscription quota exceeded': '本周美元额度已用完，请升级或续费后继续使用',
   'user disabled': '账号已被禁用，请联系管理员',

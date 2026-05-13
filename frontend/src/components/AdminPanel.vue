@@ -46,6 +46,7 @@ const plans = ref([])
 const error = ref('')
 const notice = ref('')
 const navDraft = ref([])
+const loading = ref(false)
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null })
 const approve = reactive({ orderId: '', channel: 'openai', baseUrl: 'https://api.openai.com', apiKey: '', adminNote: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
@@ -116,6 +117,7 @@ function emptyUser() {
 }
 
 async function loadAll() {
+  loading.value = true
   error.value = ''
   try {
     const [statsRes, ordersRes, usersRes, plansRes, settingsRes] = await Promise.all([
@@ -133,7 +135,14 @@ async function loadAll() {
     setNavigationDraft(settings.navigation_items)
   } catch (err) {
     error.value = err.message
+  } finally {
+    loading.value = false
   }
+}
+
+async function refreshAdminData() {
+  notice.value = ''
+  await loadAll()
 }
 
 function openPlanModal(plan = null) {
@@ -595,7 +604,10 @@ function submitModal() {
               <h2>套餐管理</h2>
               <span>{{ enabledPlans }} 个启用套餐，{{ plans.length }} 个总套餐</span>
             </div>
-            <button class="primary-button" @click="openPlanModal()">新增套餐</button>
+            <div class="toolbar-actions">
+              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
+              <button class="primary-button" @click="openPlanModal()">新增套餐</button>
+            </div>
           </div>
 
           <div class="plan-grid">
@@ -632,6 +644,7 @@ function submitModal() {
               <h2>审核管理</h2>
               <span>订单审核、绑定上游账号和驳回原因都在弹窗内完成</span>
             </div>
+            <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
           </div>
 
           <section class="panel-surface overflow-hidden">
@@ -674,7 +687,10 @@ function submitModal() {
               <h2>用户管理</h2>
               <span>新增、修改和删除用户都通过模态框完成，状态和角色使用中文选项</span>
             </div>
-            <button class="primary-button" @click="openUserModal()">新增用户</button>
+            <div class="toolbar-actions">
+              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
+              <button class="primary-button" @click="openUserModal()">新增用户</button>
+            </div>
           </div>
 
           <section class="panel-surface overflow-hidden">
@@ -720,7 +736,10 @@ function submitModal() {
               <h2>导航菜单</h2>
               <span>维护首页顶部导航，支持一级菜单、下拉子菜单、排序和外链。</span>
             </div>
-            <button class="primary-button">保存导航</button>
+            <div class="toolbar-actions">
+              <button type="button" class="icon-button refresh-button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
+              <button class="primary-button">保存导航</button>
+            </div>
           </div>
 
           <section class="panel-surface p-5">

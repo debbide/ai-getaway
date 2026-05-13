@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
@@ -13,20 +13,44 @@ const newKey = ref('')
 const error = ref('')
 const notice = ref('')
 const modalError = ref('')
+const loading = ref(false)
+const orderPage = ref(1)
+const orderPageSize = 5
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', payload: null, danger: false })
 const orderForm = reactive({ planId: '', order: null, paymentUrl: '', paymentOpened: false })
 const keyForm = reactive({ name: 'Default' })
 
+const totalOrderPages = computed(() => Math.max(1, Math.ceil(orders.value.length / orderPageSize)))
+const pagedOrders = computed(() => {
+  const page = Math.min(orderPage.value, totalOrderPages.value)
+  const start = (page - 1) * orderPageSize
+  return orders.value.slice(start, start + orderPageSize)
+})
+
 onMounted(loadAll)
 
 async function loadAll() {
+  loading.value = true
+  error.value = ''
   try {
     const [orderRes, keyRes] = await Promise.all([api.get('/orders'), api.get('/keys')])
     orders.value = orderRes.data || []
     keys.value = keyRes.data || []
+    if (orderPage.value > totalOrderPages.value) orderPage.value = totalOrderPages.value
   } catch (err) {
     error.value = err.message
+  } finally {
+    loading.value = false
   }
+}
+
+async function refreshDashboard() {
+  notice.value = ''
+  await loadAll()
+}
+
+function setOrderPage(page) {
+  orderPage.value = Math.min(Math.max(1, page), totalOrderPages.value)
 }
 
 function openOrderModal(planId = selectedPlan.value) {
@@ -94,7 +118,7 @@ async function markPaid() {
   modalError.value = ''
   try {
     await api.patch(`/orders/${orderForm.order.ID}/paid`)
-    notice.value = '已提交支付完成确认，请等待管理员审核'
+    notice.value = '支付已确认，订单已进入待审核'
     closeModal()
     await loadAll()
     window.dispatchEvent(new Event('app-data-updated'))
@@ -212,7 +236,10 @@ function statusLabel(value) {
             <p class="section-kicker">Orders</p>
             <h3>套餐与订单</h3>
           </div>
-          <button class="primary-button" @click="openOrderModal()">新建订单</button>
+          <div class="toolbar-actions">
+            <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshDashboard">↻</button>
+            <button class="primary-button" @click="openOrderModal()">新建订单</button>
+          </div>
         </div>
 
         <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -239,7 +266,7 @@ function statusLabel(value) {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="order in orders" :key="order.ID">
+              <tr v-for="order in pagedOrders" :key="order.ID">
                 <td>#{{ order.ID }}</td>
                 <td>{{ order.Plan?.Name || '-' }}</td>
                 <td>{{ money(order.AmountCents) }}</td>
@@ -252,6 +279,13 @@ function statusLabel(value) {
             </tbody>
           </table>
         </div>
+        <div class="pagination-bar">
+          <span>共 {{ orders.length }} 个订单，第 {{ Math.min(orderPage, totalOrderPages) }} / {{ totalOrderPages }} 页</span>
+          <div class="table-actions">
+            <button class="ghost-button small" :disabled="orderPage <= 1" @click="setOrderPage(orderPage - 1)">上一页</button>
+            <button class="ghost-button small" :disabled="orderPage >= totalOrderPages" @click="setOrderPage(orderPage + 1)">下一页</button>
+          </div>
+        </div>
       </section>
 
       <section class="panel-surface p-5">
@@ -260,7 +294,10 @@ function statusLabel(value) {
             <p class="section-kicker">Keys</p>
             <h3>API Key 管理</h3>
           </div>
-          <button class="primary-button" @click="openKeyModal">创建 Key</button>
+          <div class="toolbar-actions">
+            <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshDashboard">↻</button>
+            <button class="primary-button" @click="openKeyModal">创建 Key</button>
+          </div>
         </div>
 
         <div class="mt-5 grid gap-3">
@@ -294,7 +331,7 @@ function statusLabel(value) {
           </label>
           <div class="order-flow-note md:col-span-2">
             <strong>下单后会先创建待支付订单</strong>
-            <span>下一步打开支付窗口。支付完成后回到本页面点击“已完成支付”，订单才会进入待审核。</span>
+            <span>下一步打开支付窗口。支付完成后回到本页面点击“已完成支付”，系统会核验支付结果。</span>
           </div>
         </div>
 
@@ -302,7 +339,7 @@ function statusLabel(value) {
           <div class="payment-panel">
             <strong>{{ orderForm.order?.Plan?.Name || '套餐订单' }}</strong>
             <span>订单金额：{{ money(orderForm.order?.AmountCents) }}</span>
-            <p>请先点击“去支付”打开支付页面。完成支付后回到这里点击“已完成支付”，请勿重复支付同一订单。</p>
+            <p>请先点击“去支付”打开支付页面。完成支付后回到这里点击“已完成支付”，系统确认支付成功后才会进入待审核。</p>
             <button type="button" class="primary-button" @click="startPayment">
               {{ orderForm.paymentOpened ? '重新打开支付页面' : '去支付' }}
             </button>

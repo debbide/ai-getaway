@@ -3,7 +3,10 @@ package controller
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -115,15 +118,36 @@ func (o *OrderController) MarkPaid(c *gin.Context) {
 		response.Error(c, 404, "order not found")
 		return
 	}
+	if order.Status == model.OrderStatusPendingReview {
+		response.OK(c, gin.H{"order": order})
+		return
+	}
 	if order.Status != model.OrderStatusPendingPayment {
 		response.Error(c, 409, "order not pending payment")
 		return
 	}
+
+	if err := ensureSystemSettingColumns(o.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
+	setting := loadSettings(o.db)
+	paid, err := queryEpayPaid(c, setting, order)
+	if err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	if !paid {
+		response.Error(c, 409, "payment not completed")
+		return
+	}
+
 	if err := o.db.Model(&order).Update("status", model.OrderStatusPendingReview).Error; err != nil {
 		response.Error(c, 500, "failed to update order")
 		return
 	}
-	response.OK(c, nil)
+	order.Status = model.OrderStatusPendingReview
+	response.OK(c, gin.H{"order": order})
 }
 
 func (o *OrderController) EpayNotify(c *gin.Context) {
@@ -216,6 +240,77 @@ func normalizeEpaySubmitURL(rawURL string) string {
 		return cleanURL
 	}
 	return cleanURL + "/submit.php"
+}
+
+func epayQueryURL(rawURL string) string {
+	cleanURL := strings.TrimSpace(rawURL)
+	cleanURL = strings.TrimRight(cleanURL, "/")
+	lowerURL := strings.ToLower(cleanURL)
+	if strings.HasSuffix(lowerURL, "/api.php") {
+		return cleanURL
+	}
+	if strings.HasSuffix(lowerURL, "/submit.php") {
+		return cleanURL[:len(cleanURL)-len("/submit.php")] + "/api.php"
+	}
+	if strings.HasSuffix(lowerURL, "/mapi.php") {
+		return cleanURL[:len(cleanURL)-len("/mapi.php")] + "/api.php"
+	}
+	if strings.HasSuffix(lowerURL, ".php") {
+		return cleanURL
+	}
+	return cleanURL + "/api.php"
+}
+
+func queryEpayPaid(c *gin.Context, setting model.SystemSetting, order model.Order) (bool, error) {
+	if setting.EpaySubmitURL == "" || setting.EpayPID == "" || setting.EpayKey == "" {
+		return false, fmt.Errorf("payment config missing")
+	}
+
+	values := url.Values{}
+	values.Set("act", "order")
+	values.Set("pid", setting.EpayPID)
+	values.Set("key", setting.EpayKey)
+	values.Set("out_trade_no", order.PaymentRef)
+
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, epayQueryURL(setting.EpaySubmitURL)+"?"+values.Encode(), nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to verify payment")
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("failed to verify payment")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Errorf("failed to verify payment")
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return false, fmt.Errorf("failed to verify payment")
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return false, fmt.Errorf("failed to verify payment")
+	}
+
+	return epayResultPaid(result), nil
+}
+
+func epayResultPaid(result map[string]interface{}) bool {
+	tradeStatus := strings.ToUpper(fmt.Sprint(result["trade_status"]))
+	if tradeStatus == "TRADE_SUCCESS" {
+		return true
+	}
+
+	status := strings.ToLower(fmt.Sprint(result["status"]))
+	if status == "1" || status == "success" || status == "paid" {
+		return true
+	}
+
+	code := strings.ToLower(fmt.Sprint(result["code"]))
+	return code == "1" && strings.Contains(strings.ToLower(fmt.Sprint(result["msg"])), "success")
 }
 
 func requestBaseURL(c *gin.Context) string {

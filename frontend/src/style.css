@@ -1097,9 +1097,11 @@ button:disabled {
 }
 
 .card-actions,
-.table-actions {
+.table-actions,
+.toolbar-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 
@@ -1305,6 +1307,27 @@ button:disabled {
   color: var(--muted);
   font-size: 22px;
   line-height: 1;
+}
+
+.refresh-button {
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.refresh-button:disabled {
+  animation: refresh-spin 0.9s linear infinite;
+}
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding: 14px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .modal-body {
@@ -2976,4 +2999,10 @@ html[data-theme="light"] .account-menu-item {
 
 html[data-theme="light"] .account-menu-item:hover {
   background: rgba(215, 126, 88, 0.08);
+}
+
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
