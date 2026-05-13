@@ -1,0 +1,37 @@
+# Go
+go.sum
+.gomodcache/
+.gocache/
+vendor/
+
+# Node
+node_modules/
+package-lock.json
+
+# Frontend build
+frontend/dist/
+
+# Logs
+logs/
+*.log
+vite.out.log
+vite.err.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.exe
+*.dll
