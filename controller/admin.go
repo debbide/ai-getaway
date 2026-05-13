@@ -5,6 +5,7 @@ import (
 
 	"ai-gateway/model"
 	"ai-gateway/response"
+	"ai-gateway/utils"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -28,6 +29,7 @@ type approveOrderRequest struct {
 type planRequest struct {
 	Name               string `json:"name" binding:"required,min=2,max=64"`
 	Code               string `json:"code"`
+	BadgeText          string `json:"badge_text"`
 	PlanType           string `json:"plan_type"`
 	PriceCents         int64  `json:"price_cents" binding:"required,min=1"`
 	SettlementUSDCents int64  `json:"settlement_usd_cents"`
@@ -41,12 +43,26 @@ type planRequest struct {
 
 type updateUserRequest struct {
 	Username      string `json:"username"`
+	Email         string `json:"email"`
+	Password      string `json:"password"`
 	Role          string `json:"role"`
 	Status        string `json:"status"`
 	EmailVerified *bool  `json:"email_verified"`
 	PlanID        *uint  `json:"plan_id"`
 	QuotaTokens   *int64 `json:"quota_tokens"`
 	UsedTokens    *int64 `json:"used_tokens"`
+}
+
+type createUserRequest struct {
+	Username      string `json:"username" binding:"required,min=2,max=64"`
+	Email         string `json:"email" binding:"required,email"`
+	Password      string `json:"password" binding:"required,min=8"`
+	Role          string `json:"role"`
+	Status        string `json:"status"`
+	EmailVerified bool   `json:"email_verified"`
+	PlanID        *uint  `json:"plan_id"`
+	QuotaTokens   int64  `json:"quota_tokens"`
+	UsedTokens    int64  `json:"used_tokens"`
 }
 
 type rejectOrderRequest struct {
@@ -59,6 +75,46 @@ func (a *AdminController) Users(c *gin.Context) {
 	response.OK(c, users)
 }
 
+func (a *AdminController) CreateUser(c *gin.Context) {
+	var req createUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+
+	passwordHash, err := utils.HashPassword(req.Password)
+	if err != nil {
+		response.Error(c, 500, "failed to hash password")
+		return
+	}
+
+	role := req.Role
+	if role != model.RoleAdmin {
+		role = model.RoleUser
+	}
+	status := req.Status
+	if status != model.UserStatusApproved && status != model.UserStatusDisabled {
+		status = model.UserStatusPending
+	}
+
+	user := model.User{
+		Username:      req.Username,
+		Email:         req.Email,
+		PasswordHash:  passwordHash,
+		Role:          role,
+		Status:        status,
+		EmailVerified: req.EmailVerified,
+		PlanID:        req.PlanID,
+		QuotaTokens:   req.QuotaTokens,
+		UsedTokens:    req.UsedTokens,
+	}
+	if err := a.db.Create(&user).Error; err != nil {
+		response.Error(c, 409, "email already exists")
+		return
+	}
+	response.Created(c, user)
+}
+
 func (a *AdminController) UpdateUser(c *gin.Context) {
 	var req updateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -69,6 +125,21 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 	updates := map[string]interface{}{}
 	if req.Username != "" {
 		updates["username"] = req.Username
+	}
+	if req.Email != "" {
+		updates["email"] = req.Email
+	}
+	if req.Password != "" {
+		if len(req.Password) < 8 {
+			response.Error(c, 400, "password must be at least 8 characters")
+			return
+		}
+		passwordHash, err := utils.HashPassword(req.Password)
+		if err != nil {
+			response.Error(c, 500, "failed to hash password")
+			return
+		}
+		updates["password_hash"] = passwordHash
 	}
 	if req.Role == model.RoleUser || req.Role == model.RoleAdmin {
 		updates["role"] = req.Role
@@ -115,7 +186,7 @@ func (a *AdminController) Orders(c *gin.Context) {
 
 func (a *AdminController) Plans(c *gin.Context) {
 	var plans []model.Plan
-	a.db.Unscoped().Order("price_cents asc").Find(&plans)
+	a.db.Order("price_cents asc").Find(&plans)
 	response.OK(c, plans)
 }
 
@@ -129,6 +200,7 @@ func (a *AdminController) CreatePlan(c *gin.Context) {
 	plan := model.Plan{
 		Name:               req.Name,
 		Code:               req.Code,
+		BadgeText:          req.BadgeText,
 		PlanType:           fallbackPlanType(req.PlanType),
 		PriceCents:         req.PriceCents,
 		SettlementUSDCents: req.SettlementUSDCents,
@@ -155,6 +227,7 @@ func (a *AdminController) UpdatePlan(c *gin.Context) {
 	updates := map[string]interface{}{
 		"name":                 req.Name,
 		"code":                 req.Code,
+		"badge_text":           req.BadgeText,
 		"plan_type":            fallbackPlanType(req.PlanType),
 		"price_cents":          req.PriceCents,
 		"settlement_usd_cents": req.SettlementUSDCents,

@@ -55,6 +55,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 		admin := api.Group("/admin", middleware.Auth(cfg, db), middleware.AdminOnly())
 		{
 			admin.GET("/users", adminController.Users)
+			admin.POST("/users", adminController.CreateUser)
 			admin.PATCH("/users/:id", adminController.UpdateUser)
 			admin.DELETE("/users/:id", adminController.DeleteUser)
 			admin.GET("/orders", adminController.Orders)

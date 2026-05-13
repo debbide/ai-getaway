@@ -19,6 +19,10 @@ func NewSettingsController(db *gorm.DB) *SettingsController {
 type updateSettingsRequest struct {
 	SiteTitle        string `json:"site_title"`
 	TutorialVideoURL string `json:"tutorial_video_url"`
+	NavigationItems  string `json:"navigation_items"`
+	PricingTitle     string `json:"pricing_title"`
+	PricingSubtitle  string `json:"pricing_subtitle"`
+	PricingNotice    string `json:"pricing_notice"`
 	SMTPHost         string `json:"smtp_host"`
 	SMTPPort         int    `json:"smtp_port"`
 	SMTPUsername     string `json:"smtp_username"`
@@ -38,6 +42,10 @@ func (s *SettingsController) Public(c *gin.Context) {
 	response.OK(c, gin.H{
 		"site_title":         setting.SiteTitle,
 		"tutorial_video_url": setting.TutorialVideoURL,
+		"navigation_items":   setting.NavigationItems,
+		"pricing_title":      setting.PricingTitle,
+		"pricing_subtitle":   setting.PricingSubtitle,
+		"pricing_notice":     setting.PricingNotice,
 	})
 }
 
@@ -47,6 +55,10 @@ func (s *SettingsController) Get(c *gin.Context) {
 		"id":                       setting.ID,
 		"site_title":               setting.SiteTitle,
 		"tutorial_video_url":       setting.TutorialVideoURL,
+		"navigation_items":         setting.NavigationItems,
+		"pricing_title":            setting.PricingTitle,
+		"pricing_subtitle":         setting.PricingSubtitle,
+		"pricing_notice":           setting.PricingNotice,
 		"smtp_host":                setting.SMTPHost,
 		"smtp_port":                setting.SMTPPort,
 		"smtp_username":            setting.SMTPUsername,
@@ -73,6 +85,10 @@ func (s *SettingsController) Update(c *gin.Context) {
 	updates := map[string]interface{}{
 		"site_title":         req.SiteTitle,
 		"tutorial_video_url": req.TutorialVideoURL,
+		"navigation_items":   req.NavigationItems,
+		"pricing_title":      req.PricingTitle,
+		"pricing_subtitle":   req.PricingSubtitle,
+		"pricing_notice":     req.PricingNotice,
 		"smtp_host":          req.SMTPHost,
 		"smtp_port":          req.SMTPPort,
 		"smtp_username":      req.SMTPUsername,
@@ -104,7 +120,19 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 		db.FirstOrCreate(&setting, model.SystemSetting{Model: gorm.Model{ID: 1}})
 	}
 	if setting.SiteTitle == "" {
-		setting.SiteTitle = "AI Gateway"
+		setting.SiteTitle = "CodexZH"
+	}
+	if setting.NavigationItems == "" {
+		setting.NavigationItems = `[{"label":"首页","path":"/"},{"label":"教程","path":"#tutorial","external":true},{"label":"定价","path":"/plans"},{"label":"模型","path":"/models"},{"label":"常见问题","path":"/faq"},{"label":"更多中转","path":"#","children":[{"label":"Claude Code 中转","path":"/claude"}]}]`
+	}
+	if setting.PricingTitle == "" {
+		setting.PricingTitle = "简单透明的定价"
+	}
+	if setting.PricingSubtitle == "" {
+		setting.PricingSubtitle = "保质保量无降智不掺假"
+	}
+	if setting.PricingNotice == "" {
+		setting.PricingNotice = "本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转"
 	}
 	if setting.SMTPPort == 0 {
 		setting.SMTPPort = 587

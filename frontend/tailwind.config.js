@@ -3,19 +3,19 @@ export default {
   theme: {
     extend: {
       colors: {
-        canvas: '#fbfdf8',
-        mint: '#eef8ef',
-        forest: '#173f35',
-        muted: '#60746a',
-        ink: '#173f35',
+        canvas: '#f5f7fb',
+        mint: '#edf5ff',
+        forest: '#172033',
+        muted: '#667085',
+        ink: '#172033',
         panel: '#ffffff',
-        line: '#d7e5db',
-        brand: '#169b7b',
-        accent: '#ef6b4a'
+        line: '#d9e0ea',
+        brand: '#4f7cff',
+        accent: '#12a67a'
       },
       boxShadow: {
-        soft: '0 10px 24px rgba(239, 107, 74, 0.2)',
-        panel: '0 24px 70px rgba(23, 63, 53, 0.12)'
+        soft: '0 14px 30px rgba(79, 124, 255, 0.26)',
+        panel: '0 20px 60px rgba(25, 35, 61, 0.12)'
       }
     }
   },

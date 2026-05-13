@@ -76,21 +76,17 @@ func allowPlanQuota(db *gorm.DB, user model.User) bool {
 	if user.Plan == nil {
 		return true
 	}
-	now := time.Now()
-	if user.Plan.DailyQuotaTokens > 0 && usedTokensSince(db, user.ID, now.Add(-24*time.Hour)) >= user.Plan.DailyQuotaTokens {
-		return false
-	}
-	if user.Plan.WeeklyQuotaTokens > 0 && usedTokensSince(db, user.ID, now.AddDate(0, 0, -7)) >= user.Plan.WeeklyQuotaTokens {
+	if user.Plan.SettlementUSDCents > 0 && usedUSDCentsSince(db, user.ID, time.Now().AddDate(0, 0, -7)) >= user.Plan.SettlementUSDCents {
 		return false
 	}
 	return true
 }
 
-func usedTokensSince(db *gorm.DB, userID uint, since time.Time) int64 {
+func usedUSDCentsSince(db *gorm.DB, userID uint, since time.Time) int64 {
 	var total int64
 	db.Model(&model.APILog{}).
 		Where("user_id = ? AND created_at >= ?", userID, since).
-		Select("COALESCE(SUM(total_tokens), 0)").
+		Select("COALESCE(SUM(estimated_usd_cents), 0)").
 		Scan(&total)
 	return total
 }

@@ -44,6 +44,7 @@ type Plan struct {
 	gorm.Model
 	Name               string `gorm:"size:64;uniqueIndex;not null"`
 	Code               string `gorm:"size:64;uniqueIndex"`
+	BadgeText          string `gorm:"size:32"`
 	PlanType           string `gorm:"size:32;default:subscription;index"`
 	PriceCents         int64  `gorm:"not null"`
 	SettlementUSDCents int64  `gorm:"default:0"`
@@ -94,21 +95,26 @@ type APIKey struct {
 
 type APILog struct {
 	gorm.Model
-	UserID       uint `gorm:"index;not null"`
-	APIKeyID     uint `gorm:"index;not null"`
-	Method       string
-	Path         string
-	StatusCode   int
-	PromptTokens int64
-	TotalTokens  int64
-	LatencyMs    int64
-	ErrorMessage string `gorm:"size:512"`
+	UserID            uint `gorm:"index;not null"`
+	APIKeyID          uint `gorm:"index;not null"`
+	Method            string
+	Path              string
+	StatusCode        int
+	PromptTokens      int64
+	TotalTokens       int64
+	EstimatedUSDCents int64 `gorm:"default:0;index"`
+	LatencyMs         int64
+	ErrorMessage      string `gorm:"size:512"`
 }
 
 type SystemSetting struct {
 	gorm.Model
-	SiteTitle        string `gorm:"size:128;default:AI Gateway"`
+	SiteTitle        string `gorm:"size:128;default:CodexZH"`
 	TutorialVideoURL string `gorm:"size:512"`
+	NavigationItems  string `gorm:"type:text"`
+	PricingTitle     string `gorm:"size:128;default:简单透明的定价"`
+	PricingSubtitle  string `gorm:"size:255;default:保质保量无降智不掺假"`
+	PricingNotice    string `gorm:"size:512;default:本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转"`
 	SMTPHost         string `gorm:"size:128"`
 	SMTPPort         int    `gorm:"default:587"`
 	SMTPUsername     string `gorm:"size:128"`
