@@ -27,40 +27,47 @@ const (
 
 type User struct {
 	gorm.Model
-	Username     string `gorm:"size:64;not null"`
-	Email        string `gorm:"size:128;uniqueIndex;not null"`
-	PasswordHash string `gorm:"size:255;not null" json:"-"`
-	Role         string `gorm:"size:20;default:user;index"`
-	Status       string `gorm:"size:32;default:pending;index"`
-	PlanID       *uint
-	Plan         *Plan
-	QuotaTokens  int64
-	UsedTokens   int64
-	ExpiresAt    *time.Time
+	Username      string `gorm:"size:64;not null"`
+	Email         string `gorm:"size:128;uniqueIndex;not null"`
+	PasswordHash  string `gorm:"size:255;not null" json:"-"`
+	Role          string `gorm:"size:20;default:user;index"`
+	Status        string `gorm:"size:32;default:pending;index"`
+	EmailVerified bool   `gorm:"default:false;index"`
+	PlanID        *uint
+	Plan          *Plan
+	QuotaTokens   int64
+	UsedTokens    int64
+	ExpiresAt     *time.Time
 }
 
 type Plan struct {
 	gorm.Model
-	Name         string `gorm:"size:64;uniqueIndex;not null"`
-	PriceCents   int64  `gorm:"not null"`
-	QuotaTokens  int64  `gorm:"not null"`
-	DurationDays int    `gorm:"not null"`
-	Description  string `gorm:"size:255"`
-	Enabled      bool   `gorm:"default:true;index"`
+	Name               string `gorm:"size:64;uniqueIndex;not null"`
+	Code               string `gorm:"size:64;uniqueIndex"`
+	PlanType           string `gorm:"size:32;default:subscription;index"`
+	PriceCents         int64  `gorm:"not null"`
+	SettlementUSDCents int64  `gorm:"default:0"`
+	QuotaTokens        int64  `gorm:"not null;default:0"`
+	DailyQuotaTokens   int64  `gorm:"default:0"`
+	WeeklyQuotaTokens  int64  `gorm:"default:0"`
+	DurationDays       int    `gorm:"not null"`
+	Description        string `gorm:"size:255"`
+	Enabled            bool   `gorm:"default:true;index"`
 }
 
 type Order struct {
 	gorm.Model
-	UserID       uint `gorm:"index;not null"`
-	User         User
-	PlanID       uint `gorm:"index;not null"`
-	Plan         Plan
-	AmountCents  int64
-	Status       string `gorm:"size:32;default:pending_review;index"`
-	PaymentRef   string `gorm:"size:128"`
-	AdminNote    string `gorm:"size:255"`
-	ApprovedAt   *time.Time
-	ApprovedByID *uint
+	UserID             uint `gorm:"index;not null"`
+	User               User
+	PlanID             uint `gorm:"index;not null"`
+	Plan               Plan
+	AmountCents        int64
+	SettlementUSDCents int64  `gorm:"default:0"`
+	Status             string `gorm:"size:32;default:pending_review;index"`
+	PaymentRef         string `gorm:"size:128"`
+	AdminNote          string `gorm:"size:255"`
+	ApprovedAt         *time.Time
+	ApprovedByID       *uint
 }
 
 type UpstreamAccount struct {
@@ -96,4 +103,39 @@ type APILog struct {
 	TotalTokens  int64
 	LatencyMs    int64
 	ErrorMessage string `gorm:"size:512"`
+}
+
+type SystemSetting struct {
+	gorm.Model
+	SiteTitle        string `gorm:"size:128;default:AI Gateway"`
+	TutorialVideoURL string `gorm:"size:512"`
+	SMTPHost         string `gorm:"size:128"`
+	SMTPPort         int    `gorm:"default:587"`
+	SMTPUsername     string `gorm:"size:128"`
+	SMTPPassword     string `gorm:"size:255" json:"-"`
+	SMTPFromEmail    string `gorm:"size:128"`
+	SMTPFromName     string `gorm:"size:128"`
+	SMTPUseTLS       bool   `gorm:"default:true"`
+	EpayPID          string `gorm:"size:128"`
+	EpayKey          string `gorm:"size:255" json:"-"`
+	EpayNotifyURL    string `gorm:"size:512"`
+	EpayReturnURL    string `gorm:"size:512"`
+	EpaySubmitURL    string `gorm:"size:512"`
+}
+
+type EmailVerification struct {
+	gorm.Model
+	Email     string    `gorm:"size:128;index;not null"`
+	CodeHash  string    `gorm:"size:64;not null"`
+	Purpose   string    `gorm:"size:32;index;not null"`
+	ExpiresAt time.Time `gorm:"index;not null"`
+	UsedAt    *time.Time
+}
+
+type SlideCaptcha struct {
+	gorm.Model
+	ChallengeID string    `gorm:"size:64;uniqueIndex;not null"`
+	TargetX     int       `gorm:"not null"`
+	ExpiresAt   time.Time `gorm:"index;not null"`
+	UsedAt      *time.Time
 }

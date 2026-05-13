@@ -42,7 +42,7 @@
 CREATE DATABASE ai_gateway CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-2. 配置环境变量，可参考 `.env.example`。
+2. 配置环境变量，可参考 `.env.example`。如果手写 MariaDB DSN，`loc=Asia/Shanghai` 需要写成 `loc=Asia%2FShanghai`。
 
 3. 启动后端：
 

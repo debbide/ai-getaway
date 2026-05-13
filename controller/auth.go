@@ -1,9 +1,15 @@
 package controller
 
 import (
+	"crypto/rand"
+	"fmt"
+	"math/big"
+	"time"
+
 	"ai-gateway/config"
 	"ai-gateway/model"
 	"ai-gateway/response"
+	"ai-gateway/service"
 	"ai-gateway/utils"
 
 	"github.com/gin-gonic/gin"
@@ -20,20 +26,75 @@ func NewAuthController(cfg config.Config, db *gorm.DB) *AuthController {
 }
 
 type registerRequest struct {
-	Username string `json:"username" binding:"required,min=2,max=64"`
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=8"`
+	Username    string `json:"username" binding:"required,min=2,max=64"`
+	Email       string `json:"email" binding:"required,email"`
+	Password    string `json:"password" binding:"required,min=8"`
+	EmailCode   string `json:"email_code" binding:"required,len=6"`
+	ChallengeID string `json:"challenge_id" binding:"required"`
+	CaptchaX    int    `json:"captcha_x"`
 }
 
 type loginRequest struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required"`
+	Email       string `json:"email" binding:"required,email"`
+	Password    string `json:"password" binding:"required"`
+	ChallengeID string `json:"challenge_id" binding:"required"`
+	CaptchaX    int    `json:"captcha_x"`
+}
+
+type emailCodeRequest struct {
+	Email       string `json:"email" binding:"required,email"`
+	ChallengeID string `json:"challenge_id" binding:"required"`
+	CaptchaX    int    `json:"captcha_x"`
+}
+
+func (a *AuthController) SendEmailCode(c *gin.Context) {
+	var req emailCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	if !VerifySlideCaptcha(a.db, req.ChallengeID, req.CaptchaX) {
+		response.Error(c, 400, "invalid slide captcha")
+		return
+	}
+
+	code, err := randomCode()
+	if err != nil {
+		response.Error(c, 500, "failed to create email code")
+		return
+	}
+	verification := model.EmailVerification{
+		Email:     req.Email,
+		CodeHash:  utils.HashToken(code),
+		Purpose:   "register",
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+	if err := a.db.Create(&verification).Error; err != nil {
+		response.Error(c, 500, "failed to save email code")
+		return
+	}
+
+	setting := loadSettings(a.db)
+	if err := service.NewMailer(setting).SendVerification(req.Email, code); err != nil {
+		response.Error(c, 500, "failed to send email: "+err.Error())
+		return
+	}
+
+	response.OK(c, gin.H{"expires_in": 600})
 }
 
 func (a *AuthController) Register(c *gin.Context) {
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, 400, err.Error())
+		return
+	}
+	if !VerifySlideCaptcha(a.db, req.ChallengeID, req.CaptchaX) {
+		response.Error(c, 400, "invalid slide captcha")
+		return
+	}
+	if !a.verifyEmailCode(req.Email, req.EmailCode, "register") {
+		response.Error(c, 400, "invalid email verification code")
 		return
 	}
 
@@ -44,11 +105,12 @@ func (a *AuthController) Register(c *gin.Context) {
 	}
 
 	user := model.User{
-		Username:     req.Username,
-		Email:        req.Email,
-		PasswordHash: passwordHash,
-		Role:         model.RoleUser,
-		Status:       model.UserStatusPending,
+		Username:      req.Username,
+		Email:         req.Email,
+		PasswordHash:  passwordHash,
+		Role:          model.RoleUser,
+		Status:        model.UserStatusPending,
+		EmailVerified: true,
 	}
 	if err := a.db.Create(&user).Error; err != nil {
 		response.Error(c, 409, "email already registered")
@@ -64,6 +126,10 @@ func (a *AuthController) Login(c *gin.Context) {
 		response.Error(c, 400, err.Error())
 		return
 	}
+	if !VerifySlideCaptcha(a.db, req.ChallengeID, req.CaptchaX) {
+		response.Error(c, 400, "invalid slide captcha")
+		return
+	}
 
 	var user model.User
 	if err := a.db.Where("email = ?", req.Email).First(&user).Error; err != nil {
@@ -76,6 +142,10 @@ func (a *AuthController) Login(c *gin.Context) {
 	}
 	if user.Status == model.UserStatusDisabled {
 		response.Error(c, 403, "user disabled")
+		return
+	}
+	if !user.EmailVerified {
+		response.Error(c, 403, "email not verified")
 		return
 	}
 
@@ -98,13 +168,35 @@ func (a *AuthController) Me(c *gin.Context) {
 
 func publicUser(user model.User) gin.H {
 	return gin.H{
-		"id":           user.ID,
-		"username":     user.Username,
-		"email":        user.Email,
-		"role":         user.Role,
-		"status":       user.Status,
-		"quota_tokens": user.QuotaTokens,
-		"used_tokens":  user.UsedTokens,
-		"expires_at":   user.ExpiresAt,
+		"id":             user.ID,
+		"username":       user.Username,
+		"email":          user.Email,
+		"role":           user.Role,
+		"status":         user.Status,
+		"quota_tokens":   user.QuotaTokens,
+		"used_tokens":    user.UsedTokens,
+		"expires_at":     user.ExpiresAt,
+		"email_verified": user.EmailVerified,
 	}
+}
+
+func (a *AuthController) verifyEmailCode(email, code, purpose string) bool {
+	var verification model.EmailVerification
+	err := a.db.Where("email = ? AND purpose = ? AND code_hash = ? AND used_at IS NULL", email, purpose, utils.HashToken(code)).
+		Order("id desc").
+		First(&verification).Error
+	if err != nil || time.Now().After(verification.ExpiresAt) {
+		return false
+	}
+	now := time.Now()
+	a.db.Model(&verification).Update("used_at", &now)
+	return true
+}
+
+func randomCode() (string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%06d", n.Int64()), nil
 }

@@ -10,6 +10,7 @@ import (
 
 func main() {
 	cfg := config.Load()
+	log.Printf("using database dsn: %s", config.MaskDSN(cfg.DBDSN))
 
 	db, err := database.InitMariaDB(cfg)
 	if err != nil {

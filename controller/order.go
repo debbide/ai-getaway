@@ -36,11 +36,12 @@ func (o *OrderController) Create(c *gin.Context) {
 	}
 
 	order := model.Order{
-		UserID:      user.ID,
-		PlanID:      plan.ID,
-		AmountCents: plan.PriceCents,
-		Status:      model.OrderStatusPendingReview,
-		PaymentRef:  req.PaymentRef,
+		UserID:             user.ID,
+		PlanID:             plan.ID,
+		AmountCents:        plan.PriceCents,
+		SettlementUSDCents: plan.SettlementUSDCents,
+		Status:             model.OrderStatusPendingReview,
+		PaymentRef:         req.PaymentRef,
 	}
 	if err := o.db.Create(&order).Error; err != nil {
 		response.Error(c, 500, "failed to create order")

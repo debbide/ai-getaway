@@ -25,16 +25,159 @@ type approveOrderRequest struct {
 	AdminNote string `json:"admin_note"`
 }
 
+type planRequest struct {
+	Name               string `json:"name" binding:"required,min=2,max=64"`
+	Code               string `json:"code"`
+	PlanType           string `json:"plan_type"`
+	PriceCents         int64  `json:"price_cents" binding:"required,min=1"`
+	SettlementUSDCents int64  `json:"settlement_usd_cents"`
+	QuotaTokens        int64  `json:"quota_tokens"`
+	DailyQuotaTokens   int64  `json:"daily_quota_tokens"`
+	WeeklyQuotaTokens  int64  `json:"weekly_quota_tokens"`
+	DurationDays       int    `json:"duration_days" binding:"required,min=1"`
+	Description        string `json:"description"`
+	Enabled            bool   `json:"enabled"`
+}
+
+type updateUserRequest struct {
+	Username      string `json:"username"`
+	Role          string `json:"role"`
+	Status        string `json:"status"`
+	EmailVerified *bool  `json:"email_verified"`
+	PlanID        *uint  `json:"plan_id"`
+	QuotaTokens   *int64 `json:"quota_tokens"`
+	UsedTokens    *int64 `json:"used_tokens"`
+}
+
+type rejectOrderRequest struct {
+	AdminNote string `json:"admin_note"`
+}
+
 func (a *AdminController) Users(c *gin.Context) {
 	var users []model.User
 	a.db.Preload("Plan").Order("id desc").Find(&users)
 	response.OK(c, users)
 }
 
+func (a *AdminController) UpdateUser(c *gin.Context) {
+	var req updateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if req.Username != "" {
+		updates["username"] = req.Username
+	}
+	if req.Role == model.RoleUser || req.Role == model.RoleAdmin {
+		updates["role"] = req.Role
+	}
+	if req.Status == model.UserStatusPending || req.Status == model.UserStatusApproved || req.Status == model.UserStatusDisabled {
+		updates["status"] = req.Status
+	}
+	if req.EmailVerified != nil {
+		updates["email_verified"] = *req.EmailVerified
+	}
+	if req.PlanID != nil {
+		updates["plan_id"] = *req.PlanID
+	}
+	if req.QuotaTokens != nil {
+		updates["quota_tokens"] = *req.QuotaTokens
+	}
+	if req.UsedTokens != nil {
+		updates["used_tokens"] = *req.UsedTokens
+	}
+	if len(updates) == 0 {
+		response.OK(c, nil)
+		return
+	}
+	if err := a.db.Model(&model.User{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
+		response.Error(c, 500, "failed to update user")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) DeleteUser(c *gin.Context) {
+	if err := a.db.Delete(&model.User{}, c.Param("id")).Error; err != nil {
+		response.Error(c, 500, "failed to delete user")
+		return
+	}
+	response.OK(c, nil)
+}
+
 func (a *AdminController) Orders(c *gin.Context) {
 	var orders []model.Order
 	a.db.Preload("User").Preload("Plan").Order("id desc").Find(&orders)
 	response.OK(c, orders)
+}
+
+func (a *AdminController) Plans(c *gin.Context) {
+	var plans []model.Plan
+	a.db.Unscoped().Order("price_cents asc").Find(&plans)
+	response.OK(c, plans)
+}
+
+func (a *AdminController) CreatePlan(c *gin.Context) {
+	var req planRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+
+	plan := model.Plan{
+		Name:               req.Name,
+		Code:               req.Code,
+		PlanType:           fallbackPlanType(req.PlanType),
+		PriceCents:         req.PriceCents,
+		SettlementUSDCents: req.SettlementUSDCents,
+		QuotaTokens:        req.QuotaTokens,
+		DailyQuotaTokens:   req.DailyQuotaTokens,
+		WeeklyQuotaTokens:  req.WeeklyQuotaTokens,
+		DurationDays:       req.DurationDays,
+		Description:        req.Description,
+		Enabled:            req.Enabled,
+	}
+	if err := a.db.Create(&plan).Error; err != nil {
+		response.Error(c, 500, "failed to create plan")
+		return
+	}
+	response.Created(c, plan)
+}
+
+func (a *AdminController) UpdatePlan(c *gin.Context) {
+	var req planRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	updates := map[string]interface{}{
+		"name":                 req.Name,
+		"code":                 req.Code,
+		"plan_type":            fallbackPlanType(req.PlanType),
+		"price_cents":          req.PriceCents,
+		"settlement_usd_cents": req.SettlementUSDCents,
+		"quota_tokens":         req.QuotaTokens,
+		"daily_quota_tokens":   req.DailyQuotaTokens,
+		"weekly_quota_tokens":  req.WeeklyQuotaTokens,
+		"duration_days":        req.DurationDays,
+		"description":          req.Description,
+		"enabled":              req.Enabled,
+	}
+	if err := a.db.Model(&model.Plan{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
+		response.Error(c, 500, "failed to update plan")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) DeletePlan(c *gin.Context) {
+	if err := a.db.Delete(&model.Plan{}, c.Param("id")).Error; err != nil {
+		response.Error(c, 500, "failed to delete plan")
+		return
+	}
+	response.OK(c, nil)
 }
 
 func (a *AdminController) ApproveOrder(c *gin.Context) {
@@ -95,14 +238,26 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 }
 
 func (a *AdminController) RejectOrder(c *gin.Context) {
+	var req rejectOrderRequest
+	_ = c.ShouldBindJSON(&req)
+	if req.AdminNote == "" {
+		req.AdminNote = c.Query("note")
+	}
 	if err := a.db.Model(&model.Order{}).Where("id = ?", c.Param("id")).Updates(map[string]interface{}{
 		"status":     model.OrderStatusRejected,
-		"admin_note": c.Query("note"),
+		"admin_note": req.AdminNote,
 	}).Error; err != nil {
 		response.Error(c, 500, "failed to reject order")
 		return
 	}
 	response.OK(c, nil)
+}
+
+func fallbackPlanType(value string) string {
+	if value == "" {
+		return "subscription"
+	}
+	return value
 }
 
 func (a *AdminController) Upstreams(c *gin.Context) {

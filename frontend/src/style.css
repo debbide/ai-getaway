@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 html {
-  background: #0c0f14;
-  color: #eef2f6;
+  background: #fbfdf8;
+  color: #173f35;
 }
 
 body {
@@ -22,5 +22,5 @@ textarea {
 }
 
 .focus-ring {
-  @apply focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 focus:ring-offset-ink;
+  @apply focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 focus:ring-offset-canvas;
 }

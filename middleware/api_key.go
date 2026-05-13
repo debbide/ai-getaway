@@ -28,13 +28,23 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 		}
 
 		var apiKey model.APIKey
-		if err := db.Preload("User").Where("key_hash = ? AND status = ?", utils.HashToken(token), model.APIKeyStatusActive).First(&apiKey).Error; err != nil {
+		if err := db.Preload("User").Preload("User.Plan").Where("key_hash = ? AND status = ?", utils.HashToken(token), model.APIKeyStatusActive).First(&apiKey).Error; err != nil {
 			response.Error(c, 401, "invalid api key")
 			c.Abort()
 			return
 		}
 		if apiKey.User.Status != model.UserStatusApproved {
 			response.Error(c, 403, "user is not approved")
+			c.Abort()
+			return
+		}
+		if apiKey.User.ExpiresAt != nil && time.Now().After(*apiKey.User.ExpiresAt) {
+			response.Error(c, 403, "subscription expired")
+			c.Abort()
+			return
+		}
+		if !allowPlanQuota(db, apiKey.User) {
+			response.Error(c, 429, "subscription quota exceeded")
 			c.Abort()
 			return
 		}
@@ -60,6 +70,29 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 		c.Set("upstream", upstream)
 		c.Next()
 	}
+}
+
+func allowPlanQuota(db *gorm.DB, user model.User) bool {
+	if user.Plan == nil {
+		return true
+	}
+	now := time.Now()
+	if user.Plan.DailyQuotaTokens > 0 && usedTokensSince(db, user.ID, now.Add(-24*time.Hour)) >= user.Plan.DailyQuotaTokens {
+		return false
+	}
+	if user.Plan.WeeklyQuotaTokens > 0 && usedTokensSince(db, user.ID, now.AddDate(0, 0, -7)) >= user.Plan.WeeklyQuotaTokens {
+		return false
+	}
+	return true
+}
+
+func usedTokensSince(db *gorm.DB, userID uint, since time.Time) int64 {
+	var total int64
+	db.Model(&model.APILog{}).
+		Where("user_id = ? AND created_at >= ?", userID, since).
+		Select("COALESCE(SUM(total_tokens), 0)").
+		Scan(&total)
+	return total
 }
 
 func allowAPIKey(redisClient *redis.Client, apiKeyID uint) bool {

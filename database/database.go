@@ -42,6 +42,9 @@ func AutoMigrate(db *gorm.DB) {
 		&model.UpstreamAccount{},
 		&model.APIKey{},
 		&model.APILog{},
+		&model.SystemSetting{},
+		&model.EmailVerification{},
+		&model.SlideCaptcha{},
 	); err != nil {
 		log.Fatalf("auto migrate failed: %v", err)
 	}
@@ -49,24 +52,27 @@ func AutoMigrate(db *gorm.DB) {
 
 func Seed(db *gorm.DB, cfg config.Config) {
 	plans := []model.Plan{
-		{Name: "Basic", PriceCents: 9900, QuotaTokens: 1000000, DurationDays: 30, Description: "Starter subscription for personal usage", Enabled: true},
-		{Name: "Pro", PriceCents: 29900, QuotaTokens: 5000000, DurationDays: 30, Description: "Higher quota for production workloads", Enabled: true},
-		{Name: "Enterprise", PriceCents: 99900, QuotaTokens: 25000000, DurationDays: 30, Description: "Dedicated account and priority support", Enabled: true},
+		{Name: "日卡套餐", Code: "day-pass", PlanType: "subscription", PriceCents: 990, SettlementUSDCents: 100, QuotaTokens: 200000, DailyQuotaTokens: 200000, WeeklyQuotaTokens: 0, DurationDays: 1, Description: "适合短期测试的一日订阅", Enabled: true},
+		{Name: "月卡套餐", Code: "monthly", PlanType: "subscription", PriceCents: 2990, SettlementUSDCents: 500, QuotaTokens: 5000000, DailyQuotaTokens: 300000, WeeklyQuotaTokens: 1500000, DurationDays: 30, Description: "适合个人长期使用的订阅套餐", Enabled: true},
+		{Name: "团队套餐", Code: "team", PlanType: "subscription", PriceCents: 9990, SettlementUSDCents: 1800, QuotaTokens: 25000000, DailyQuotaTokens: 1500000, WeeklyQuotaTokens: 8000000, DurationDays: 30, Description: "团队额度与独立上游账号", Enabled: true},
 	}
 	for _, plan := range plans {
 		db.FirstOrCreate(&plan, model.Plan{Name: plan.Name})
 	}
+
+	db.FirstOrCreate(&model.SystemSetting{}, model.SystemSetting{Model: gorm.Model{ID: 1}})
 
 	var count int64
 	db.Model(&model.User{}).Where("role = ?", model.RoleAdmin).Count(&count)
 	if count == 0 {
 		passwordHash, _ := utils.HashPassword(cfg.DefaultAdminPass)
 		db.Create(&model.User{
-			Username:     "admin",
-			Email:        cfg.DefaultAdminMail,
-			PasswordHash: passwordHash,
-			Role:         model.RoleAdmin,
-			Status:       model.UserStatusApproved,
+			Username:      "admin",
+			Email:         cfg.DefaultAdminMail,
+			PasswordHash:  passwordHash,
+			Role:          model.RoleAdmin,
+			Status:        model.UserStatusApproved,
+			EmailVerified: true,
 		})
 	}
 }

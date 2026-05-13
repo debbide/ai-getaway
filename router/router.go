@@ -25,6 +25,8 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 	orderController := controller.NewOrderController(db)
 	apiKeyController := controller.NewAPIKeyController(db)
 	adminController := controller.NewAdminController(db)
+	settingsController := controller.NewSettingsController(db)
+	captchaController := controller.NewCaptchaController(db)
 	logHub := service.NewLogHub()
 
 	r.GET("/health", func(c *gin.Context) {
@@ -33,6 +35,9 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 
 	api := r.Group("/api")
 	{
+		api.GET("/settings/public", settingsController.Public)
+		api.POST("/captcha/slide", captchaController.CreateSlide)
+		api.POST("/auth/email-code", authController.SendEmailCode)
 		api.POST("/auth/register", authController.Register)
 		api.POST("/auth/login", authController.Login)
 		api.GET("/plans", planController.List)
@@ -50,9 +55,17 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 		admin := api.Group("/admin", middleware.Auth(cfg, db), middleware.AdminOnly())
 		{
 			admin.GET("/users", adminController.Users)
+			admin.PATCH("/users/:id", adminController.UpdateUser)
+			admin.DELETE("/users/:id", adminController.DeleteUser)
 			admin.GET("/orders", adminController.Orders)
 			admin.POST("/orders/:id/approve", adminController.ApproveOrder)
 			admin.POST("/orders/:id/reject", adminController.RejectOrder)
+			admin.GET("/plans", adminController.Plans)
+			admin.POST("/plans", adminController.CreatePlan)
+			admin.PUT("/plans/:id", adminController.UpdatePlan)
+			admin.DELETE("/plans/:id", adminController.DeletePlan)
+			admin.GET("/settings", settingsController.Get)
+			admin.PUT("/settings", settingsController.Update)
 			admin.GET("/upstreams", adminController.Upstreams)
 			admin.GET("/keys", adminController.APIKeys)
 			admin.GET("/stats", adminController.Stats)
