@@ -50,6 +50,10 @@ func (s *SettingsController) Public(c *gin.Context) {
 }
 
 func (s *SettingsController) Get(c *gin.Context) {
+	if err := ensureSystemSettingColumns(s.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
 	setting := loadSettings(s.db)
 	response.OK(c, gin.H{
 		"id":                       setting.ID,
@@ -80,7 +84,7 @@ func (s *SettingsController) Update(c *gin.Context) {
 		response.Error(c, 400, err.Error())
 		return
 	}
-	if err := s.ensureSettingColumns(); err != nil {
+	if err := ensureSystemSettingColumns(s.db); err != nil {
 		response.Error(c, 500, "failed to update settings")
 		return
 	}
@@ -108,7 +112,6 @@ func (s *SettingsController) Update(c *gin.Context) {
 	if req.EpayKey != "" {
 		updates["epay_key"] = req.EpayKey
 	}
-	updates = s.existingSettingColumns(updates)
 	if err := s.db.Model(&setting).Updates(updates).Error; err != nil {
 		response.Error(c, 500, "failed to update settings")
 		return
@@ -116,37 +119,58 @@ func (s *SettingsController) Update(c *gin.Context) {
 	response.OK(c, nil)
 }
 
-func (s *SettingsController) existingSettingColumns(updates map[string]interface{}) map[string]interface{} {
-	filtered := map[string]interface{}{}
-	for column, value := range updates {
-		if s.db.Migrator().HasColumn(&model.SystemSetting{}, column) {
-			filtered[column] = value
-		}
+func ensureSystemSettingColumns(db *gorm.DB) error {
+	if err := cleanupLegacySystemSettingColumns(db); err != nil {
+		return err
 	}
-	return filtered
-}
-
-func (s *SettingsController) ensureSettingColumns() error {
-	fields := []string{
-		"NavigationItems",
-		"PricingTitle",
-		"PricingSubtitle",
-		"PricingNotice",
-		"EpayPID",
-		"EpayKey",
-		"EpayNotifyURL",
-		"EpayReturnURL",
-		"EpaySubmitURL",
+	columns := map[string]string{
+		"navigation_items": "TEXT",
+		"pricing_title":    "VARCHAR(128)",
+		"pricing_subtitle": "VARCHAR(255)",
+		"pricing_notice":   "VARCHAR(512)",
+		"epay_pid":         "VARCHAR(128)",
+		"epay_key":         "VARCHAR(255)",
+		"epay_notify_url":  "VARCHAR(512)",
+		"epay_return_url":  "VARCHAR(512)",
+		"epay_submit_url":  "VARCHAR(512)",
 	}
-	for _, field := range fields {
-		if s.db.Migrator().HasColumn(&model.SystemSetting{}, field) {
+	for column, definition := range columns {
+		if systemSettingColumnExists(db, column) {
 			continue
 		}
-		if err := s.db.Migrator().AddColumn(&model.SystemSetting{}, field); err != nil {
+		if err := db.Exec("ALTER TABLE `system_settings` ADD COLUMN `" + column + "` " + definition).Error; err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func cleanupLegacySystemSettingColumns(db *gorm.DB) error {
+	if !systemSettingColumnExists(db, "epay_p_id") {
+		return nil
+	}
+	if !systemSettingColumnExists(db, "epay_pid") {
+		if err := db.Exec("ALTER TABLE `system_settings` ADD COLUMN `epay_pid` VARCHAR(128)").Error; err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("UPDATE `system_settings` SET `epay_pid` = `epay_p_id` WHERE (`epay_pid` IS NULL OR `epay_pid` = '') AND `epay_p_id` IS NOT NULL AND `epay_p_id` <> ''").Error; err != nil {
+		return err
+	}
+	if err := db.Exec("ALTER TABLE `system_settings` DROP COLUMN `epay_p_id`").Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func systemSettingColumnExists(db *gorm.DB, column string) bool {
+	var count int64
+	db.Raw(
+		"SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+		"system_settings",
+		column,
+	).Scan(&count)
+	return count > 0
 }
 
 func loadSettings(db *gorm.DB) model.SystemSetting {

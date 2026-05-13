@@ -95,6 +95,10 @@ func (o *OrderController) Pay(c *gin.Context) {
 		return
 	}
 
+	if err := ensureSystemSettingColumns(o.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
 	setting := loadSettings(o.db)
 	payURL, err := buildEpayURL(c, setting, order)
 	if err != nil {
@@ -137,6 +141,10 @@ func (o *OrderController) EpayNotify(c *gin.Context) {
 		}
 	}
 
+	if err := ensureSystemSettingColumns(o.db); err != nil {
+		c.String(500, "fail")
+		return
+	}
 	setting := loadSettings(o.db)
 	if setting.EpayKey == "" || epaySign(params, setting.EpayKey) != params["sign"] {
 		c.String(400, "fail")
@@ -162,6 +170,7 @@ func buildEpayURL(c *gin.Context, setting model.SystemSetting, order model.Order
 	if setting.EpaySubmitURL == "" || setting.EpayPID == "" || setting.EpayKey == "" {
 		return "", fmt.Errorf("payment config missing")
 	}
+	submitURL := normalizeEpaySubmitURL(setting.EpaySubmitURL)
 	baseURL := requestBaseURL(c)
 	notifyURL := setting.EpayNotifyURL
 	if notifyURL == "" {
@@ -173,7 +182,6 @@ func buildEpayURL(c *gin.Context, setting model.SystemSetting, order model.Order
 	}
 	params := map[string]string{
 		"pid":          setting.EpayPID,
-		"type":         "alipay",
 		"out_trade_no": order.PaymentRef,
 		"notify_url":   notifyURL,
 		"return_url":   returnURL,
@@ -188,10 +196,26 @@ func buildEpayURL(c *gin.Context, setting model.SystemSetting, order model.Order
 		values.Set(key, value)
 	}
 	separator := "?"
-	if strings.Contains(setting.EpaySubmitURL, "?") {
+	if strings.Contains(submitURL, "?") {
 		separator = "&"
 	}
-	return setting.EpaySubmitURL + separator + values.Encode(), nil
+	return submitURL + separator + values.Encode(), nil
+}
+
+func normalizeEpaySubmitURL(rawURL string) string {
+	cleanURL := strings.TrimSpace(rawURL)
+	cleanURL = strings.TrimRight(cleanURL, "/")
+	lowerURL := strings.ToLower(cleanURL)
+	if strings.HasSuffix(lowerURL, "/submit.php") {
+		return cleanURL
+	}
+	if strings.HasSuffix(lowerURL, "/mapi.php") {
+		return cleanURL[:len(cleanURL)-len("/mapi.php")] + "/submit.php"
+	}
+	if strings.HasSuffix(lowerURL, ".php") {
+		return cleanURL
+	}
+	return cleanURL + "/submit.php"
 }
 
 func requestBaseURL(c *gin.Context) string {

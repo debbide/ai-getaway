@@ -123,7 +123,7 @@ type SystemSetting struct {
 	SMTPFromEmail    string `gorm:"size:128"`
 	SMTPFromName     string `gorm:"size:128"`
 	SMTPUseTLS       bool   `gorm:"default:true"`
-	EpayPID          string `gorm:"size:128"`
+	EpayPID          string `gorm:"column:epay_pid;size:128"`
 	EpayKey          string `gorm:"size:255" json:"-"`
 	EpayNotifyURL    string `gorm:"size:512"`
 	EpayReturnURL    string `gorm:"size:512"`

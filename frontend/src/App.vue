@@ -11,8 +11,7 @@ const defaultNavigation = [
   { label: '教程 ↗', path: '#tutorial', external: true },
   { label: '定价', path: '/plans' },
   { label: '模型', path: '/models' },
-  { label: '常见问题', path: '/faq' },
-  { label: '更多中转⌄', path: '#', children: [{ label: 'Claude Code 中转', path: '/claude' }] }
+  { label: '常见问题', path: '/faq' }
 ]
 
 const defaultSettings = {
