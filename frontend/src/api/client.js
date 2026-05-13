@@ -40,7 +40,16 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response.data,
   (error) => {
+    const status = error.response?.status
     const rawMessage = error.response?.data?.message || error.message || '请求失败'
+    if (status === 401) {
+      const token = localStorage.getItem('token')
+      if (token && (rawMessage.includes('user not found') || rawMessage.includes('invalid authorization token'))) {
+        localStorage.removeItem('token')
+        window.dispatchEvent(new CustomEvent('auth-expired'))
+        return Promise.reject(new Error('账号异常，请重新登录'))
+      }
+    }
     const message = messageMap[rawMessage] || normalizeMessage(rawMessage)
     return Promise.reject(new Error(message))
   }

@@ -48,7 +48,7 @@ const notice = ref('')
 const navDraft = ref([])
 const loading = ref(false)
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null })
-const approve = reactive({ orderId: '', channel: 'openai', baseUrl: 'https://api.openai.com', apiKey: '', adminNote: '' })
+const approve = reactive({ orderId: '', channel: 'openai', baseUrl: 'https://api.openai.com', apiKey: '', adminNote: '', planId: '', amountCents: 0 })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
 const planForm = reactive(emptyPlan())
 const userForm = reactive(emptyUser())
@@ -242,9 +242,24 @@ function openApproveModal(order) {
     channel: 'openai',
     baseUrl: 'https://api.openai.com',
     apiKey: '',
-    adminNote: ''
+    adminNote: '',
+    planId: order.PlanID || order.Plan?.ID || '',
+    amountCents: order.AmountCents || 0
   })
-  showModal('approve-order', `审核通过 #${order.ID}`, '通过并开通')
+  showModal('approve-order', `审核订单 #${order.ID}`, '通过并开通')
+}
+
+function openEditOrderModal(order) {
+  Object.assign(approve, {
+    orderId: String(order.ID),
+    channel: order.Channel || 'openai',
+    baseUrl: order.BaseURL || 'https://api.openai.com',
+    apiKey: order.APIKey || '',
+    adminNote: order.AdminNote || '',
+    planId: order.PlanID || order.Plan?.ID || '',
+    amountCents: order.AmountCents || 0
+  })
+  showModal('edit-order', `编辑订单 #${order.ID}`, '保存修改')
 }
 
 function openRejectModal(order) {
@@ -261,6 +276,20 @@ async function approveOrder() {
       admin_note: approve.adminNote
     })
     notice.value = '订单已审核通过'
+  })
+}
+
+async function editOrder() {
+  await runAction(async () => {
+    await api.put(`/admin/orders/${approve.orderId}`, {
+      channel: approve.channel,
+      base_url: approve.baseUrl,
+      api_key: approve.apiKey,
+      admin_note: approve.adminNote,
+      plan_id: Number(approve.planId) || undefined,
+      amount_cents: Number(approve.amountCents) || undefined
+    })
+    notice.value = '订单已保存'
   })
 }
 
@@ -486,7 +515,8 @@ function submitModal() {
     'edit-user': submitUser,
     'delete-user': deleteUser,
     'approve-order': approveOrder,
-    'reject-order': rejectOrder
+    'reject-order': rejectOrder,
+    'edit-order': editOrder
   }
   actions[modal.type]?.()
 }
@@ -669,6 +699,7 @@ function submitModal() {
                     <td><span class="status-badge">{{ statusLabel(order.Status) }}</span></td>
                     <td>
                       <div class="table-actions">
+                        <button class="ghost-button small" @click="openEditOrderModal(order)">编辑</button>
                         <button class="ghost-button small" :disabled="order.Status !== 'pending_review'" @click="openApproveModal(order)">审核</button>
                         <button class="danger-button small" :disabled="order.Status !== 'pending_review'" @click="openRejectModal(order)">拒绝</button>
                       </div>
@@ -938,6 +969,18 @@ function submitModal() {
           <label class="field"><span>上游渠道</span><input v-model="approve.channel" required /></label>
           <label class="field md:col-span-2"><span>上游 Base URL</span><input v-model="approve.baseUrl" required /></label>
           <label class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="password" required /></label>
+          <label class="field md:col-span-2"><span>审核备注</span><textarea v-model="approve.adminNote" rows="3"></textarea></label>
+        </div>
+
+        <div v-if="modal.type === 'edit-order'" class="modal-body form-grid">
+          <label class="field"><span>订单 ID</span><input v-model="approve.orderId" readonly /></label>
+          <label class="field"><span>关联套餐</span>
+            <select v-model="approve.planId">
+              <option value="">不分配</option>
+              <option v-for="plan in plans" :key="plan.ID" :value="plan.ID">{{ plan.Name }}</option>
+            </select>
+          </label>
+          <label class="field"><span>金额（分）</span><input v-model.number="approve.amountCents" type="number" min="0" /></label>
           <label class="field md:col-span-2"><span>审核备注</span><textarea v-model="approve.adminNote" rows="3"></textarea></label>
         </div>
 

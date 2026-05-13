@@ -277,10 +277,25 @@ async function copyKey(text, showSuccessModal = false) {
       pendingPlainKey.value = ''
     }
   } catch {
-    copyToast.value = '复制失败，请手动选择文本复制'
-    window.setTimeout(() => {
-      copyToast.value = ''
-    }, 3000)
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    try { document.execCommand('copy') } catch {}
+    document.body.removeChild(ta)
+    if (showSuccessModal) {
+      copySuccessModalOpen.value = true
+    } else {
+      copyToast.value = '已复制'
+      window.setTimeout(() => {
+        copyToast.value = ''
+      }, 2000)
+    }
+    if (pendingPlainKey.value && text === pendingPlainKey.value) {
+      pendingPlainKey.value = ''
+    }
   }
 }
 
@@ -323,7 +338,7 @@ function statusLabel(value) {
       <div class="usage-card">
         <span>账号</span>
         <strong>{{ auth.user?.email || '—' }}</strong>
-        <small class="text-muted">登录后即可管理套餐与 API Key</small>
+        <small class="text-muted">管理套餐与 API Key</small>
       </div>
     </div>
 

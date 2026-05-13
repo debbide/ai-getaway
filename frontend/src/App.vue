@@ -54,6 +54,7 @@ const avatarText = computed(() => {
 onMounted(async () => {
   window.addEventListener('popstate', syncPath)
   window.addEventListener('app-data-updated', refreshAppData)
+  window.addEventListener('auth-expired', handleAuthExpired)
   window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', applyTheme)
   applyTheme()
   await auth.loadMe()
@@ -64,6 +65,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('popstate', syncPath)
   window.removeEventListener('app-data-updated', refreshAppData)
+  window.removeEventListener('auth-expired', handleAuthExpired)
   window.matchMedia?.('(prefers-color-scheme: dark)').removeEventListener?.('change', applyTheme)
 })
 
@@ -88,6 +90,12 @@ async function loadPublicSettings() {
 
 async function refreshAppData() {
   await Promise.all([loadPublicSettings(), loadPlans(), auth.loadMe()])
+}
+
+function handleAuthExpired() {
+  auth.logout()
+  if (authOpen.value) return
+  openAuth('login')
 }
 
 function parseNavigation(value) {
@@ -403,7 +411,6 @@ function planSubtitle(index) {
 
     <main v-else class="console-page">
       <section class="mx-auto max-w-7xl px-4 py-10 sm:px-6">
-        <button class="ghost-button mb-6" @click="navigate('/')">返回首页</button>
         <div class="console-title">
           <div>
             <p class="section-kicker">Console</p>

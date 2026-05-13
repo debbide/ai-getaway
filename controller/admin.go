@@ -69,6 +69,15 @@ type rejectOrderRequest struct {
 	AdminNote string `json:"admin_note"`
 }
 
+type updateOrderRequest struct {
+	Channel    string `json:"channel"`
+	BaseURL    string `json:"base_url"`
+	APIKey     string `json:"api_key"`
+	AdminNote  string `json:"admin_note"`
+	PlanID     *uint  `json:"plan_id"`
+	AmountCents *int64 `json:"amount_cents"`
+}
+
 func (a *AdminController) Users(c *gin.Context) {
 	var users []model.User
 	a.db.Preload("Plan").Order("id desc").Find(&users)
@@ -321,6 +330,42 @@ func (a *AdminController) RejectOrder(c *gin.Context) {
 		"admin_note": req.AdminNote,
 	}).Error; err != nil {
 		response.Error(c, 500, "failed to reject order")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) UpdateOrder(c *gin.Context) {
+	var req updateOrderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+
+	var order model.Order
+	if err := a.db.First(&order, c.Param("id")).Error; err != nil {
+		response.Error(c, 404, "order not found")
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if req.AdminNote != "" {
+		updates["admin_note"] = req.AdminNote
+	}
+	if req.PlanID != nil {
+		updates["plan_id"] = *req.PlanID
+	}
+	if req.AmountCents != nil && *req.AmountCents > 0 {
+		updates["amount_cents"] = *req.AmountCents
+	}
+
+	if len(updates) == 0 {
+		response.OK(c, nil)
+		return
+	}
+
+	if err := a.db.Model(&order).Updates(updates).Error; err != nil {
+		response.Error(c, 500, "failed to update order")
 		return
 	}
 	response.OK(c, nil)
