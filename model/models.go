@@ -14,9 +14,10 @@ const (
 	UserStatusApproved = "approved"
 	UserStatusDisabled = "disabled"
 
-	OrderStatusPendingReview = "pending_review"
-	OrderStatusApproved      = "approved"
-	OrderStatusRejected      = "rejected"
+	OrderStatusPendingPayment = "pending_payment"
+	OrderStatusPendingReview  = "pending_review"
+	OrderStatusApproved       = "approved"
+	OrderStatusRejected       = "rejected"
 
 	APIKeyStatusActive   = "active"
 	APIKeyStatusDisabled = "disabled"
@@ -64,7 +65,7 @@ type Order struct {
 	Plan               Plan
 	AmountCents        int64
 	SettlementUSDCents int64  `gorm:"default:0"`
-	Status             string `gorm:"size:32;default:pending_review;index"`
+	Status             string `gorm:"size:32;default:pending_payment;index"`
 	PaymentRef         string `gorm:"size:128"`
 	AdminNote          string `gorm:"size:255"`
 	ApprovedAt         *time.Time

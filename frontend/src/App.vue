@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { api } from './api/client'
 import { useAuthStore } from './stores/auth'
 import AuthModal from './components/AuthModal.vue'
@@ -33,15 +33,28 @@ const currentPath = ref(window.location.pathname)
 const publicSettings = ref({ ...defaultSettings })
 const themeMode = ref(localStorage.getItem('themeMode') || 'dark')
 const themeMenuOpen = ref(false)
+const accountMenuOpen = ref(false)
+const passwordModalOpen = ref(false)
+const passwordSaving = ref(false)
+const passwordError = ref('')
+const passwordNotice = ref('')
+const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
 
 const isConsolePage = computed(() => currentPath.value === '/console')
 const isPlansPage = computed(() => currentPath.value === '/plans')
 const consoleTitle = computed(() => (auth.isAdmin ? '管理后台' : '用户控制台'))
 const navItems = computed(() => parseNavigation(publicSettings.value.navigation_items))
 const activeThemeLabel = computed(() => ({ light: '浅色', dark: '深色', system: '系统' })[themeMode.value] || '深色')
+const accountEmail = computed(() => auth.user?.email || '')
+const accountName = computed(() => auth.user?.username || accountEmail.value.split('@')[0] || '用户')
+const avatarText = computed(() => {
+  const source = accountEmail.value || accountName.value || 'U'
+  return source.slice(0, 2).toUpperCase()
+})
 
 onMounted(async () => {
   window.addEventListener('popstate', syncPath)
+  window.addEventListener('app-data-updated', refreshAppData)
   window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', applyTheme)
   applyTheme()
   await auth.loadMe()
@@ -51,6 +64,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('popstate', syncPath)
+  window.removeEventListener('app-data-updated', refreshAppData)
   window.matchMedia?.('(prefers-color-scheme: dark)').removeEventListener?.('change', applyTheme)
 })
 
@@ -73,6 +87,10 @@ async function loadPublicSettings() {
   }
 }
 
+async function refreshAppData() {
+  await Promise.all([loadPublicSettings(), loadPlans(), auth.loadMe()])
+}
+
 function parseNavigation(value) {
   try {
     const parsed = JSON.parse(value || '[]')
@@ -88,6 +106,10 @@ function syncPath() {
 
 function navigate(path) {
   if (!path || path === '#') return
+  if (/^https?:\/\//i.test(path)) {
+    window.open(path, '_blank', 'noopener,noreferrer')
+    return
+  }
   if (path.startsWith('#')) {
     navigateSection(path.slice(1))
     return
@@ -108,6 +130,15 @@ function navigateSection(id) {
     return
   }
   scrollToSection()
+}
+
+function navigateItem(item) {
+  if (!item?.path || item.path === '#') return
+  if (item.external && !item.path.startsWith('#')) {
+    window.open(item.path, '_blank', 'noopener,noreferrer')
+    return
+  }
+  navigate(item.path)
 }
 
 function openAuth(mode) {
@@ -136,6 +167,55 @@ function setTheme(mode) {
   localStorage.setItem('themeMode', mode)
   themeMenuOpen.value = false
   applyTheme()
+}
+
+function openPasswordModal() {
+  accountMenuOpen.value = false
+  passwordError.value = ''
+  passwordNotice.value = ''
+  Object.assign(passwordForm, { oldPassword: '', newPassword: '', confirmPassword: '' })
+  passwordModalOpen.value = true
+}
+
+function closePasswordModal() {
+  passwordModalOpen.value = false
+  passwordSaving.value = false
+}
+
+async function submitPassword() {
+  passwordError.value = ''
+  passwordNotice.value = ''
+  if (passwordForm.newPassword.length <= 6) {
+    passwordError.value = '新密码长度需要超过 6 位'
+    return
+  }
+  if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+    passwordError.value = '两次输入的新密码不一致'
+    return
+  }
+  passwordSaving.value = true
+  try {
+    await api.patch('/auth/password', {
+      old_password: passwordForm.oldPassword,
+      new_password: passwordForm.newPassword,
+      confirm_password: passwordForm.confirmPassword
+    })
+    passwordNotice.value = '密码已修改，请使用新密码登录'
+    Object.assign(passwordForm, { oldPassword: '', newPassword: '', confirmPassword: '' })
+    setTimeout(() => {
+      passwordModalOpen.value = false
+    }, 620)
+  } catch (err) {
+    passwordError.value = err.message
+  } finally {
+    passwordSaving.value = false
+  }
+}
+
+function logoutAccount() {
+  accountMenuOpen.value = false
+  auth.logout()
+  navigate('/')
 }
 
 function applyTheme() {
@@ -181,11 +261,11 @@ function planSubtitle(index) {
           <strong>{{ publicSettings.site_title || 'CodexZH' }}</strong>
         </button>
 
-        <nav class="hidden items-center gap-10 text-sm font-bold md:flex">
+        <nav class="hidden items-center gap-7 text-sm font-bold md:flex">
           <div v-for="item in navItems" :key="item.label" class="nav-menu-item">
-            <button class="nav-link" @click="navigate(item.path)">{{ item.label }}</button>
+            <button class="nav-link" @click="navigateItem(item)">{{ item.label }}</button>
             <div v-if="item.children?.length" class="nav-submenu">
-              <button v-for="child in item.children" :key="child.label" @click="navigate(child.path)">
+              <button v-for="child in item.children" :key="child.label" @click="navigateItem(child)">
                 {{ child.label }}
               </button>
             </div>
@@ -202,8 +282,32 @@ function planSubtitle(index) {
               <button :class="{ active: themeMode === 'system' }" @click="setTheme('system')">▣ 系统</button>
             </div>
           </div>
-          <button class="console-link" @click="enterConsole">控制台</button>
-          <button class="score-badge" @click="auth.loggedIn ? navigate('/console') : openAuth('login')">63</button>
+          <template v-if="auth.loggedIn">
+            <button class="console-link" @click="enterConsole">控制台</button>
+            <div class="account-menu-wrap">
+              <button class="score-badge" @click="accountMenuOpen = !accountMenuOpen">{{ avatarText }}</button>
+              <Transition name="account-menu">
+                <div v-if="accountMenuOpen" class="account-menu">
+                  <div class="account-card-head">
+                    <span class="account-avatar">{{ avatarText }}</span>
+                    <div>
+                      <strong>{{ accountName }}</strong>
+                      <small>{{ accountEmail }}</small>
+                    </div>
+                  </div>
+                  <button class="account-menu-item" @click="openPasswordModal">
+                    <span class="account-icon">⚿</span>
+                    修改密码
+                  </button>
+                  <button class="account-menu-item" @click="logoutAccount">
+                    <span class="account-icon">↪</span>
+                    退出登录
+                  </button>
+                </div>
+              </Transition>
+            </div>
+          </template>
+          <button v-else class="login-pill" @click="openAuth('login')">登录</button>
         </div>
       </div>
     </header>
@@ -331,5 +435,33 @@ function planSubtitle(index) {
     </footer>
 
     <AuthModal v-model:open="authOpen" v-model:mode="authMode" />
+
+    <Transition name="modal-fade">
+      <div v-if="passwordModalOpen" class="modal-backdrop password-backdrop" @click.self="closePasswordModal">
+        <form class="password-card" @submit.prevent="submitPassword">
+          <button type="button" class="password-close" @click="closePasswordModal">×</button>
+          <h2>修改密码</h2>
+          <label class="password-field">
+            <span>旧密码</span>
+            <input v-model="passwordForm.oldPassword" type="password" required autocomplete="current-password" />
+          </label>
+          <label class="password-field">
+            <span>新密码</span>
+            <input v-model="passwordForm.newPassword" type="password" required autocomplete="new-password" />
+          </label>
+          <label class="password-field">
+            <span>确认新密码</span>
+            <input v-model="passwordForm.confirmPassword" type="password" required autocomplete="new-password" />
+          </label>
+          <p v-if="passwordError" class="password-message error">{{ passwordError }}</p>
+          <p v-else-if="passwordNotice" class="password-message success">{{ passwordNotice }}</p>
+          <p v-else class="password-hint">长度需超过 6 位</p>
+          <div class="password-actions">
+            <button type="button" class="password-cancel" @click="closePasswordModal">取消</button>
+            <button class="password-submit" :disabled="passwordSaving">{{ passwordSaving ? '修改中' : '确认修改' }}</button>
+          </div>
+        </form>
+      </div>
+    </Transition>
   </div>
 </template>

@@ -12,8 +12,9 @@ const selectedPlan = ref('')
 const newKey = ref('')
 const error = ref('')
 const notice = ref('')
+const modalError = ref('')
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', payload: null, danger: false })
-const orderForm = reactive({ planId: '', paymentRef: '' })
+const orderForm = reactive({ planId: '', order: null, paymentUrl: '', paymentOpened: false })
 const keyForm = reactive({ name: 'Default' })
 
 onMounted(loadAll)
@@ -30,8 +31,18 @@ async function loadAll() {
 
 function openOrderModal(planId = selectedPlan.value) {
   orderForm.planId = planId || ''
-  orderForm.paymentRef = `manual-${Date.now()}`
+  orderForm.order = null
+  orderForm.paymentUrl = ''
+  orderForm.paymentOpened = false
   showModal('create-order', '创建订单', '确认下单')
+}
+
+function openPayModal(order) {
+  orderForm.planId = String(order.PlanID || order.Plan?.ID || '')
+  orderForm.order = order
+  orderForm.paymentUrl = ''
+  orderForm.paymentOpened = false
+  showModal('pay-order', `支付订单 #${order.ID}`, '已完成支付')
 }
 
 function openKeyModal() {
@@ -45,13 +56,51 @@ function confirmDisableKey(key) {
 
 async function createOrder() {
   if (!orderForm.planId) {
-    error.value = '请选择套餐'
+    modalError.value = '请选择套餐'
     return
   }
-  await runAction(async () => {
-    await api.post('/orders', { plan_id: Number(orderForm.planId), payment_ref: orderForm.paymentRef })
-    notice.value = '订单已创建，请等待管理员审核'
-  })
+  modalError.value = ''
+  try {
+    const res = await api.post('/orders', { plan_id: Number(orderForm.planId) })
+    orderForm.order = res.data.order
+    orderForm.paymentUrl = ''
+    orderForm.paymentOpened = false
+    modal.type = 'pay-order'
+    modal.title = `支付订单 #${orderForm.order.ID}`
+    modal.actionLabel = '已完成支付'
+    notice.value = res.data.reused ? '已为你找到未支付订单，请继续支付' : '订单已创建，请完成支付'
+    await loadAll()
+    window.dispatchEvent(new Event('app-data-updated'))
+  } catch (err) {
+    modalError.value = err.message
+  }
+}
+
+async function startPayment() {
+  if (!orderForm.order?.ID) return
+  modalError.value = ''
+  try {
+    const res = await api.post(`/orders/${orderForm.order.ID}/pay`)
+    orderForm.paymentUrl = res.data.payment_url
+    orderForm.paymentOpened = true
+    window.open(orderForm.paymentUrl, '_blank', 'noopener,noreferrer')
+  } catch (err) {
+    modalError.value = err.message
+  }
+}
+
+async function markPaid() {
+  if (!orderForm.order?.ID) return
+  modalError.value = ''
+  try {
+    await api.patch(`/orders/${orderForm.order.ID}/paid`)
+    notice.value = '已提交支付完成确认，请等待管理员审核'
+    closeModal()
+    await loadAll()
+    window.dispatchEvent(new Event('app-data-updated'))
+  } catch (err) {
+    modalError.value = err.message
+  }
 }
 
 async function createKey() {
@@ -73,26 +122,35 @@ async function disableKey() {
 async function runAction(action) {
   error.value = ''
   notice.value = ''
+  modalError.value = ''
   try {
     await action()
     closeModal()
     await loadAll()
+    window.dispatchEvent(new Event('app-data-updated'))
   } catch (err) {
-    error.value = err.message
+    if (modal.open) {
+      modalError.value = err.message
+    } else {
+      error.value = err.message
+    }
   }
 }
 
 function showModal(type, title, actionLabel, payload = null, danger = false) {
+  modalError.value = ''
   Object.assign(modal, { open: true, type, title, actionLabel, payload, danger })
 }
 
 function closeModal() {
+  modalError.value = ''
   Object.assign(modal, { open: false, type: '', title: '', actionLabel: '', payload: null, danger: false })
 }
 
 function submitModal() {
   const actions = {
     'create-order': createOrder,
+    'pay-order': markPaid,
     'create-key': createKey,
     'disable-key': disableKey
   }
@@ -115,6 +173,7 @@ function formatDate(value) {
 function statusLabel(value) {
   return {
     pending_review: '待审核',
+    pending_payment: '待支付',
     approved: '已通过',
     rejected: '已拒绝',
     active: '启用中',
@@ -176,6 +235,7 @@ function statusLabel(value) {
                 <th>套餐</th>
                 <th>金额</th>
                 <th>状态</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -184,6 +244,10 @@ function statusLabel(value) {
                 <td>{{ order.Plan?.Name || '-' }}</td>
                 <td>{{ money(order.AmountCents) }}</td>
                 <td><span class="status-badge">{{ statusLabel(order.Status) }}</span></td>
+                <td>
+                  <button v-if="order.Status === 'pending_payment'" class="primary-button small" @click="openPayModal(order)">继续支付</button>
+                  <span v-else class="text-muted">-</span>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -228,10 +292,21 @@ function statusLabel(value) {
               </option>
             </select>
           </label>
-          <label class="field md:col-span-2">
-            <span>支付流水号</span>
-            <input v-model="orderForm.paymentRef" placeholder="manual-..." />
-          </label>
+          <div class="order-flow-note md:col-span-2">
+            <strong>下单后会先创建待支付订单</strong>
+            <span>下一步打开支付窗口。支付完成后回到本页面点击“已完成支付”，订单才会进入待审核。</span>
+          </div>
+        </div>
+
+        <div v-if="modal.type === 'pay-order'" class="modal-body">
+          <div class="payment-panel">
+            <strong>{{ orderForm.order?.Plan?.Name || '套餐订单' }}</strong>
+            <span>订单金额：{{ money(orderForm.order?.AmountCents) }}</span>
+            <p>请先点击“去支付”打开支付页面。完成支付后回到这里点击“已完成支付”，请勿重复支付同一订单。</p>
+            <button type="button" class="primary-button" @click="startPayment">
+              {{ orderForm.paymentOpened ? '重新打开支付页面' : '去支付' }}
+            </button>
+          </div>
         </div>
 
         <div v-if="modal.type === 'create-key'" class="modal-body">
@@ -244,6 +319,11 @@ function statusLabel(value) {
         <div v-if="modal.type === 'disable-key'" class="modal-body confirm-copy">
           <strong>确定禁用「{{ modal.payload?.key?.Name }}」吗？</strong>
           <p>禁用后该 Key 将不能继续调用网关接口。</p>
+        </div>
+
+        <div v-if="modalError" class="modal-inline-error">
+          <strong>操作未完成</strong>
+          <span>{{ modalError }}</span>
         </div>
 
         <div class="modal-actions">

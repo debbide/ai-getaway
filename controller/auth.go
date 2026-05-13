@@ -47,6 +47,12 @@ type emailCodeRequest struct {
 	CaptchaX    int    `json:"captcha_x"`
 }
 
+type changePasswordRequest struct {
+	OldPassword     string `json:"old_password" binding:"required"`
+	NewPassword     string `json:"new_password" binding:"required,min=7"`
+	ConfirmPassword string `json:"confirm_password" binding:"required"`
+}
+
 func (a *AuthController) SendEmailCode(c *gin.Context) {
 	var req emailCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -164,6 +170,39 @@ func (a *AuthController) Login(c *gin.Context) {
 func (a *AuthController) Me(c *gin.Context) {
 	user := c.MustGet("user").(model.User)
 	response.OK(c, publicUser(user))
+}
+
+func (a *AuthController) ChangePassword(c *gin.Context) {
+	user := c.MustGet("user").(model.User)
+	var req changePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	if req.NewPassword != req.ConfirmPassword {
+		response.Error(c, 400, "password confirmation mismatch")
+		return
+	}
+
+	var freshUser model.User
+	if err := a.db.First(&freshUser, user.ID).Error; err != nil {
+		response.Error(c, 404, "user not found")
+		return
+	}
+	if !utils.CheckPassword(freshUser.PasswordHash, req.OldPassword) {
+		response.Error(c, 400, "invalid old password")
+		return
+	}
+	passwordHash, err := utils.HashPassword(req.NewPassword)
+	if err != nil {
+		response.Error(c, 500, "failed to hash password")
+		return
+	}
+	if err := a.db.Model(&freshUser).Update("password_hash", passwordHash).Error; err != nil {
+		response.Error(c, 500, "failed to update password")
+		return
+	}
+	response.OK(c, nil)
 }
 
 func publicUser(user model.User) gin.H {

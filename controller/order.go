@@ -1,6 +1,14 @@
 package controller
 
 import (
+	"crypto/md5"
+	"encoding/hex"
+	"fmt"
+	"net/url"
+	"sort"
+	"strings"
+	"time"
+
 	"ai-gateway/model"
 	"ai-gateway/response"
 
@@ -17,8 +25,7 @@ func NewOrderController(db *gorm.DB) *OrderController {
 }
 
 type createOrderRequest struct {
-	PlanID     uint   `json:"plan_id" binding:"required"`
-	PaymentRef string `json:"payment_ref"`
+	PlanID uint `json:"plan_id" binding:"required"`
 }
 
 func (o *OrderController) Create(c *gin.Context) {
@@ -35,19 +42,38 @@ func (o *OrderController) Create(c *gin.Context) {
 		return
 	}
 
+	var existing model.Order
+	err := o.db.Preload("Plan").
+		Where("user_id = ? AND plan_id = ? AND status IN ?", user.ID, plan.ID, []string{model.OrderStatusPendingPayment, model.OrderStatusPendingReview}).
+		Order("id desc").
+		First(&existing).Error
+	if err == nil {
+		if existing.Status == model.OrderStatusPendingReview {
+			response.Error(c, 409, "order already waiting review")
+			return
+		}
+		response.OK(c, gin.H{"order": existing, "reused": true})
+		return
+	}
+	if err != nil && err != gorm.ErrRecordNotFound {
+		response.Error(c, 500, "failed to create order")
+		return
+	}
+
 	order := model.Order{
 		UserID:             user.ID,
 		PlanID:             plan.ID,
 		AmountCents:        plan.PriceCents,
 		SettlementUSDCents: plan.SettlementUSDCents,
-		Status:             model.OrderStatusPendingReview,
-		PaymentRef:         req.PaymentRef,
+		Status:             model.OrderStatusPendingPayment,
+		PaymentRef:         fmt.Sprintf("ORDER%d%d", user.ID, time.Now().UnixNano()),
 	}
 	if err := o.db.Create(&order).Error; err != nil {
 		response.Error(c, 500, "failed to create order")
 		return
 	}
-	response.Created(c, order)
+	order.Plan = plan
+	response.Created(c, gin.H{"order": order, "reused": false})
 }
 
 func (o *OrderController) ListMine(c *gin.Context) {
@@ -55,4 +81,149 @@ func (o *OrderController) ListMine(c *gin.Context) {
 	var orders []model.Order
 	o.db.Preload("Plan").Where("user_id = ?", user.ID).Order("id desc").Find(&orders)
 	response.OK(c, orders)
+}
+
+func (o *OrderController) Pay(c *gin.Context) {
+	user := c.MustGet("user").(model.User)
+	var order model.Order
+	if err := o.db.Preload("Plan").Where("id = ? AND user_id = ?", c.Param("id"), user.ID).First(&order).Error; err != nil {
+		response.Error(c, 404, "order not found")
+		return
+	}
+	if order.Status != model.OrderStatusPendingPayment {
+		response.Error(c, 409, "order not pending payment")
+		return
+	}
+
+	setting := loadSettings(o.db)
+	payURL, err := buildEpayURL(c, setting, order)
+	if err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	response.OK(c, gin.H{"payment_url": payURL, "order": order})
+}
+
+func (o *OrderController) MarkPaid(c *gin.Context) {
+	user := c.MustGet("user").(model.User)
+	var order model.Order
+	if err := o.db.Where("id = ? AND user_id = ?", c.Param("id"), user.ID).First(&order).Error; err != nil {
+		response.Error(c, 404, "order not found")
+		return
+	}
+	if order.Status != model.OrderStatusPendingPayment {
+		response.Error(c, 409, "order not pending payment")
+		return
+	}
+	if err := o.db.Model(&order).Update("status", model.OrderStatusPendingReview).Error; err != nil {
+		response.Error(c, 500, "failed to update order")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (o *OrderController) EpayNotify(c *gin.Context) {
+	params := map[string]string{}
+	for key, values := range c.Request.URL.Query() {
+		if len(values) > 0 {
+			params[key] = values[0]
+		}
+	}
+	if err := c.Request.ParseForm(); err == nil {
+		for key, values := range c.Request.PostForm {
+			if len(values) > 0 {
+				params[key] = values[0]
+			}
+		}
+	}
+
+	setting := loadSettings(o.db)
+	if setting.EpayKey == "" || epaySign(params, setting.EpayKey) != params["sign"] {
+		c.String(400, "fail")
+		return
+	}
+	if params["trade_status"] != "TRADE_SUCCESS" {
+		c.String(200, "success")
+		return
+	}
+
+	var order model.Order
+	if err := o.db.Where("payment_ref = ?", params["out_trade_no"]).First(&order).Error; err != nil {
+		c.String(404, "fail")
+		return
+	}
+	if order.Status == model.OrderStatusPendingPayment {
+		o.db.Model(&order).Update("status", model.OrderStatusPendingReview)
+	}
+	c.String(200, "success")
+}
+
+func buildEpayURL(c *gin.Context, setting model.SystemSetting, order model.Order) (string, error) {
+	if setting.EpaySubmitURL == "" || setting.EpayPID == "" || setting.EpayKey == "" {
+		return "", fmt.Errorf("payment config missing")
+	}
+	baseURL := requestBaseURL(c)
+	notifyURL := setting.EpayNotifyURL
+	if notifyURL == "" {
+		notifyURL = baseURL + "/api/payment/epay/notify"
+	}
+	returnURL := setting.EpayReturnURL
+	if returnURL == "" {
+		returnURL = baseURL + "/console"
+	}
+	params := map[string]string{
+		"pid":          setting.EpayPID,
+		"type":         "alipay",
+		"out_trade_no": order.PaymentRef,
+		"notify_url":   notifyURL,
+		"return_url":   returnURL,
+		"name":         order.Plan.Name,
+		"money":        fmt.Sprintf("%.2f", float64(order.AmountCents)/100),
+	}
+	params["sign"] = epaySign(params, setting.EpayKey)
+	params["sign_type"] = "MD5"
+
+	values := url.Values{}
+	for key, value := range params {
+		values.Set(key, value)
+	}
+	separator := "?"
+	if strings.Contains(setting.EpaySubmitURL, "?") {
+		separator = "&"
+	}
+	return setting.EpaySubmitURL + separator + values.Encode(), nil
+}
+
+func requestBaseURL(c *gin.Context) string {
+	proto := c.GetHeader("X-Forwarded-Proto")
+	if proto == "" {
+		if c.Request.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+	host := c.GetHeader("X-Forwarded-Host")
+	if host == "" {
+		host = c.Request.Host
+	}
+	return proto + "://" + host
+}
+
+func epaySign(params map[string]string, key string) string {
+	keys := make([]string, 0, len(params))
+	for paramKey, value := range params {
+		if paramKey == "sign" || paramKey == "sign_type" || value == "" {
+			continue
+		}
+		keys = append(keys, paramKey)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, paramKey := range keys {
+		parts = append(parts, paramKey+"="+params[paramKey])
+	}
+	hash := md5.Sum([]byte(strings.Join(parts, "&") + key))
+	return hex.EncodeToString(hash[:])
 }

@@ -64,7 +64,7 @@ func VerifySlideCaptcha(db *gorm.DB, challengeID string, x int) bool {
 	if delta < 0 {
 		delta = -delta
 	}
-	if delta > 6 {
+	if delta > 10 {
 		return false
 	}
 	now := time.Now()

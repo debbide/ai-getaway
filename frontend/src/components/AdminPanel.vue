@@ -7,6 +7,7 @@ const menu = [
   { key: 'plans', label: '套餐管理', hint: '价格与额度' },
   { key: 'orders', label: '审核管理', hint: '订单开通' },
   { key: 'users', label: '用户管理', hint: '账号与权限' },
+  { key: 'navigation', label: '导航菜单', hint: '顶部菜单' },
   { key: 'settings', label: '系统设置', hint: '邮件与支付' }
 ]
 
@@ -21,7 +22,17 @@ const roleOptions = [
   { value: 'admin', label: '管理员' }
 ]
 
+const defaultNavigation = [
+  { label: '首页', path: '/' },
+  { label: '教程 ↗', path: '#tutorial', external: true },
+  { label: '定价', path: '/plans' },
+  { label: '模型', path: '/models' },
+  { label: '常见问题', path: '/faq' },
+  { label: '更多中转⌄', path: '#', children: [{ label: 'Claude Code 中转', path: '/claude' }] }
+]
+
 const orderStatusMap = {
+  pending_payment: '待支付',
   pending_review: '待审核',
   approved: '已通过',
   rejected: '已拒绝'
@@ -35,6 +46,7 @@ const users = ref([])
 const plans = ref([])
 const error = ref('')
 const notice = ref('')
+const navDraft = ref([])
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null })
 const approve = reactive({ orderId: '', channel: 'openai', baseUrl: 'https://api.openai.com', apiKey: '', adminNote: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
@@ -119,6 +131,7 @@ async function loadAll() {
     users.value = usersRes.data || []
     plans.value = plansRes.data || []
     Object.assign(settings, settingsRes.data, { smtp_password: '', epay_key: '' })
+    setNavigationDraft(settings.navigation_items)
   } catch (err) {
     error.value = err.message
   }
@@ -262,6 +275,107 @@ async function saveSettings() {
   }, false)
 }
 
+async function saveNavigation() {
+  syncNavigationSetting()
+  await runAction(async () => {
+    await api.put('/admin/settings', {
+      ...settings,
+      smtp_port: Number(settings.smtp_port || 587)
+    })
+    notice.value = '导航菜单已保存'
+  }, false)
+}
+
+function createNavItem(overrides = {}) {
+  return {
+    label: '',
+    path: '/',
+    external: false,
+    children: [],
+    ...overrides
+  }
+}
+
+function setNavigationDraft(value) {
+  navDraft.value = parseNavigation(value).map((item) => ({
+    ...createNavItem(item),
+    children: (item.children || []).map((child) => createNavItem(child))
+  }))
+  syncNavigationSetting()
+}
+
+function parseNavigation(value) {
+  try {
+    const parsed = JSON.parse(value || '[]')
+    return Array.isArray(parsed) && parsed.length ? parsed : cloneDefaultNavigation()
+  } catch {
+    return cloneDefaultNavigation()
+  }
+}
+
+function cloneDefaultNavigation() {
+  return JSON.parse(JSON.stringify(defaultNavigation))
+}
+
+function normalizeNavigation(items) {
+  return items
+    .map((item) => ({
+      label: String(item.label || '').trim(),
+      path: String(item.path || '#').trim() || '#',
+      external: Boolean(item.external),
+      children: (item.children || [])
+        .map((child) => ({
+          label: String(child.label || '').trim(),
+          path: String(child.path || '#').trim() || '#',
+          external: Boolean(child.external)
+        }))
+        .filter((child) => child.label)
+    }))
+    .filter((item) => item.label)
+}
+
+function syncNavigationSetting() {
+  const normalized = normalizeNavigation(navDraft.value)
+  settings.navigation_items = JSON.stringify(normalized.length ? normalized : cloneDefaultNavigation())
+}
+
+function addNavItem() {
+  navDraft.value.push(createNavItem({ label: '新菜单', path: '/' }))
+  syncNavigationSetting()
+}
+
+function addChildNavItem(index) {
+  navDraft.value[index].children = navDraft.value[index].children || []
+  navDraft.value[index].children.push(createNavItem({ label: '子菜单', path: '/' }))
+  syncNavigationSetting()
+}
+
+function removeNavItem(index, childIndex = null) {
+  if (childIndex === null) {
+    navDraft.value.splice(index, 1)
+  } else {
+    navDraft.value[index].children.splice(childIndex, 1)
+  }
+  syncNavigationSetting()
+}
+
+function moveNavItem(index, direction) {
+  const target = index + direction
+  if (target < 0 || target >= navDraft.value.length) return
+  const items = navDraft.value
+  const [item] = items.splice(index, 1)
+  items.splice(target, 0, item)
+  syncNavigationSetting()
+}
+
+function resetNavigationDefault() {
+  navDraft.value = cloneDefaultNavigation().map((item) => ({
+    ...createNavItem(item),
+    children: (item.children || []).map((child) => createNavItem(child))
+  }))
+  syncNavigationSetting()
+}
+
 async function runAction(action, close = true) {
   error.value = ''
   notice.value = ''
@@ -269,6 +383,7 @@ async function runAction(action, close = true) {
     await action()
     if (close) closeModal()
     await loadAll()
+    window.dispatchEvent(new Event('app-data-updated'))
   } catch (err) {
     error.value = err.message
   }
@@ -542,8 +657,8 @@ function submitModal() {
                     <td><span class="status-badge">{{ statusLabel(order.Status) }}</span></td>
                     <td>
                       <div class="table-actions">
-                        <button class="ghost-button small" @click="openApproveModal(order)">审核</button>
-                        <button class="danger-button small" @click="openRejectModal(order)">拒绝</button>
+                        <button class="ghost-button small" :disabled="order.Status !== 'pending_review'" @click="openApproveModal(order)">审核</button>
+                        <button class="danger-button small" :disabled="order.Status !== 'pending_review'" @click="openRejectModal(order)">拒绝</button>
                       </div>
                     </td>
                   </tr>
@@ -599,6 +714,70 @@ function submitModal() {
           </section>
         </div>
 
+        <form v-if="active === 'navigation'" class="space-y-5" @submit.prevent="saveNavigation">
+          <div class="page-toolbar">
+            <div>
+              <p class="section-kicker">Navigation</p>
+              <h2>导航菜单</h2>
+              <span>维护首页顶部导航，支持一级菜单、下拉子菜单、排序和外链。</span>
+            </div>
+            <button class="primary-button">保存导航</button>
+          </div>
+
+          <section class="panel-surface p-5">
+            <div class="nav-builder">
+              <div class="nav-builder-head">
+                <div>
+                  <span>顶部导航配置</span>
+                  <small>按顺序维护顶部导航，链接可填写 /plans、#tutorial 或完整网址。</small>
+                </div>
+                <div class="nav-builder-actions">
+                  <button type="button" class="ghost-button small" @click="resetNavigationDefault">恢复默认</button>
+                  <button type="button" class="primary-button small" @click="addNavItem">新增菜单</button>
+                </div>
+              </div>
+
+              <div class="nav-editor-list">
+                <article v-for="(item, index) in navDraft" :key="`nav-${index}`" class="nav-editor-card">
+                  <div class="nav-editor-grid">
+                    <label class="field">
+                      <span>菜单名称</span>
+                      <input v-model="item.label" placeholder="首页" @input="syncNavigationSetting" />
+                    </label>
+                    <label class="field">
+                      <span>链接地址</span>
+                      <input v-model="item.path" placeholder="/plans" @input="syncNavigationSetting" />
+                    </label>
+                    <label class="toggle-line nav-toggle">
+                      <input v-model="item.external" type="checkbox" @change="syncNavigationSetting" />
+                      新窗口打开
+                    </label>
+                    <div class="nav-row-actions">
+                      <button type="button" class="ghost-button small" :disabled="index === 0" @click="moveNavItem(index, -1)">上移</button>
+                      <button type="button" class="ghost-button small" :disabled="index === navDraft.length - 1" @click="moveNavItem(index, 1)">下移</button>
+                      <button type="button" class="danger-button small" @click="removeNavItem(index)">删除</button>
+                    </div>
+                  </div>
+
+                  <div class="child-nav-list">
+                    <div v-for="(child, childIndex) in item.children" :key="`nav-${index}-child-${childIndex}`" class="child-nav-row">
+                      <input v-model="child.label" placeholder="子菜单名称" @input="syncNavigationSetting" />
+                      <input v-model="child.path" placeholder="/claude" @input="syncNavigationSetting" />
+                      <label>
+                        <input v-model="child.external" type="checkbox" @change="syncNavigationSetting" />
+                        新窗口
+                      </label>
+                      <button type="button" class="danger-button small" @click="removeNavItem(index, childIndex)">删除</button>
+                    </div>
+                  </div>
+
+                  <button type="button" class="ghost-button small" @click="addChildNavItem(index)">新增子菜单</button>
+                </article>
+              </div>
+            </div>
+          </section>
+        </form>
+
         <form v-if="active === 'settings'" class="space-y-5" @submit.prevent="saveSettings">
           <div class="page-toolbar">
             <div>
@@ -637,14 +816,6 @@ function submitModal() {
                 <span>定价页提示内容</span>
                 <textarea v-model="settings.pricing_notice" rows="3" placeholder="展示在定价页顶部提示框中的说明文字"></textarea>
               </label>
-              <label class="field md:col-span-2">
-                <span>导航菜单配置（JSON）</span>
-                <textarea
-                  v-model="settings.navigation_items"
-                  rows="6"
-                  placeholder='[{"label":"首页","path":"/"},{"label":"教程 ↗","path":"#tutorial"},{"label":"定价","path":"/plans"}]'
-                ></textarea>
-              </label>
             </div>
           </section>
 
@@ -677,17 +848,19 @@ function submitModal() {
               <div>
                 <p class="section-kicker">Payment</p>
                 <h3>易支付配置</h3>
+                <span>只需要填写接口网址、商户 ID 和商户 KEY，回调地址由系统自动生成。</span>
               </div>
             </div>
             <div class="form-grid">
-              <label class="field"><span>商户 PID</span><input v-model="settings.epay_pid" /></label>
-              <label class="field">
-                <span>商户 Key</span>
-                <input v-model="settings.epay_key" type="password" :placeholder="settings.epay_key_configured ? '已配置，留空不修改' : '请输入 Key'" />
+              <label class="field md:col-span-2">
+                <span>接口网址</span>
+                <input v-model="settings.epay_submit_url" placeholder="https://mapi.example.com/" />
               </label>
-              <label class="field"><span>提交地址</span><input v-model="settings.epay_submit_url" placeholder="https://..." /></label>
-              <label class="field"><span>异步通知地址</span><input v-model="settings.epay_notify_url" placeholder="https://..." /></label>
-              <label class="field md:col-span-2"><span>同步返回地址</span><input v-model="settings.epay_return_url" placeholder="https://..." /></label>
+              <label class="field"><span>商户 ID</span><input v-model="settings.epay_pid" placeholder="请输入商户 ID" /></label>
+              <label class="field">
+                <span>商户 KEY</span>
+                <input v-model="settings.epay_key" type="password" :placeholder="settings.epay_key_configured ? '已配置，留空不修改' : '请输入商户 KEY'" />
+              </label>
             </div>
           </section>
         </form>

@@ -7,11 +7,18 @@ const messageMap = {
   'email not verified': '邮箱尚未完成验证，请先通过邮箱验证后再登录',
   'invalid credentials': '邮箱或密码不正确，请检查后重试',
   'invalid email verification code': '邮箱验证码不正确或已过期',
+  'invalid old password': '旧密码不正确，请重新输入',
   'invalid slide captcha': '安全验证未通过，请重新拖动滑块',
   'no active upstream account bound': '当前账号尚未绑定可用上游通道，请联系管理员开通',
+  'order already waiting review': '该套餐已有待审核订单，请勿重复提交',
+  'order not pending payment': '订单当前状态不允许继续支付，请刷新后查看',
+  'payment config missing': '支付配置未完成，请联系管理员',
   'subscription expired': '订阅已到期，请续费后继续使用',
   'subscription quota exceeded': '本周美元额度已用完，请升级或续费后继续使用',
-  'user disabled': '账号已被禁用，请联系管理员'
+  'user disabled': '账号已被禁用，请联系管理员',
+  'password confirmation mismatch': '两次输入的新密码不一致',
+  'failed to update password': '密码修改失败，请稍后重试',
+  'failed to update order': '订单状态更新失败，请稍后重试'
 }
 
 export const api = axios.create({

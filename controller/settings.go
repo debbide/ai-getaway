@@ -80,6 +80,10 @@ func (s *SettingsController) Update(c *gin.Context) {
 		response.Error(c, 400, err.Error())
 		return
 	}
+	if err := s.ensureSettingColumns(); err != nil {
+		response.Error(c, 500, "failed to update settings")
+		return
+	}
 
 	setting := loadSettings(s.db)
 	updates := map[string]interface{}{
@@ -96,8 +100,6 @@ func (s *SettingsController) Update(c *gin.Context) {
 		"smtp_from_name":     req.SMTPFromName,
 		"smtp_use_tls":       req.SMTPUseTLS,
 		"epay_pid":           req.EpayPID,
-		"epay_notify_url":    req.EpayNotifyURL,
-		"epay_return_url":    req.EpayReturnURL,
 		"epay_submit_url":    req.EpaySubmitURL,
 	}
 	if req.SMTPPassword != "" {
@@ -106,11 +108,45 @@ func (s *SettingsController) Update(c *gin.Context) {
 	if req.EpayKey != "" {
 		updates["epay_key"] = req.EpayKey
 	}
+	updates = s.existingSettingColumns(updates)
 	if err := s.db.Model(&setting).Updates(updates).Error; err != nil {
 		response.Error(c, 500, "failed to update settings")
 		return
 	}
 	response.OK(c, nil)
+}
+
+func (s *SettingsController) existingSettingColumns(updates map[string]interface{}) map[string]interface{} {
+	filtered := map[string]interface{}{}
+	for column, value := range updates {
+		if s.db.Migrator().HasColumn(&model.SystemSetting{}, column) {
+			filtered[column] = value
+		}
+	}
+	return filtered
+}
+
+func (s *SettingsController) ensureSettingColumns() error {
+	fields := []string{
+		"NavigationItems",
+		"PricingTitle",
+		"PricingSubtitle",
+		"PricingNotice",
+		"EpayPID",
+		"EpayKey",
+		"EpayNotifyURL",
+		"EpayReturnURL",
+		"EpaySubmitURL",
+	}
+	for _, field := range fields {
+		if s.db.Migrator().HasColumn(&model.SystemSetting{}, field) {
+			continue
+		}
+		if err := s.db.Migrator().AddColumn(&model.SystemSetting{}, field); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func loadSettings(db *gorm.DB) model.SystemSetting {
@@ -123,7 +159,7 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 		setting.SiteTitle = "CodexZH"
 	}
 	if setting.NavigationItems == "" {
-		setting.NavigationItems = `[{"label":"首页","path":"/"},{"label":"教程","path":"#tutorial","external":true},{"label":"定价","path":"/plans"},{"label":"模型","path":"/models"},{"label":"常见问题","path":"/faq"},{"label":"更多中转","path":"#","children":[{"label":"Claude Code 中转","path":"/claude"}]}]`
+		setting.NavigationItems = `[{"label":"首页","path":"/"},{"label":"教程 ↗","path":"#tutorial","external":true},{"label":"定价","path":"/plans"},{"label":"模型","path":"/models"},{"label":"常见问题","path":"/faq"},{"label":"更多中转⌄","path":"#","children":[{"label":"Claude Code 中转","path":"/claude"}]}]`
 	}
 	if setting.PricingTitle == "" {
 		setting.PricingTitle = "简单透明的定价"

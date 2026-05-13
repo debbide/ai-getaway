@@ -51,10 +51,14 @@ func localizeMessage(message string) string {
 		"invalid authorization token":            "登录状态已失效，请重新登录",
 		"invalid credentials":                    "邮箱或密码不正确，请检查后重试",
 		"invalid email verification code":        "邮箱验证码不正确或已过期",
+		"invalid old password":                   "旧密码不正确，请重新输入",
 		"invalid slide captcha":                  "安全验证未通过，请重新拖动滑块",
 		"no active upstream account bound":       "当前账号尚未绑定可用上游通道，请联系管理员开通",
 		"order already reviewed":                 "该订单已审核，请勿重复操作",
+		"order already waiting review":           "该套餐已有待审核订单，请勿重复提交",
 		"order not found":                        "订单不存在或已被删除",
+		"order not pending payment":              "订单当前状态不允许继续支付，请刷新后查看",
+		"payment config missing":                 "支付配置未完成，请联系管理员",
 		"plan not found":                         "套餐不存在或已下架",
 		"subscription expired":                   "订阅已到期，请续费后继续使用",
 		"subscription quota exceeded":            "本周美元额度已用完，请升级或续费后继续使用",
@@ -62,6 +66,9 @@ func localizeMessage(message string) string {
 		"user is not approved":                   "账号尚未通过审核，请等待管理员开通",
 		"user not found":                         "账号不存在，请重新登录",
 		"password must be at least 8 characters": "密码至少需要 8 位",
+		"password confirmation mismatch":         "两次输入的新密码不一致",
+		"failed to update password":              "密码修改失败，请稍后重试",
+		"failed to update order":                 "订单状态更新失败，请稍后重试",
 	}
 	if localized, ok := messages[message]; ok {
 		return localized
