@@ -544,7 +544,7 @@ button:disabled {
   align-items: center;
 }
 
-.subscription-card {
+.subscription-grid .subscription-card {
   position: relative;
   min-height: 640px;
   border: 1px solid rgba(71, 84, 110, 0.72);
@@ -558,7 +558,7 @@ button:disabled {
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-.subscription-card.featured {
+.subscription-grid .subscription-card.featured {
   min-height: 700px;
   border-color: rgba(101, 120, 153, 0.88);
   background:
@@ -583,14 +583,14 @@ button:disabled {
   transform: translateX(-50%);
 }
 
-.subscription-card h2 {
+.subscription-grid .subscription-card h2 {
   color: #f8fafc;
   font-size: 42px;
   font-weight: 950;
   text-align: center;
 }
 
-.subscription-card p {
+.subscription-grid .subscription-card p {
   margin-top: 10px;
   color: rgba(248, 250, 252, 0.72);
   font-size: 22px;
@@ -663,7 +663,7 @@ button:disabled {
   box-shadow: 0 18px 42px rgba(206, 111, 74, 0.28);
 }
 
-.subscription-card small {
+.subscription-grid .subscription-card small {
   display: block;
   margin-top: 22px;
   color: rgba(247, 248, 251, 0.56);
@@ -1488,6 +1488,240 @@ button:disabled {
   overflow-wrap: anywhere;
   color: var(--ink);
   font-size: 13px;
+}
+
+.console-stack {
+  display: grid;
+  gap: 20px;
+}
+
+.dashboard-card {
+  scroll-margin-top: 24px;
+}
+
+.section-subtitle {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 控制台：主区 + 侧栏（套餐摘要 / API Key），避免与定价页 .subscription-card 混用 */
+.console-dashboard-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.console-dashboard-main,
+.console-dashboard-aside {
+  display: grid;
+  gap: 20px;
+  align-content: start;
+}
+
+@media (max-width: 1023px) {
+  .console-dashboard-aside {
+    order: -1;
+  }
+}
+
+@media (min-width: 1024px) {
+  .console-dashboard-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+    align-items: start;
+  }
+
+  .console-dashboard-aside {
+    order: unset;
+  }
+}
+
+/* 当前订阅：紧凑小卡片，横向排布 */
+.plan-snapshot-card {
+  margin-top: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(245, 247, 251, 0.55);
+  padding: 12px 14px;
+}
+
+.plan-snapshot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 18px;
+}
+
+.plan-snapshot-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(120, 53, 15, 0.15);
+  font-size: 18px;
+}
+
+.plan-snapshot-icon--dim {
+  background: rgba(100, 116, 139, 0.2);
+}
+
+.plan-snapshot-primary {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.plan-snapshot-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.plan-snapshot-title-row strong {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.plan-snapshot-quota {
+  margin-top: 4px;
+  margin-bottom: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.plan-snapshot-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 22px;
+  flex: 1 1 220px;
+  justify-content: flex-end;
+  align-items: center;
+  padding-left: 0;
+  border-left: none;
+}
+
+@media (min-width: 640px) {
+  .plan-snapshot-times {
+    margin-left: auto;
+    padding-left: 16px;
+    border-left: 1px solid var(--line);
+  }
+}
+
+.plan-snapshot-timecell {
+  min-width: 0;
+}
+
+.plan-snapshot-timecell .detail-label {
+  display: block;
+  font-size: 11px;
+  margin-bottom: 2px;
+  font-weight: 650;
+}
+
+.plan-snapshot-timecell .detail-value {
+  display: block;
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.plan-snapshot-card--empty .plan-snapshot-empty-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.badge-active {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  background: rgba(34, 197, 94, 0.22);
+  color: #15803d;
+}
+
+.select-plan-card.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.notice-warn {
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.14), rgba(217, 119, 6, 0.05));
+  color: #b45309;
+}
+
+.api-key-block {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--canvas);
+}
+
+.api-key-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.api-key-block-head span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.api-key-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.api-key-code {
+  flex: 1 1 200px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(245, 247, 251, 0.88);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.api-key-code--mask {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  letter-spacing: 0.02em;
+}
+
+.api-key-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.api-key-empty-panel {
+  border-style: dashed;
+  background: transparent;
+}
+
+.api-key-strip-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.api-key-legacy-hint {
+  margin-top: 8px;
+  font-size: 12px;
 }
 
 .select-plan-card {
@@ -2347,17 +2581,17 @@ html[data-theme="light"] .hero-secondary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .subscription-card,
-  .subscription-card.featured {
+  .subscription-grid .subscription-card,
+  .subscription-grid .subscription-card.featured {
     min-height: 0;
     padding: 42px 24px 28px;
   }
 
-  .subscription-card h2 {
+  .subscription-grid .subscription-card h2 {
     font-size: 32px;
   }
 
-  .subscription-card p,
+  .subscription-grid .subscription-card p,
   .subscription-facts div {
     font-size: 17px;
   }
@@ -2638,6 +2872,49 @@ html[data-theme="dark"] .nav-pill:hover {
   border-color: rgba(215, 126, 88, 0.48);
   background: rgba(215, 126, 88, 0.12);
   color: #f0a27f;
+}
+
+html[data-theme="dark"] .subscription-grid .subscription-card {
+  border-color: rgba(71, 84, 110, 0.74);
+  background:
+    linear-gradient(180deg, rgba(213, 112, 74, 0.16), rgba(14, 20, 34, 0.94) 32%),
+    rgba(15, 21, 36, 0.92);
+}
+
+html[data-theme="dark"] .plan-snapshot-card {
+  border-color: rgba(71, 84, 110, 0.74);
+  background: rgba(17, 24, 39, 0.72);
+}
+
+html[data-theme="dark"] .plan-snapshot-times {
+  border-left-color: rgba(71, 84, 110, 0.74);
+}
+
+html[data-theme="dark"] .plan-snapshot-timecell .detail-value,
+html[data-theme="dark"] .plan-snapshot-title-row strong {
+  color: #f8fafc;
+}
+
+html[data-theme="dark"] .badge-active {
+  background: rgba(34, 197, 94, 0.28);
+  color: #86efac;
+}
+
+html[data-theme="dark"] .notice-warn {
+  border-color: rgba(251, 146, 60, 0.35);
+  background: rgba(251, 146, 60, 0.1);
+  color: #fdba74;
+}
+
+html[data-theme="dark"] .api-key-block {
+  border-color: rgba(71, 84, 110, 0.74);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+html[data-theme="dark"] .api-key-code {
+  border-color: rgba(71, 84, 110, 0.74);
+  background: rgba(9, 14, 25, 0.92);
+  color: #e2e8f0;
 }
 
 @media (max-width: 900px) {

@@ -85,13 +85,14 @@ type UpstreamAccount struct {
 
 type APIKey struct {
 	gorm.Model
-	UserID     uint `gorm:"index;not null"`
-	User       User
-	Name       string `gorm:"size:64;not null"`
-	KeyHash    string `gorm:"size:64;uniqueIndex;not null" json:"-"`
-	KeyPrefix  string `gorm:"size:20;index;not null"`
-	Status     string `gorm:"size:32;default:active;index"`
-	LastUsedAt *time.Time
+	UserID       uint `gorm:"index;not null"`
+	User         User
+	Name         string `gorm:"size:64;not null"`
+	KeyHash      string `gorm:"size:64;uniqueIndex;not null" json:"-"`
+	KeyPrefix    string `gorm:"size:20;index;not null"`
+	KeyEncrypted string `gorm:"size:768;default:''" json:"-"` // AES-GCM, owner-only decrypt
+	Status       string `gorm:"size:32;default:active;index"`
+	LastUsedAt   *time.Time
 }
 
 type APILog struct {

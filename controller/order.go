@@ -32,7 +32,17 @@ type createOrderRequest struct {
 }
 
 func (o *OrderController) Create(c *gin.Context) {
-	user := c.MustGet("user").(model.User)
+	ctxUser := c.MustGet("user").(model.User)
+	var user model.User
+	if err := o.db.First(&user, ctxUser.ID).Error; err != nil {
+		response.Error(c, 401, "user not found")
+		return
+	}
+	if hasActiveSubscription(&user) {
+		response.Error(c, 409, "active subscription in effect")
+		return
+	}
+
 	var req createOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, 400, err.Error())
@@ -47,7 +57,7 @@ func (o *OrderController) Create(c *gin.Context) {
 
 	var existing model.Order
 	err := o.db.Preload("Plan").
-		Where("user_id = ? AND plan_id = ? AND status IN ?", user.ID, plan.ID, []string{model.OrderStatusPendingPayment, model.OrderStatusPendingReview}).
+		Where("user_id = ? AND plan_id = ? AND status IN ?", ctxUser.ID, plan.ID, []string{model.OrderStatusPendingPayment, model.OrderStatusPendingReview}).
 		Order("id desc").
 		First(&existing).Error
 	if err == nil {
@@ -64,12 +74,12 @@ func (o *OrderController) Create(c *gin.Context) {
 	}
 
 	order := model.Order{
-		UserID:             user.ID,
+		UserID:             ctxUser.ID,
 		PlanID:             plan.ID,
 		AmountCents:        plan.PriceCents,
 		SettlementUSDCents: plan.SettlementUSDCents,
 		Status:             model.OrderStatusPendingPayment,
-		PaymentRef:         fmt.Sprintf("ORDER%d%d", user.ID, time.Now().UnixNano()),
+		PaymentRef:         fmt.Sprintf("ORDER%d%d", ctxUser.ID, time.Now().UnixNano()),
 	}
 	if err := o.db.Create(&order).Error; err != nil {
 		response.Error(c, 500, "failed to create order")
@@ -327,6 +337,16 @@ func requestBaseURL(c *gin.Context) string {
 		host = c.Request.Host
 	}
 	return proto + "://" + host
+}
+
+func hasActiveSubscription(u *model.User) bool {
+	if u.Status != model.UserStatusApproved {
+		return false
+	}
+	if u.ExpiresAt == nil {
+		return false
+	}
+	return time.Now().Before(*u.ExpiresAt)
 }
 
 func epaySign(params map[string]string, key string) string {

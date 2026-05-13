@@ -1,7 +1,11 @@
 import axios from 'axios'
 
 const messageMap = {
-  'account pending approval': '账号正在审核中，请耐心等待管理员开通',
+  'active subscription in effect': '当前套餐仍在有效期内，请待到期后再购买其他套餐',
+  'api key already exists': '每个账号仅允许一条 API Key，请使用「更新密钥」替换',
+  'no api key to rotate': '当前没有可更新的 API Key，请先创建',
+  'api key not found': '未找到 API Key',
+  'api key secret unavailable': '该密钥无法解密，请使用「更新密钥」重新生成',
   'email already exists': '该邮箱已存在，请更换邮箱或直接登录',
   'email already registered': '该邮箱已注册，请直接登录',
   'email not verified': '邮箱尚未完成验证，请先通过邮箱验证后再登录',

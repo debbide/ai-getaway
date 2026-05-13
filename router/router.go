@@ -23,7 +23,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 	authController := controller.NewAuthController(cfg, db)
 	planController := controller.NewPlanController(db)
 	orderController := controller.NewOrderController(db)
-	apiKeyController := controller.NewAPIKeyController(db)
+	apiKeyController := controller.NewAPIKeyController(cfg, db)
 	adminController := controller.NewAdminController(db)
 	settingsController := controller.NewSettingsController(db)
 	captchaController := controller.NewCaptchaController(db)
@@ -51,9 +51,12 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			authed.GET("/orders", orderController.ListMine)
 			authed.POST("/orders/:id/pay", orderController.Pay)
 			authed.PATCH("/orders/:id/paid", orderController.MarkPaid)
-			authed.POST("/keys", apiKeyController.Create)
+			authed.GET("/keys/secret", apiKeyController.Secret)
 			authed.GET("/keys", apiKeyController.List)
+			authed.POST("/keys", apiKeyController.Create)
+			authed.POST("/keys/rotate", apiKeyController.Rotate)
 			authed.PATCH("/keys/:id/disable", apiKeyController.Disable)
+			authed.PATCH("/keys/:id/enable", apiKeyController.Enable)
 		}
 
 		admin := api.Group("/admin", middleware.Auth(cfg, db), middleware.AdminOnly())

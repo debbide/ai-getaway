@@ -138,7 +138,7 @@ func (a *AuthController) Login(c *gin.Context) {
 	}
 
 	var user model.User
-	if err := a.db.Where("email = ?", req.Email).First(&user).Error; err != nil {
+	if err := a.db.Preload("Plan").Where("email = ?", req.Email).First(&user).Error; err != nil {
 		response.Error(c, 401, "invalid credentials")
 		return
 	}
@@ -168,8 +168,23 @@ func (a *AuthController) Login(c *gin.Context) {
 }
 
 func (a *AuthController) Me(c *gin.Context) {
-	user := c.MustGet("user").(model.User)
-	response.OK(c, publicUser(user))
+	base := c.MustGet("user").(model.User)
+	var user model.User
+	if err := a.db.Preload("Plan").First(&user, base.ID).Error; err != nil {
+		response.Error(c, 404, "user not found")
+		return
+	}
+	body := publicUser(user)
+	if user.PlanID != nil {
+		var lastOrder model.Order
+		err := a.db.Where("user_id = ? AND plan_id = ? AND status = ?", user.ID, *user.PlanID, model.OrderStatusApproved).
+			Order("approved_at DESC, id DESC").
+			First(&lastOrder).Error
+		if err == nil && lastOrder.ApprovedAt != nil {
+			body["subscription_started_at"] = lastOrder.ApprovedAt
+		}
+	}
+	response.OK(c, body)
 }
 
 func (a *AuthController) ChangePassword(c *gin.Context) {
@@ -206,7 +221,7 @@ func (a *AuthController) ChangePassword(c *gin.Context) {
 }
 
 func publicUser(user model.User) gin.H {
-	return gin.H{
+	body := gin.H{
 		"id":             user.ID,
 		"username":       user.Username,
 		"email":          user.Email,
@@ -217,6 +232,17 @@ func publicUser(user model.User) gin.H {
 		"expires_at":     user.ExpiresAt,
 		"email_verified": user.EmailVerified,
 	}
+	if user.Plan != nil {
+		body["plan"] = gin.H{
+			"id":                     user.Plan.ID,
+			"name":                   user.Plan.Name,
+			"settlement_usd_cents":   user.Plan.SettlementUSDCents,
+			"duration_days":        user.Plan.DurationDays,
+			"weekly_quota_tokens":  user.Plan.WeeklyQuotaTokens,
+			"description":          user.Plan.Description,
+		}
+	}
+	return body
 }
 
 func (a *AuthController) verifyEmailCode(email, code, purpose string) bool {

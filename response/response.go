@@ -26,7 +26,14 @@ func Error(c *gin.Context, status int, message string) {
 
 func localizeMessage(message string) string {
 	messages := map[string]string{
-		"account pending approval":               "账号正在审核中，请耐心等待管理员开通",
+		"active subscription in effect":          "当前套餐仍在有效期内，请待到期后再购买其他套餐",
+		"api key already exists":               "每个账号仅允许一条 API Key，请使用「更新密钥」替换",
+		"no api key to rotate":                   "当前没有可更新的 API Key，请先创建",
+		"api key not found":                      "未找到 API Key",
+		"api key secret unavailable":             "该密钥无法解密展示，请使用「更新密钥」重新生成",
+		"failed to decrypt api key":              "密钥解密失败，请稍后重试或联系管理员",
+		"failed to rotate api key":               "更新密钥失败，请稍后重试",
+		"failed to enable api key":               "启用密钥失败，请稍后重试",
 		"email already exists":                   "该邮箱已存在，请更换邮箱或直接登录",
 		"email already registered":               "该邮箱已注册，请直接登录",
 		"email not verified":                     "邮箱尚未完成验证，请先通过邮箱验证后再登录",
@@ -39,6 +46,7 @@ func localizeMessage(message string) string {
 		"failed to delete plan":                  "套餐删除失败，请稍后重试",
 		"failed to delete user":                  "用户删除失败，请稍后重试",
 		"failed to disable api key":              "API Key 禁用失败，请稍后重试",
+		"failed to list api keys":                "读取 API Key 失败，请稍后重试",
 		"failed to generate api key":             "API Key 生成失败，请稍后重试",
 		"failed to generate token":               "登录凭证生成失败，请稍后重试",
 		"failed to hash password":                "密码处理失败，请稍后重试",
