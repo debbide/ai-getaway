@@ -5,10 +5,12 @@ import { useAuthStore } from './stores/auth'
 import AuthModal from './components/AuthModal.vue'
 import Dashboard from './components/Dashboard.vue'
 import AdminPanel from './components/AdminPanel.vue'
+import UsageRecords from './components/UsageRecords.vue'
+import DocsPage from './components/DocsPage.vue'
 
 const defaultNavigation = [
   { label: '首页', path: '/' },
-  { label: '教程 ↗', path: '#tutorial', external: true },
+  { label: '教程 ↗', path: '/docs' },
   { label: '定价', path: '/plans' },
   { label: '模型', path: '/models' },
   { label: '常见问题', path: '/faq' }
@@ -40,7 +42,9 @@ const passwordNotice = ref('')
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
 
 const isConsolePage = computed(() => currentPath.value === '/console')
+const isUsageRecordsPage = computed(() => currentPath.value === '/usage-records')
 const isPlansPage = computed(() => currentPath.value === '/plans')
+const isDocsPage = computed(() => currentPath.value === '/docs' || currentPath.value.startsWith('/docs/'))
 const consoleTitle = computed(() => (auth.isAdmin ? '管理后台' : '用户控制台'))
 const navItems = computed(() => parseNavigation(publicSettings.value.navigation_items))
 const activeThemeLabel = computed(() => ({ light: '浅色', dark: '深色', system: '系统' })[themeMode.value] || '深色')
@@ -89,7 +93,7 @@ async function loadPublicSettings() {
 }
 
 async function refreshAppData() {
-  await Promise.all([loadPublicSettings(), loadPlans(), auth.loadMe()])
+  await Promise.allSettled([loadPublicSettings(), loadPlans(), auth.loadMe()])
 }
 
 function handleAuthExpired() {
@@ -323,7 +327,9 @@ function planSubtitle(index) {
       </div>
     </header>
 
-    <main v-if="!isConsolePage && !isPlansPage">
+    <DocsPage v-if="isDocsPage" />
+
+    <main v-else-if="!isConsolePage && !isPlansPage && !isUsageRecordsPage">
       <section class="home-hero">
         <div class="home-hero-inner mx-auto max-w-7xl px-4 sm:px-6">
           <div class="hero-badge">✣ 为中国开发者量身打造</div>
@@ -413,13 +419,38 @@ function planSubtitle(index) {
       </section>
     </main>
 
+    <main v-else-if="isUsageRecordsPage" class="console-page">
+      <section class="mx-auto max-w-7xl px-4 py-10 sm:px-6">
+        <div class="console-title">
+          <div>
+            <p class="section-kicker">Console</p>
+            <h1>{{ auth.loggedIn ? '使用记录' : '登录后查看使用记录' }}</h1>
+            <p>查看 API 调用日志、Token、费用和响应耗时。</p>
+          </div>
+          <div v-if="auth.loggedIn" class="user-chip">{{ auth.user?.email || auth.user?.username }}</div>
+        </div>
+
+        <div v-if="!auth.loggedIn" class="panel-surface grid gap-4 p-5 sm:grid-cols-[1fr_auto] sm:items-center">
+          <div>
+            <h2 class="text-xl font-black">需要先登录</h2>
+            <p class="mt-2 text-sm leading-6 text-muted">登录后可查看当前账号的 API 调用使用记录。</p>
+          </div>
+          <div class="flex gap-3">
+            <button class="ghost-button" @click="openAuth('login')">登录</button>
+            <button class="primary-button" @click="openAuth('register')">注册</button>
+          </div>
+        </div>
+      </section>
+      <UsageRecords v-if="auth.loggedIn" @navigate="navigate" />
+    </main>
+
     <main v-else class="console-page">
       <section class="mx-auto max-w-7xl px-4 py-10 sm:px-6">
         <div class="console-title">
           <div>
             <p class="section-kicker">Console</p>
             <h1>{{ auth.loggedIn ? consoleTitle : '登录后进入控制台' }}</h1>
-            <p>控制台是独立工作区，负责下单、Key 管理和后台审核。</p>
+            <p>负责下单、Key 管理。</p>
           </div>
           <div v-if="auth.loggedIn" class="user-chip">{{ auth.user?.email || auth.user?.username }}</div>
         </div>
@@ -435,7 +466,7 @@ function planSubtitle(index) {
           </div>
         </div>
       </section>
-      <Dashboard v-if="auth.loggedIn && !auth.isAdmin" :plans="plans" />
+      <Dashboard v-if="auth.loggedIn && !auth.isAdmin" :plans="plans" @navigate="navigate" />
       <AdminPanel v-if="auth.loggedIn && auth.isAdmin" />
     </main>
 

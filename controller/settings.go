@@ -183,7 +183,7 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 		setting.SiteTitle = "星空AI"
 	}
 	if setting.NavigationItems == "" {
-		setting.NavigationItems = `[{"label":"首页","path":"/"},{"label":"教程 ↗","path":"#tutorial","external":true},{"label":"定价","path":"/plans"},{"label":"模型","path":"/models"},{"label":"常见问题","path":"/faq"},{"label":"更多中转⌄","path":"#","children":[{"label":"Claude Code 中转","path":"/claude"}]}]`
+		setting.NavigationItems = `[{"label":"首页","path":"/"},{"label":"教程 ↗","path":"/docs"},{"label":"定价","path":"/plans"},{"label":"模型","path":"/models"},{"label":"常见问题","path":"/faq"},{"label":"更多中转⌄","path":"#","children":[{"label":"Claude Code 中转","path":"/claude"}]}]`
 	}
 	if setting.PricingTitle == "" {
 		setting.PricingTitle = "简单透明的定价"

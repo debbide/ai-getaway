@@ -175,19 +175,34 @@ func (a *AuthController) Me(c *gin.Context) {
 		return
 	}
 	body := publicUser(user)
-	if user.PlanID != nil {
-		var lastOrder model.Order
-		err := a.db.Where("user_id = ? AND plan_id = ? AND status = ?", user.ID, *user.PlanID, model.OrderStatusApproved).
-			Order("approved_at DESC, id DESC").
-			First(&lastOrder).Error
-		if err == nil && lastOrder.ApprovedAt != nil {
-			body["subscription_started_at"] = lastOrder.ApprovedAt
-		}
+	subscriptionStartedAt := subscriptionStartAt(a.db, user)
+	if subscriptionStartedAt != nil {
+		body["subscription_started_at"] = subscriptionStartedAt
 	}
 	if hasActiveSubscription(&user) && user.Plan != nil {
 		body["quota_usage"] = service.PlanQuotaUsage(a.db, user.ID, user.Plan, time.Now())
+		if subscriptionStartedAt != nil && user.ExpiresAt != nil {
+			body["total_quota_usage"] = service.PlanTotalQuotaUsage(a.db, user.ID, user.Plan, *subscriptionStartedAt, *user.ExpiresAt)
+		}
 	}
 	response.OK(c, body)
+}
+
+func subscriptionStartAt(db *gorm.DB, user model.User) *time.Time {
+	if user.PlanID != nil {
+		var lastOrder model.Order
+		err := db.Where("user_id = ? AND plan_id = ? AND status = ?", user.ID, *user.PlanID, model.OrderStatusApproved).
+			Order("approved_at DESC, id DESC").
+			First(&lastOrder).Error
+		if err == nil && lastOrder.ApprovedAt != nil {
+			return lastOrder.ApprovedAt
+		}
+	}
+	if hasActiveSubscription(&user) && user.Plan != nil && user.ExpiresAt != nil && user.Plan.DurationDays > 0 {
+		fallbackStartedAt := user.ExpiresAt.AddDate(0, 0, -user.Plan.DurationDays)
+		return &fallbackStartedAt
+	}
+	return nil
 }
 
 func (a *AuthController) ChangePassword(c *gin.Context) {

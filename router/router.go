@@ -27,6 +27,8 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 	adminController := controller.NewAdminController(db)
 	settingsController := controller.NewSettingsController(db)
 	captchaController := controller.NewCaptchaController(db)
+	usageController := controller.NewUsageController(db)
+	docsController := controller.NewDocsController(db)
 	logHub := service.NewLogHub()
 
 	r.GET("/health", func(c *gin.Context) {
@@ -41,6 +43,8 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 		api.POST("/auth/register", authController.Register)
 		api.POST("/auth/login", authController.Login)
 		api.GET("/plans", planController.List)
+		api.GET("/docs", docsController.PublicList)
+		api.GET("/docs/:slug", docsController.PublicBySlug)
 		api.Any("/payment/epay/notify", orderController.EpayNotify)
 
 		authed := api.Group("", middleware.Auth(cfg, db))
@@ -57,6 +61,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			authed.POST("/keys/rotate", apiKeyController.Rotate)
 			authed.PATCH("/keys/:id/disable", apiKeyController.Disable)
 			authed.PATCH("/keys/:id/enable", apiKeyController.Enable)
+			authed.GET("/usage/logs", usageController.List)
 		}
 
 		admin := api.Group("/admin", middleware.Auth(cfg, db), middleware.AdminOnly())
@@ -75,6 +80,10 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			admin.DELETE("/plans/:id", adminController.DeletePlan)
 			admin.GET("/settings", settingsController.Get)
 			admin.PUT("/settings", settingsController.Update)
+			admin.GET("/docs", docsController.AdminList)
+			admin.POST("/docs", docsController.Create)
+			admin.PUT("/docs/:id", docsController.Update)
+			admin.DELETE("/docs/:id", docsController.Delete)
 			admin.GET("/upstreams", adminController.Upstreams)
 			admin.GET("/upstream-channels", adminController.UpstreamChannels)
 			admin.POST("/upstream-channels", adminController.CreateUpstreamChannel)

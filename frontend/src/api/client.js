@@ -20,6 +20,7 @@ const messageMap = {
   'payment not completed': '支付结果尚未确认，请完成支付后再试',
   'subscription expired': '订阅已到期，请续费后继续使用',
   'subscription quota exceeded': '本周美元额度已用完，请升级或续费后继续使用',
+  'user not found': '账号信息暂时不可用，请稍后刷新重试',
   'user disabled': '账号已被禁用，请联系管理员',
   'password confirmation mismatch': '两次输入的新密码不一致',
   'failed to update password': '密码修改失败，请稍后重试',
@@ -44,16 +45,27 @@ api.interceptors.response.use(
     const rawMessage = error.response?.data?.message || error.message || '请求失败'
     if (status === 401) {
       const token = localStorage.getItem('token')
-      if (token && (rawMessage.includes('user not found') || rawMessage.includes('invalid authorization token'))) {
+      if (token && rawMessage.includes('invalid authorization token')) {
         localStorage.removeItem('token')
         window.dispatchEvent(new CustomEvent('auth-expired'))
-        return Promise.reject(new Error('账号异常，请重新登录'))
+        return Promise.reject(apiError('登录状态已失效，请重新登录', { authExpired: true }))
       }
     }
+    if (status === 403 && rawMessage.includes('user disabled')) {
+      localStorage.removeItem('token')
+      window.dispatchEvent(new CustomEvent('auth-expired'))
+      return Promise.reject(apiError(messageMap[rawMessage] || normalizeMessage(rawMessage), { authExpired: true }))
+    }
     const message = messageMap[rawMessage] || normalizeMessage(rawMessage)
-    return Promise.reject(new Error(message))
+    return Promise.reject(apiError(message, { status, rawMessage }))
   }
 )
+
+function apiError(message, props = {}) {
+  const err = new Error(message)
+  Object.assign(err, props)
+  return err
+}
 
 function normalizeMessage(message) {
   if (message.includes('Field validation')) return '请检查表单必填项和格式是否正确'

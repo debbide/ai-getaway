@@ -1,6 +1,7 @@
 package service
 
 import (
+	"math"
 	"time"
 
 	"ai-gateway/model"
@@ -52,6 +53,55 @@ func PlanQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, now time.Time) Q
 		WindowEnd:      end,
 		Percent:        percent,
 	}
+}
+
+func PlanTotalQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, start time.Time, end time.Time) QuotaUsage {
+	period := "weekly"
+	if plan != nil && plan.QuotaPeriod == "daily" {
+		period = "daily"
+	}
+
+	limit := PlanTotalLimitUSDCents(plan)
+	used := UsedUSDCentsSince(db, userID, start)
+	remaining := limit - used
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	percent := float64(0)
+	if limit > 0 {
+		percent = float64(used) / float64(limit) * 100
+		if percent > 100 {
+			percent = 100
+		}
+	}
+
+	return QuotaUsage{
+		Period:         period,
+		LimitUSDCents:  limit,
+		UsedUSDCents:   used,
+		RemainingCents: remaining,
+		WindowStart:    start,
+		WindowEnd:      end,
+		Percent:        percent,
+	}
+}
+
+func PlanTotalLimitUSDCents(plan *model.Plan) int64 {
+	if plan == nil {
+		return 0
+	}
+	units := plan.DurationDays
+	if units < 1 {
+		units = 1
+	}
+	if plan.QuotaPeriod != "daily" {
+		units = int(math.Round(float64(units) / 7))
+		if units < 1 {
+			units = 1
+		}
+	}
+	return plan.SettlementUSDCents * int64(units)
 }
 
 func QuotaWindow(period string, now time.Time) (time.Time, time.Time) {

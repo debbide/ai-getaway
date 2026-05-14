@@ -91,6 +91,17 @@ type UpstreamChannel struct {
 	Enabled bool   `gorm:"default:true;index"`
 }
 
+type DocPage struct {
+	gorm.Model
+	Title       string `gorm:"size:128;not null"`
+	Slug        string `gorm:"size:128;uniqueIndex;not null"`
+	GroupName   string `gorm:"size:64;index"`
+	Description string `gorm:"size:255"`
+	Content     string `gorm:"type:longtext"`
+	SortOrder   int    `gorm:"default:0;index"`
+	Enabled     bool   `gorm:"default:true;index"`
+}
+
 type APIKey struct {
 	gorm.Model
 	UserID       uint `gorm:"index;not null"`
@@ -107,6 +118,7 @@ type APILog struct {
 	gorm.Model
 	UserID            uint `gorm:"index;not null"`
 	APIKeyID          uint `gorm:"index;not null"`
+	APIKey            APIKey
 	Method            string
 	Path              string
 	StatusCode        int

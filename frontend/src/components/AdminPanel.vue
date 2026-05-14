@@ -8,6 +8,7 @@ const menu = [
   { key: 'orders', label: '审核管理', hint: '订单开通' },
   { key: 'channels', label: '渠道管理', hint: '上游接口' },
   { key: 'users', label: '用户管理', hint: '账号与权限' },
+  { key: 'docs', label: '配置文档', hint: 'Markdown 内容' },
   { key: 'navigation', label: '导航菜单', hint: '顶部菜单' },
   { key: 'settings', label: '系统设置', hint: '邮件与支付' }
 ]
@@ -25,7 +26,7 @@ const roleOptions = [
 
 const defaultNavigation = [
   { label: '首页', path: '/' },
-  { label: '教程 ↗', path: '#tutorial', external: true },
+  { label: '教程 ↗', path: '/docs' },
   { label: '定价', path: '/plans' },
   { label: '模型', path: '/models' },
   { label: '常见问题', path: '/faq' }
@@ -45,6 +46,7 @@ const orders = ref([])
 const users = ref([])
 const plans = ref([])
 const channels = ref([])
+const docs = ref([])
 const error = ref('')
 const notice = ref('')
 const navDraft = ref([])
@@ -55,6 +57,7 @@ const rejectForm = reactive({ orderId: '', adminNote: '' })
 const planForm = reactive(emptyPlan())
 const channelForm = reactive(emptyChannel())
 const userForm = reactive(emptyUser())
+const docForm = reactive(emptyDoc())
 const settings = reactive({
   site_title: '',
   tutorial_video_url: '',
@@ -82,6 +85,7 @@ const pendingOrders = computed(() => orders.value.filter((order) => order.Status
 const enabledPlans = computed(() => plans.value.filter((plan) => plan.Enabled).length)
 const approvedUsers = computed(() => users.value.filter((user) => user.Status === 'approved').length)
 const enabledChannels = computed(() => channels.value.filter((channel) => channel.Enabled).length)
+const enabledDocs = computed(() => docs.value.filter((doc) => doc.Enabled).length)
 
 onMounted(loadAll)
 
@@ -130,16 +134,30 @@ function emptyChannel() {
   }
 }
 
+function emptyDoc() {
+  return {
+    id: null,
+    title: '',
+    slug: '',
+    group_name: '快速开始',
+    description: '',
+    content: '',
+    sort_order: 100,
+    enabled: true
+  }
+}
+
 async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const [statsRes, ordersRes, usersRes, plansRes, channelsRes, settingsRes] = await Promise.all([
+    const [statsRes, ordersRes, usersRes, plansRes, channelsRes, docsRes, settingsRes] = await Promise.all([
       api.get('/admin/stats'),
       api.get('/admin/orders'),
       api.get('/admin/users'),
       api.get('/admin/plans'),
       api.get('/admin/upstream-channels'),
+      api.get('/admin/docs'),
       api.get('/admin/settings')
     ])
     stats.value = statsRes.data || {}
@@ -147,6 +165,7 @@ async function loadAll() {
     users.value = usersRes.data || []
     plans.value = plansRes.data || []
     channels.value = channelsRes.data || []
+    docs.value = docsRes.data || []
     Object.assign(settings, settingsRes.data, { smtp_password: '', epay_key: '' })
     setNavigationDraft(settings.navigation_items)
   } catch (err) {
@@ -221,6 +240,47 @@ function openChannelModal(channel = null) {
     })
   }
   showModal(channel ? 'edit-channel' : 'create-channel', channel ? '编辑渠道' : '新增渠道', channel ? '保存修改' : '创建渠道')
+}
+
+function openDocModal(doc = null) {
+  Object.assign(docForm, emptyDoc())
+  if (doc) {
+    Object.assign(docForm, {
+      id: doc.ID,
+      title: doc.Title,
+      slug: doc.Slug,
+      group_name: doc.GroupName || '快速开始',
+      description: doc.Description || '',
+      content: doc.Content || '',
+      sort_order: doc.SortOrder || 0,
+      enabled: doc.Enabled
+    })
+  }
+  showModal(doc ? 'edit-doc' : 'create-doc', doc ? '编辑配置文档' : '新增配置文档', doc ? '保存修改' : '创建文档')
+}
+
+async function submitDoc() {
+  const payload = normalizeDoc(docForm)
+  await runAction(async () => {
+    if (docForm.id) {
+      await api.put(`/admin/docs/${docForm.id}`, payload)
+      notice.value = '文档已更新'
+    } else {
+      await api.post('/admin/docs', payload)
+      notice.value = '文档已创建'
+    }
+  })
+}
+
+function confirmDeleteDoc(doc) {
+  showModal('delete-doc', '删除配置文档', '确认删除', { doc }, true)
+}
+
+async function deleteDoc() {
+  await runAction(async () => {
+    await api.delete(`/admin/docs/${modal.payload.doc.ID}`)
+    notice.value = '文档已删除'
+  })
 }
 
 async function submitChannel() {
@@ -538,6 +598,18 @@ function normalizeChannel(channel) {
   }
 }
 
+function normalizeDoc(doc) {
+  return {
+    title: doc.title.trim(),
+    slug: doc.slug.trim(),
+    group_name: doc.group_name.trim(),
+    description: doc.description.trim(),
+    content: doc.content,
+    sort_order: Number(doc.sort_order || 0),
+    enabled: Boolean(doc.enabled)
+  }
+}
+
 function normalizeUser(user) {
   const payload = {
     username: user.username.trim(),
@@ -604,6 +676,9 @@ function submitModal() {
     'create-channel': submitChannel,
     'edit-channel': submitChannel,
     'delete-channel': deleteChannel,
+    'create-doc': submitDoc,
+    'edit-doc': submitDoc,
+    'delete-doc': deleteDoc,
     'create-user': submitUser,
     'edit-user': submitUser,
     'delete-user': deleteUser,
@@ -897,6 +972,55 @@ function submitModal() {
           </section>
         </div>
 
+        <div v-if="active === 'docs'" class="space-y-5">
+          <div class="page-toolbar">
+            <div>
+              <p class="section-kicker">Docs</p>
+              <h2>配置文档</h2>
+              <span>{{ enabledDocs }} 篇启用文档，{{ docs.length }} 篇总文档。左侧导航、排序和内容都可在这里维护。</span>
+            </div>
+            <div class="toolbar-actions">
+              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
+              <button class="primary-button" @click="openDocModal()">新增文档</button>
+            </div>
+          </div>
+
+          <section class="panel-surface overflow-hidden">
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>文档</th>
+                    <th>分组</th>
+                    <th>Slug</th>
+                    <th>排序</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="doc in docs" :key="doc.ID">
+                    <td>
+                      <strong>{{ doc.Title }}</strong>
+                      <small>{{ doc.Description || '暂无说明' }}</small>
+                    </td>
+                    <td>{{ doc.GroupName || '-' }}</td>
+                    <td><code>{{ doc.Slug }}</code></td>
+                    <td>{{ doc.SortOrder }}</td>
+                    <td><span class="status-badge" :class="{ muted: !doc.Enabled }">{{ doc.Enabled ? '已启用' : '已停用' }}</span></td>
+                    <td>
+                      <div class="table-actions">
+                        <button class="ghost-button small" @click="openDocModal(doc)">编辑</button>
+                        <button class="danger-button small" @click="confirmDeleteDoc(doc)">删除</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
         <form v-if="active === 'navigation'" class="space-y-5" @submit.prevent="saveNavigation">
           <div class="page-toolbar">
             <div>
@@ -1084,6 +1208,34 @@ function submitModal() {
           <label class="toggle-line md:col-span-2"><input v-model="channelForm.enabled" type="checkbox" />启用渠道</label>
         </div>
 
+        <div v-if="modal.type === 'create-doc' || modal.type === 'edit-doc'" class="modal-body form-grid">
+          <label class="field">
+            <span>文档标题</span>
+            <input v-model="docForm.title" required placeholder="官方 API Base URL" />
+          </label>
+          <label class="field">
+            <span>Slug</span>
+            <input v-model="docForm.slug" required placeholder="api-base-url" />
+          </label>
+          <label class="field">
+            <span>左侧分组</span>
+            <input v-model="docForm.group_name" placeholder="快速开始" />
+          </label>
+          <label class="field">
+            <span>排序</span>
+            <input v-model.number="docForm.sort_order" type="number" />
+          </label>
+          <label class="field md:col-span-2">
+            <span>说明</span>
+            <input v-model="docForm.description" placeholder="展示在后台列表中的简短说明" />
+          </label>
+          <label class="field md:col-span-2">
+            <span>Markdown 内容</span>
+            <textarea v-model="docForm.content" class="markdown-editor" rows="18" placeholder="# 标题&#10;&#10;这里填写 Markdown 文档内容"></textarea>
+          </label>
+          <label class="toggle-line md:col-span-2"><input v-model="docForm.enabled" type="checkbox" />启用文档</label>
+        </div>
+
         <div v-if="modal.type === 'create-user' || modal.type === 'edit-user'" class="modal-body form-grid">
           <label class="field"><span>用户名</span><input v-model="userForm.username" required /></label>
           <label class="field"><span>邮箱</span><input v-model="userForm.email" type="email" required /></label>
@@ -1156,6 +1308,11 @@ function submitModal() {
         <div v-if="modal.type === 'delete-channel'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.channel?.Name }}」吗？</strong>
           <p>删除后审核弹窗不再提供该渠道，请确认没有新的开通流程依赖它。</p>
+        </div>
+
+        <div v-if="modal.type === 'delete-doc'" class="modal-body confirm-copy">
+          <strong>确定删除「{{ modal.payload?.doc?.Title }}」吗？</strong>
+          <p>删除后用户侧配置文档页面将不再展示这篇内容。</p>
         </div>
 
         <div v-if="modal.type === 'delete-user'" class="modal-body confirm-copy">

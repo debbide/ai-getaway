@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
 const props = defineProps({ plans: { type: Array, default: () => [] } })
+const emit = defineEmits(['navigate'])
 
 const auth = useAuthStore()
 const orders = ref([])
@@ -50,12 +51,19 @@ const planPeriodStartIso = computed(() => {
 })
 
 const quotaUsage = computed(() => auth.user?.quota_usage || null)
+const totalQuotaUsage = computed(() => auth.user?.total_quota_usage || null)
 const quotaUsagePercent = computed(() => {
   const percent = Number(quotaUsage.value?.percent || 0)
   if (!Number.isFinite(percent)) return 0
   return Math.min(100, Math.max(0, percent))
 })
+const totalQuotaUsagePercent = computed(() => {
+  const percent = Number(totalQuotaUsage.value?.percent || 0)
+  if (!Number.isFinite(percent)) return 0
+  return Math.min(100, Math.max(0, percent))
+})
 const quotaProgressStyle = computed(() => ({ '--quota-progress': `${quotaUsagePercent.value}%` }))
+const totalQuotaProgressStyle = computed(() => ({ '--quota-progress': `${totalQuotaUsagePercent.value}%` }))
 const quotaResetText = computed(() => {
   if (!quotaUsage.value?.window_end) return ''
   return `${quotaPeriodUnit(auth.user?.plan)}额度重置：${formatDateTime(quotaUsage.value.window_end)}`
@@ -75,8 +83,13 @@ async function loadAll() {
     keys.value = keyRes.data || []
     if (orderPage.value > totalOrderPages.value) orderPage.value = totalOrderPages.value
     await auth.loadMe()
+    if (auth.meError) notice.value = auth.meError
   } catch (err) {
-    error.value = err.message
+    if (err.authExpired) {
+      error.value = err.message
+    } else {
+      notice.value = err.message || '账号信息暂时不可用，请稍后刷新重试'
+    }
   } finally {
     loading.value = false
   }
@@ -253,6 +266,14 @@ function submitModal() {
     'disable-key': disableKey
   }
   actions[modal.type]?.()
+}
+
+function openUsageRecords() {
+  emit('navigate', '/usage-records')
+}
+
+function openDocs() {
+  emit('navigate', '/docs')
 }
 
 function money(cents, currency = '￥') {
@@ -472,46 +493,74 @@ function statusLabel(value) {
             </div>
 
             <div v-if="hasActiveSubscription" class="plan-snapshot-card">
-              <div class="plan-snapshot-row">
-                <div class="plan-snapshot-icon" aria-hidden="true">💳</div>
+              <div class="plan-snapshot-header">
+                <div class="plan-snapshot-icon" aria-hidden="true">▣</div>
                 <div class="plan-snapshot-primary">
-                  <div class="plan-snapshot-title-row">
+                  <div>
                     <strong>{{ auth.user?.plan?.name || '当前套餐' }}</strong>
-                    <span class="badge-active">活跃</span>
-                  </div>
-                  <p class="plan-snapshot-quota text-muted">
-                    {{ quotaPeriodText(auth.user?.plan) }}：{{ usd(auth.user?.plan?.settlement_usd_cents || 0) }}/{{ quotaPeriodUnit(auth.user?.plan) }}
-                  </p>
-                  <div v-if="quotaUsage" class="quota-progress-block">
-                    <div class="quota-progress-meta">
-                      <span>已用 {{ usd(quotaUsage.used_usd_cents || 0) }}</span>
-                      <span>剩余 {{ usd(quotaUsage.remaining_usd_cents || 0) }}</span>
-                    </div>
-                    <div
-                      class="quota-progress-track"
-                      role="progressbar"
-                      :aria-valuenow="Math.round(quotaUsagePercent)"
-                      aria-valuemin="0"
-                      aria-valuemax="100"
-                      :style="quotaProgressStyle"
-                    >
-                      <span class="quota-progress-fill"></span>
-                    </div>
-                    <div class="quota-progress-foot text-muted">
-                      <span>{{ quotaUsagePercent.toFixed(1) }}%</span>
-                      <span>{{ quotaResetText }}</span>
-                    </div>
+                    <p>{{ quotaPeriodText(auth.user?.plan) }}：{{ usd(auth.user?.plan?.settlement_usd_cents || 0) }}/{{ quotaPeriodUnit(auth.user?.plan) }}</p>
                   </div>
                 </div>
-                <div class="plan-snapshot-times">
-                  <div class="plan-snapshot-timecell">
-                    <span class="detail-label text-muted">套餐开始</span>
-                    <span class="detail-value">{{ formatDateTime(planPeriodStartIso) }}</span>
+                <span class="badge-active">活跃</span>
+              </div>
+
+              <div class="plan-snapshot-meters">
+                <div v-if="quotaUsage" class="quota-meter">
+                  <div class="quota-meter-head">
+                    <span>周期额度</span>
+                    <strong>{{ quotaUsagePercent.toFixed(1) }}%</strong>
                   </div>
-                  <div class="plan-snapshot-timecell">
-                    <span class="detail-label text-muted">套餐结束</span>
-                    <span class="detail-value">{{ formatDateTime(auth.user?.expires_at) }}</span>
+                  <div class="quota-meter-values">
+                    <span>已用 {{ usd(quotaUsage.used_usd_cents || 0) }}</span>
+                    <span>剩余 {{ usd(quotaUsage.remaining_usd_cents || 0) }}</span>
                   </div>
+                  <div
+                    class="quota-progress-track"
+                    role="progressbar"
+                    :aria-valuenow="Math.round(quotaUsagePercent)"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    :style="quotaProgressStyle"
+                  >
+                    <span class="quota-progress-fill"></span>
+                  </div>
+                  <div class="quota-meter-foot text-muted">{{ quotaResetText }}</div>
+                </div>
+
+                <div v-if="totalQuotaUsage" class="quota-meter quota-meter--total">
+                  <div class="quota-meter-head">
+                    <span>总额度</span>
+                    <strong>{{ totalQuotaUsagePercent.toFixed(1) }}%</strong>
+                  </div>
+                  <div class="quota-meter-values">
+                    <span>已用 {{ usd(totalQuotaUsage.used_usd_cents || 0) }}</span>
+                    <span>总额 {{ usd(totalQuotaUsage.limit_usd_cents || 0) }}</span>
+                  </div>
+                  <div
+                    class="quota-progress-track quota-progress-track--total"
+                    role="progressbar"
+                    :aria-valuenow="Math.round(totalQuotaUsagePercent)"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    :style="totalQuotaProgressStyle"
+                  >
+                    <span class="quota-progress-fill"></span>
+                  </div>
+                  <div class="quota-meter-foot quota-meter-foot--range text-muted">
+                    <span>套餐总周期</span>
+                    <strong>{{ formatDateTime(totalQuotaUsage.window_start) }} - {{ formatDateTime(totalQuotaUsage.window_end) }}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div class="plan-snapshot-times">
+                <div class="plan-snapshot-timecell">
+                  <span class="detail-label text-muted">套餐开始</span>
+                  <span class="detail-value">{{ formatDateTime(planPeriodStartIso) }}</span>
+                </div>
+                <div class="plan-snapshot-timecell">
+                  <span class="detail-label text-muted">套餐结束</span>
+                  <span class="detail-value">{{ formatDateTime(auth.user?.expires_at) }}</span>
                 </div>
               </div>
             </div>
@@ -526,6 +575,11 @@ function statusLabel(value) {
                   <p class="text-muted plan-snapshot-empty-desc">支付并审核通过后，此处显示套餐信息与周期。</p>
                 </div>
               </div>
+            </div>
+
+            <div class="plan-card-actions">
+              <button type="button" class="primary-button" @click="openUsageRecords">使用记录</button>
+              <button type="button" class="ghost-button" @click="openDocs">使用教程</button>
             </div>
           </section>
 
