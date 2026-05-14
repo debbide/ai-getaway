@@ -7,7 +7,7 @@ const open = defineModel('open', { type: Boolean, default: false })
 const mode = defineModel('mode', { type: String, default: 'login' })
 const auth = useAuthStore()
 const form = reactive({ username: '', email: '', password: '', emailCode: '' })
-const captcha = reactive({ challengeId: '', targetX: 0, trackWidth: 280, pieceWidth: 42, x: 0 })
+const captcha = reactive({ challengeId: '', image: '', trackWidth: 280, pieceWidth: 42, x: 0 })
 const loading = ref(false)
 const sendingCode = ref(false)
 const securityOpen = ref(false)
@@ -16,14 +16,9 @@ const pendingAction = ref('')
 const error = ref('')
 const notice = ref('')
 let captchaTimer = null
-let lastCaptchaX = 0
 
-const captchaPassed = computed(() => Math.abs(captcha.x - captcha.targetX) <= 10)
+const captchaPassed = computed(() => securityBusy.value)
 const sliderMax = computed(() => Math.max(0, captcha.trackWidth - captcha.pieceWidth))
-const targetStyle = computed(() => ({
-  left: `${(captcha.targetX / captcha.trackWidth) * 100}%`,
-  width: `${(captcha.pieceWidth / captcha.trackWidth) * 100}%`
-}))
 const pieceStyle = computed(() => ({
   left: `${(captcha.x / captcha.trackWidth) * 100}%`,
   width: `${(captcha.pieceWidth / captcha.trackWidth) * 100}%`
@@ -51,39 +46,21 @@ function switchMode(nextMode) {
 async function loadCaptcha() {
   const res = await api.post('/captcha/slide')
   captcha.challengeId = res.data.challenge_id
-  captcha.targetX = res.data.target_x
+  captcha.image = res.data.image
   captcha.trackWidth = res.data.track_width
   captcha.pieceWidth = res.data.piece_width
   captcha.x = 0
-  lastCaptchaX = 0
 }
 
 function handleCaptchaSlide(event) {
   if (securityBusy.value) return
-  const nextX = Number(event.target.value || 0)
-  const crossedTarget =
-    (lastCaptchaX < captcha.targetX && nextX > captcha.targetX) ||
-    (lastCaptchaX > captcha.targetX && nextX < captcha.targetX)
-  const nearTarget = Math.abs(nextX - captcha.targetX) <= 14
-
-  if (nearTarget || crossedTarget) {
-    captcha.x = captcha.targetX
-    lastCaptchaX = captcha.targetX
-    scheduleSecurityFinish(180)
-    return
-  }
-
-  captcha.x = nextX
-  lastCaptchaX = nextX
-}
-
-function scheduleSecurityFinish(delay = 320) {
+  captcha.x = Number(event.target.value || 0)
   if (captchaTimer) clearTimeout(captchaTimer)
   captchaTimer = setTimeout(() => {
-    if (!captchaPassed.value || !securityOpen.value || securityBusy.value) return
+    if (!securityOpen.value || securityBusy.value) return
     securityBusy.value = true
     finishSecurity()
-  }, delay)
+  }, 360)
 }
 
 async function requestSecurity(action) {
@@ -106,14 +83,9 @@ function closeSecurity() {
   securityBusy.value = false
   pendingAction.value = ''
   captcha.x = 0
-  lastCaptchaX = 0
 }
 
 async function finishSecurity() {
-  if (!captchaPassed.value) {
-    securityBusy.value = false
-    return
-  }
   const action = pendingAction.value
   securityOpen.value = false
   pendingAction.value = ''
@@ -259,7 +231,7 @@ async function submitWithCaptcha() {
                 <span class="trace trace-one"></span>
                 <span class="trace trace-two"></span>
                 <span class="trace trace-three"></span>
-                <span class="captcha-hole" :style="targetStyle"></span>
+                <img v-if="captcha.image" class="captcha-image" :src="captcha.image" alt="" />
                 <span class="captcha-fragment" :style="pieceStyle"></span>
               </div>
             </div>

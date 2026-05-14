@@ -13,16 +13,18 @@ import (
 	"ai-gateway/utils"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
 type AuthController struct {
-	cfg config.Config
-	db  *gorm.DB
+	cfg         config.Config
+	db          *gorm.DB
+	redisClient *redis.Client
 }
 
-func NewAuthController(cfg config.Config, db *gorm.DB) *AuthController {
-	return &AuthController{cfg: cfg, db: db}
+func NewAuthController(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *AuthController {
+	return &AuthController{cfg: cfg, db: db, redisClient: redisClient}
 }
 
 type registerRequest struct {
@@ -59,7 +61,7 @@ func (a *AuthController) SendEmailCode(c *gin.Context) {
 		response.Error(c, 400, err.Error())
 		return
 	}
-	if !VerifySlideCaptcha(a.db, req.ChallengeID, req.CaptchaX) {
+	if !VerifySlideCaptcha(a.redisClient, req.ChallengeID, req.CaptchaX) {
 		response.Error(c, 400, "invalid slide captcha")
 		return
 	}
@@ -95,7 +97,7 @@ func (a *AuthController) Register(c *gin.Context) {
 		response.Error(c, 400, err.Error())
 		return
 	}
-	if !VerifySlideCaptcha(a.db, req.ChallengeID, req.CaptchaX) {
+	if !VerifySlideCaptcha(a.redisClient, req.ChallengeID, req.CaptchaX) {
 		response.Error(c, 400, "invalid slide captcha")
 		return
 	}
@@ -132,7 +134,7 @@ func (a *AuthController) Login(c *gin.Context) {
 		response.Error(c, 400, err.Error())
 		return
 	}
-	if !VerifySlideCaptcha(a.db, req.ChallengeID, req.CaptchaX) {
+	if !VerifySlideCaptcha(a.redisClient, req.ChallengeID, req.CaptchaX) {
 		response.Error(c, 400, "invalid slide captcha")
 		return
 	}

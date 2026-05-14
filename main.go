@@ -20,6 +20,7 @@ func main() {
 	redisClient := database.InitRedis(cfg)
 	database.AutoMigrate(db)
 	database.Seed(db, cfg)
+	database.StartSlideCaptchaCleanup(db)
 
 	r := router.New(cfg, db, redisClient)
 	if err := r.Run(":" + cfg.AppPort); err != nil {

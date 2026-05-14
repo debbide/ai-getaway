@@ -48,7 +48,6 @@ func AutoMigrate(db *gorm.DB) {
 		&model.APILog{},
 		&model.SystemSetting{},
 		&model.EmailVerification{},
-		&model.SlideCaptcha{},
 	); err != nil {
 		log.Fatalf("auto migrate failed: %v", err)
 	}
@@ -84,6 +83,31 @@ func Seed(db *gorm.DB, cfg config.Config) {
 			EmailVerified: true,
 		})
 	}
+}
+
+func StartSlideCaptchaCleanup(db *gorm.DB) {
+	if db == nil {
+		return
+	}
+	cleanup := func() {
+		if !db.Migrator().HasTable(&model.SlideCaptcha{}) {
+			return
+		}
+		if err := db.Unscoped().
+			Where("expires_at < ? OR used_at IS NOT NULL", time.Now()).
+			Delete(&model.SlideCaptcha{}).Error; err != nil {
+			log.Printf("slide captcha cleanup failed: %v", err)
+		}
+	}
+
+	cleanup()
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			cleanup()
+		}
+	}()
 }
 
 func seedDocs(db *gorm.DB) {
