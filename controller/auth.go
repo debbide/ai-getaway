@@ -248,8 +248,6 @@ func publicUser(user model.User) gin.H {
 		"email":          user.Email,
 		"role":           user.Role,
 		"status":         user.Status,
-		"quota_tokens":   user.QuotaTokens,
-		"used_tokens":    user.UsedTokens,
 		"expires_at":     user.ExpiresAt,
 		"email_verified": user.EmailVerified,
 	}
@@ -260,8 +258,6 @@ func publicUser(user model.User) gin.H {
 			"settlement_usd_cents": user.Plan.SettlementUSDCents,
 			"quota_period":         user.Plan.QuotaPeriod,
 			"duration_days":        user.Plan.DurationDays,
-			"daily_quota_tokens":   user.Plan.DailyQuotaTokens,
-			"weekly_quota_tokens":  user.Plan.WeeklyQuotaTokens,
 			"description":          user.Plan.Description,
 		}
 	}

@@ -73,6 +73,7 @@ func localizeMessage(message string) string {
 		"no active subscription assigned":        "当前账号未分配有效套餐，已禁止调用，请联系管理员处理",
 		"no active upstream account bound":       "当前账号尚未绑定可用上游通道，请联系管理员开通",
 		"no api key to rotate":                   "当前没有可更新的 API Key，请先创建",
+		"upstream rebinding required after plan change": "修改用户套餐后，必须重新绑定上游渠道并填写新的上游 API Key",
 		"order already reviewed":                 "该订单已审核，请勿重复操作",
 		"order already waiting review":           "该套餐已有待审核订单，请勿重复提交",
 		"order not found":                        "订单不存在或已被删除",

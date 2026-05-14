@@ -38,9 +38,6 @@ type planRequest struct {
 	QuotaPeriod        string `json:"quota_period"`
 	PriceCents         int64  `json:"price_cents" binding:"required,min=1"`
 	SettlementUSDCents int64  `json:"settlement_usd_cents"`
-	QuotaTokens        int64  `json:"quota_tokens"`
-	DailyQuotaTokens   int64  `json:"daily_quota_tokens"`
-	WeeklyQuotaTokens  int64  `json:"weekly_quota_tokens"`
 	DurationDays       int    `json:"duration_days" binding:"required,min=1"`
 	Description        string `json:"description"`
 	Enabled            bool   `json:"enabled"`
@@ -55,8 +52,8 @@ type updateUserRequest struct {
 	EmailVerified *bool  `json:"email_verified"`
 	PlanID        *uint  `json:"plan_id"`
 	PlanIDPresent bool   `json:"-"`
-	QuotaTokens   *int64 `json:"quota_tokens"`
-	UsedTokens    *int64 `json:"used_tokens"`
+	ChannelID     uint   `json:"channel_id"`
+	APIKey        string `json:"api_key"`
 }
 
 func (r *updateUserRequest) UnmarshalJSON(data []byte) error {
@@ -96,8 +93,6 @@ type createUserRequest struct {
 	Status        string `json:"status"`
 	EmailVerified bool   `json:"email_verified"`
 	PlanID        *uint  `json:"plan_id"`
-	QuotaTokens   int64  `json:"quota_tokens"`
-	UsedTokens    int64  `json:"used_tokens"`
 }
 
 type rejectOrderRequest struct {
@@ -173,8 +168,6 @@ func (a *AdminController) CreateUser(c *gin.Context) {
 		Status:        status,
 		EmailVerified: req.EmailVerified,
 		PlanID:        req.PlanID,
-		QuotaTokens:   req.QuotaTokens,
-		UsedTokens:    req.UsedTokens,
 	}
 	if req.PlanID != nil {
 		var plan model.Plan
@@ -183,8 +176,6 @@ func (a *AdminController) CreateUser(c *gin.Context) {
 			return
 		}
 		expiresAt := time.Now().AddDate(0, 0, plan.DurationDays)
-		user.QuotaTokens = plan.QuotaTokens
-		user.UsedTokens = 0
 		user.ExpiresAt = &expiresAt
 	}
 	if err := a.db.Create(&user).Error; err != nil {
@@ -233,8 +224,6 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		if req.PlanID == nil {
 			updates["plan_id"] = nil
 			updates["expires_at"] = nil
-			updates["quota_tokens"] = 0
-			updates["used_tokens"] = 0
 		} else {
 			var plan model.Plan
 			if err := a.db.First(&plan, *req.PlanID).Error; err != nil {
@@ -244,15 +233,7 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 			expiresAt := time.Now().AddDate(0, 0, plan.DurationDays)
 			updates["plan_id"] = plan.ID
 			updates["expires_at"] = &expiresAt
-			updates["quota_tokens"] = plan.QuotaTokens
-			updates["used_tokens"] = 0
 		}
-	}
-	if req.QuotaTokens != nil && !req.PlanIDPresent {
-		updates["quota_tokens"] = *req.QuotaTokens
-	}
-	if req.UsedTokens != nil && !req.PlanIDPresent {
-		updates["used_tokens"] = *req.UsedTokens
 	}
 	if len(updates) == 0 {
 		response.OK(c, nil)
@@ -267,9 +248,36 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		response.Error(c, 500, "failed to update user")
 		return
 	}
+	planChanged := req.PlanIDPresent && !sameUintPointer(user.PlanID, req.PlanID)
+	var selectedChannel *model.UpstreamChannel
+	if planChanged && req.PlanID != nil {
+		if req.ChannelID == 0 || req.APIKey == "" {
+			response.Error(c, 400, "upstream rebinding required after plan change")
+			return
+		}
+		channel, err := a.loadUpstreamChannel(req.ChannelID)
+		if err != nil {
+			response.Error(c, 404, "upstream channel not found")
+			return
+		}
+		selectedChannel = channel
+	}
 	if err := a.db.Model(&user).Updates(updates).Error; err != nil {
 		response.Error(c, 500, "failed to update user")
 		return
+	}
+	if selectedChannel != nil {
+		if err := a.db.Model(&model.UpstreamAccount{}).
+			Where("user_id = ?", user.ID).
+			Updates(map[string]interface{}{
+				"channel": selectedChannel.Name,
+				"base_url": selectedChannel.BaseURL,
+				"api_key": req.APIKey,
+				"status": model.UpstreamStatusActive,
+			}).Error; err != nil {
+			response.Error(c, 500, "failed to update user")
+			return
+		}
 	}
 	if err := a.syncUserAccessState(&user, updates); err != nil {
 		response.Error(c, 500, "failed to update user")
@@ -336,9 +344,6 @@ func (a *AdminController) CreatePlan(c *gin.Context) {
 		QuotaPeriod:        fallbackQuotaPeriod(req.QuotaPeriod),
 		PriceCents:         req.PriceCents,
 		SettlementUSDCents: req.SettlementUSDCents,
-		QuotaTokens:        req.QuotaTokens,
-		DailyQuotaTokens:   req.DailyQuotaTokens,
-		WeeklyQuotaTokens:  req.WeeklyQuotaTokens,
 		DurationDays:       req.DurationDays,
 		Description:        req.Description,
 		Enabled:            req.Enabled,
@@ -364,9 +369,6 @@ func (a *AdminController) UpdatePlan(c *gin.Context) {
 		"quota_period":         fallbackQuotaPeriod(req.QuotaPeriod),
 		"price_cents":          req.PriceCents,
 		"settlement_usd_cents": req.SettlementUSDCents,
-		"quota_tokens":         req.QuotaTokens,
-		"daily_quota_tokens":   req.DailyQuotaTokens,
-		"weekly_quota_tokens":  req.WeeklyQuotaTokens,
 		"duration_days":        req.DurationDays,
 		"description":          req.Description,
 		"enabled":              req.Enabled,
@@ -433,8 +435,6 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 		if err := tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
 			"status":       model.UserStatusApproved,
 			"plan_id":      order.PlanID,
-			"quota_tokens": order.Plan.QuotaTokens,
-			"used_tokens":  0,
 			"expires_at":   &expiresAt,
 		}).Error; err != nil {
 			return err

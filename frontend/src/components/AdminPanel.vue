@@ -107,9 +107,6 @@ function emptyPlan() {
     period_usd_quota: 20,
     price_cents: 990,
     settlement_usd_cents: 2000,
-    quota_tokens: 200000,
-    daily_quota_tokens: 200000,
-    weekly_quota_tokens: 0,
     duration_days: 30,
     description: '',
     enabled: true
@@ -126,8 +123,9 @@ function emptyUser() {
     status: 'pending',
     email_verified: true,
     plan_id: '',
-    quota_tokens: 0,
-    used_tokens: 0
+    original_plan_id: '',
+    channel_id: '',
+    api_key: ''
   }
 }
 
@@ -218,9 +216,6 @@ function openPlanModal(plan = null) {
       period_usd_quota: centsToAmount(plan.SettlementUSDCents),
       price_cents: plan.PriceCents,
       settlement_usd_cents: plan.SettlementUSDCents,
-      quota_tokens: plan.QuotaTokens,
-      daily_quota_tokens: plan.DailyQuotaTokens,
-      weekly_quota_tokens: plan.WeeklyQuotaTokens,
       duration_days: plan.DurationDays,
       description: plan.Description,
       enabled: plan.Enabled
@@ -393,14 +388,19 @@ function openUserModal(user = null) {
       status: user.Status || 'pending',
       email_verified: Boolean(user.EmailVerified),
       plan_id: user.PlanID || '',
-      quota_tokens: user.QuotaTokens || 0,
-      used_tokens: user.UsedTokens || 0
+      original_plan_id: user.PlanID || '',
+      channel_id: '',
+      api_key: ''
     })
   }
   showModal(user ? 'edit-user' : 'create-user', user ? '编辑用户' : '新增用户', user ? '保存修改' : '创建用户')
 }
 
 async function submitUser() {
+  if (requiresUserUpstreamRebind(userForm) && (!Number(userForm.channel_id) || !String(userForm.api_key || '').trim())) {
+    error.value = '修改用户套餐后，必须重新绑定上游渠道并填写新的上游 API Key'
+    return
+  }
   const payload = normalizeUser(userForm)
   await runAction(async () => {
     if (userForm.id) {
@@ -655,9 +655,6 @@ function normalizePlan(plan) {
     quota_period: plan.quota_period,
     price_cents: amountToCents(plan.price_rmb),
     settlement_usd_cents: amountToCents(plan.period_usd_quota),
-    quota_tokens: 0,
-    daily_quota_tokens: 0,
-    weekly_quota_tokens: 0,
     duration_days: Number(plan.duration_days || 1),
     description: plan.description.trim(),
     enabled: Boolean(plan.enabled)
@@ -731,8 +728,16 @@ function normalizeUser(user) {
     email_verified: Boolean(user.email_verified),
     plan_id: user.plan_id === '' || user.plan_id === null ? null : Number(user.plan_id)
   }
+  if (requiresUserUpstreamRebind(user)) {
+    payload.channel_id = Number(user.channel_id || 0)
+    payload.api_key = user.api_key
+  }
   if (user.password) payload.password = user.password
   return payload
+}
+
+function requiresUserUpstreamRebind(user) {
+  return user.id && String(user.plan_id || '') !== String(user.original_plan_id || '') && String(user.plan_id || '') !== ''
 }
 
 function money(cents, currency = '￥') {
@@ -1471,6 +1476,17 @@ function submitModal() {
               <option value="">不分配</option>
               <option v-for="plan in plans" :key="plan.ID" :value="plan.ID">{{ plan.Name }}</option>
             </select>
+          </label>
+          <label v-if="requiresUserUpstreamRebind(userForm)" class="field">
+            <span>重新绑定上游渠道</span>
+            <select v-model="userForm.channel_id" required>
+              <option value="">请选择渠道</option>
+              <option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}</option>
+            </select>
+          </label>
+          <label v-if="requiresUserUpstreamRebind(userForm)" class="field md:col-span-2">
+            <span>新的上游 API Key</span>
+            <input v-model="userForm.api_key" type="password" required placeholder="修改套餐后必须重新绑定" />
           </label>
           <label class="toggle-line md:col-span-2"><input v-model="userForm.email_verified" type="checkbox" />邮箱已验证</label>
         </div>

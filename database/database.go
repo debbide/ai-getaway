@@ -51,13 +51,14 @@ func AutoMigrate(db *gorm.DB) {
 	); err != nil {
 		log.Fatalf("auto migrate failed: %v", err)
 	}
+	dropLegacyQuotaColumns(db)
 }
 
 func Seed(db *gorm.DB, cfg config.Config) {
 	plans := []model.Plan{
-		{Name: "日卡套餐", Code: "day-pass", BadgeText: "日用特惠", PlanType: "subscription", QuotaPeriod: "daily", PriceCents: 590, SettlementUSDCents: 2000, QuotaTokens: 0, DailyQuotaTokens: 0, WeeklyQuotaTokens: 0, DurationDays: 1, Description: "灵活应对突发需求", Enabled: true},
-		{Name: "月卡（标准）", Code: "monthly", BadgeText: "热卖推荐", PlanType: "subscription", QuotaPeriod: "weekly", PriceCents: 5900, SettlementUSDCents: 6000, QuotaTokens: 0, DailyQuotaTokens: 0, WeeklyQuotaTokens: 0, DurationDays: 30, Description: "覆盖常规研发工作量", Enabled: true},
-		{Name: "月卡（专业）", Code: "team", BadgeText: "高频进阶", PlanType: "subscription", QuotaPeriod: "weekly", PriceCents: 9000, SettlementUSDCents: 9000, QuotaTokens: 0, DailyQuotaTokens: 0, WeeklyQuotaTokens: 0, DurationDays: 30, Description: "为高频团队保驾护航", Enabled: true},
+		{Name: "日卡套餐", Code: "day-pass", BadgeText: "日用特惠", PlanType: "subscription", QuotaPeriod: "daily", PriceCents: 590, SettlementUSDCents: 2000, DurationDays: 1, Description: "灵活应对突发需求", Enabled: true},
+		{Name: "月卡（标准）", Code: "monthly", BadgeText: "热卖推荐", PlanType: "subscription", QuotaPeriod: "weekly", PriceCents: 5900, SettlementUSDCents: 6000, DurationDays: 30, Description: "覆盖常规研发工作量", Enabled: true},
+		{Name: "月卡（专业）", Code: "team", BadgeText: "高频进阶", PlanType: "subscription", QuotaPeriod: "weekly", PriceCents: 9000, SettlementUSDCents: 9000, DurationDays: 30, Description: "为高频团队保驾护航", Enabled: true},
 	}
 	for _, plan := range plans {
 		db.FirstOrCreate(&plan, model.Plan{Name: plan.Name})
@@ -108,6 +109,23 @@ func StartSlideCaptchaCleanup(db *gorm.DB) {
 			cleanup()
 		}
 	}()
+}
+
+func dropLegacyQuotaColumns(db *gorm.DB) {
+	dropColumnIfExists(db, &model.User{}, "quota_tokens")
+	dropColumnIfExists(db, &model.User{}, "used_tokens")
+	dropColumnIfExists(db, &model.Plan{}, "quota_tokens")
+	dropColumnIfExists(db, &model.Plan{}, "daily_quota_tokens")
+	dropColumnIfExists(db, &model.Plan{}, "weekly_quota_tokens")
+}
+
+func dropColumnIfExists(db *gorm.DB, value interface{}, name string) {
+	if db == nil || !db.Migrator().HasColumn(value, name) {
+		return
+	}
+	if err := db.Migrator().DropColumn(value, name); err != nil {
+		log.Printf("drop legacy column %s failed: %v", name, err)
+	}
 }
 
 func seedDocs(db *gorm.DB) {

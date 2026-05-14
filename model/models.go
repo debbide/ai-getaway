@@ -39,8 +39,6 @@ type User struct {
 	EmailVerified bool   `gorm:"default:false;index"`
 	PlanID        *uint
 	Plan          *Plan
-	QuotaTokens   int64
-	UsedTokens    int64
 	ExpiresAt     *time.Time
 }
 
@@ -53,9 +51,6 @@ type Plan struct {
 	QuotaPeriod        string `gorm:"size:16;default:weekly;index"`
 	PriceCents         int64  `gorm:"not null"`
 	SettlementUSDCents int64  `gorm:"default:0"`
-	QuotaTokens        int64  `gorm:"not null;default:0"`
-	DailyQuotaTokens   int64  `gorm:"default:0"`
-	WeeklyQuotaTokens  int64  `gorm:"default:0"`
 	DurationDays       int    `gorm:"not null"`
 	Description        string `gorm:"size:255"`
 	Enabled            bool   `gorm:"default:true;index"`
