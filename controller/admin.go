@@ -271,6 +271,10 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		response.Error(c, 500, "failed to update user")
 		return
 	}
+	if err := a.syncUserAccessState(&user, updates); err != nil {
+		response.Error(c, 500, "failed to update user")
+		return
+	}
 	response.OK(c, nil)
 }
 
@@ -562,6 +566,59 @@ func (a *AdminController) loadUpstreamChannel(id uint) (*model.UpstreamChannel, 
 		return nil, err
 	}
 	return &channel, nil
+}
+
+func (a *AdminController) syncUserAccessState(user *model.User, updates map[string]interface{}) error {
+	status := user.Status
+	if value, ok := updates["status"].(string); ok && value != "" {
+		status = value
+	}
+
+	var planID *uint
+	planID = user.PlanID
+	if value, ok := updates["plan_id"]; ok {
+		switch typed := value.(type) {
+		case nil:
+			planID = nil
+		case uint:
+			planID = &typed
+		}
+	}
+
+	var expiresAt *time.Time
+	expiresAt = user.ExpiresAt
+	if value, ok := updates["expires_at"]; ok {
+		switch typed := value.(type) {
+		case nil:
+			expiresAt = nil
+		case *time.Time:
+			expiresAt = typed
+		}
+	}
+
+	planChanged := !sameUintPointer(user.PlanID, planID)
+	active := status == model.UserStatusApproved && planID != nil && expiresAt != nil && time.Now().Before(*expiresAt)
+	if active && !planChanged {
+		return nil
+	}
+
+	return a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.APIKey{}).
+			Where("user_id = ?", user.ID).
+			Update("status", model.APIKeyStatusDisabled).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.UpstreamAccount{}).
+			Where("user_id = ?", user.ID).
+			Update("status", model.UpstreamStatusDisabled).Error
+	})
+}
+
+func sameUintPointer(left, right *uint) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func fallbackPlanType(value string) string {

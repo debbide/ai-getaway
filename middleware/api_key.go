@@ -44,6 +44,11 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		if !service.HasActiveSubscription(apiKey.User, time.Now()) || apiKey.User.Plan == nil {
+			response.Error(c, 403, "no active subscription assigned")
+			c.Abort()
+			return
+		}
 		if !allowPlanQuota(db, apiKey.User) {
 			response.Error(c, 429, "subscription quota exceeded")
 			c.Abort()
@@ -74,8 +79,11 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 }
 
 func allowPlanQuota(db *gorm.DB, user model.User) bool {
+	if !service.HasActiveSubscription(user, time.Now()) {
+		return false
+	}
 	if user.Plan == nil {
-		return true
+		return false
 	}
 	usage := service.PlanQuotaUsage(db, user.ID, user.Plan, time.Now())
 	if usage.LimitUSDCents > 0 && usage.UsedUSDCents >= usage.LimitUSDCents {

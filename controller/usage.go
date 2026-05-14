@@ -22,12 +22,13 @@ func NewUsageController(db *gorm.DB) *UsageController {
 }
 
 type usageSummary struct {
-	TotalRequests    int64 `json:"total_requests"`
-	TotalTokens      int64 `json:"total_tokens"`
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	TotalUSDCents    int64 `json:"total_usd_cents"`
-	AverageLatencyMs int64 `json:"average_latency_ms"`
+	TotalRequests      int64 `json:"total_requests"`
+	TotalTokens        int64 `json:"total_tokens"`
+	PromptTokens       int64 `json:"prompt_tokens"`
+	CompletionTokens   int64 `json:"completion_tokens"`
+	TotalUSDCents      int64 `json:"total_usd_cents"`
+	TotalUSDMicros     int64 `json:"total_usd_micros"`
+	AverageLatencyMs   int64 `json:"average_latency_ms"`
 }
 
 type usageLogItem struct {
@@ -93,6 +94,7 @@ func (u *UsageController) List(c *gin.Context) {
 		COALESCE(SUM(total_tokens), 0) AS total_tokens,
 		COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
 		COALESCE(SUM(CASE WHEN estimated_usd_micros > 0 THEN CEILING(estimated_usd_micros / 10000) ELSE estimated_usd_cents END), 0) AS total_usd_cents,
+		COALESCE(SUM(estimated_usd_micros), 0) AS total_usd_micros,
 		COALESCE(ROUND(AVG(latency_ms)), 0) AS average_latency_ms
 	`).Scan(&summary).Error; err != nil {
 		response.Error(c, 500, "failed to list usage logs")

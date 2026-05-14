@@ -179,7 +179,7 @@ func (a *AuthController) Me(c *gin.Context) {
 	if subscriptionStartedAt != nil {
 		body["subscription_started_at"] = subscriptionStartedAt
 	}
-	if hasActiveSubscription(&user) && user.Plan != nil {
+	if service.HasActiveSubscription(user, time.Now()) && user.Plan != nil {
 		body["quota_usage"] = service.PlanQuotaUsage(a.db, user.ID, user.Plan, time.Now())
 		if subscriptionStartedAt != nil && user.ExpiresAt != nil {
 			body["total_quota_usage"] = service.PlanTotalQuotaUsage(a.db, user.ID, user.Plan, *subscriptionStartedAt, *user.ExpiresAt)
@@ -199,7 +199,7 @@ func subscriptionStartAt(db *gorm.DB, user model.User) *time.Time {
 			return lastOrder.ApprovedAt
 		}
 	}
-	if hasActiveSubscription(&user) && user.Plan != nil && user.ExpiresAt != nil && user.Plan.DurationDays > 0 {
+	if service.HasActiveSubscription(user, time.Now()) && user.Plan != nil && user.ExpiresAt != nil && user.Plan.DurationDays > 0 {
 		fallbackStartedAt := user.ExpiresAt.AddDate(0, 0, -user.Plan.DurationDays)
 		return &fallbackStartedAt
 	}
@@ -251,7 +251,7 @@ func publicUser(user model.User) gin.H {
 		"expires_at":     user.ExpiresAt,
 		"email_verified": user.EmailVerified,
 	}
-	if hasActiveSubscription(&user) && user.Plan != nil {
+	if service.HasActiveSubscription(user, time.Now()) && user.Plan != nil {
 		body["plan"] = gin.H{
 			"id":                   user.Plan.ID,
 			"name":                 user.Plan.Name,

@@ -89,3 +89,24 @@ func TestFillUsageCachedInputTokens(t *testing.T) {
 		t.Fatalf("EstimatedUSDMicros = %d, want positive", log.EstimatedUSDMicros)
 	}
 }
+
+func TestFillUsagePrefersUpstreamCost(t *testing.T) {
+	log := model.APILog{}
+
+	fillUsage(nil, &log, []byte(`{
+		"model": "gpt-4o-mini",
+		"usage": {
+			"prompt_tokens": 10,
+			"completion_tokens": 7,
+			"total_tokens": 17,
+			"cost_usd": 0.017485
+		}
+	}`))
+
+	if log.EstimatedUSDMicros != 17485 {
+		t.Fatalf("EstimatedUSDMicros = %d, want 17485", log.EstimatedUSDMicros)
+	}
+	if log.BillingSource != "upstream_cost" {
+		t.Fatalf("BillingSource = %q, want upstream_cost", log.BillingSource)
+	}
+}

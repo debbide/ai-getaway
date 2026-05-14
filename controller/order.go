@@ -14,6 +14,7 @@ import (
 
 	"ai-gateway/model"
 	"ai-gateway/response"
+	"ai-gateway/service"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -38,7 +39,7 @@ func (o *OrderController) Create(c *gin.Context) {
 		response.Error(c, 401, "user not found")
 		return
 	}
-	if hasActiveSubscription(&user) {
+	if service.HasActiveSubscription(user, time.Now()) {
 		response.Error(c, 409, "active subscription in effect")
 		return
 	}
@@ -337,19 +338,6 @@ func requestBaseURL(c *gin.Context) string {
 		host = c.Request.Host
 	}
 	return proto + "://" + host
-}
-
-func hasActiveSubscription(u *model.User) bool {
-	if u.Status != model.UserStatusApproved {
-		return false
-	}
-	if u.PlanID == nil {
-		return false
-	}
-	if u.ExpiresAt == nil {
-		return false
-	}
-	return time.Now().Before(*u.ExpiresAt)
 }
 
 func epaySign(params map[string]string, key string) string {

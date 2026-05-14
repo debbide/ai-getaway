@@ -2,10 +2,12 @@ package controller
 
 import (
 	"errors"
+	"time"
 
 	"ai-gateway/config"
 	"ai-gateway/model"
 	"ai-gateway/response"
+	"ai-gateway/service"
 	"ai-gateway/utils"
 
 	"github.com/gin-gonic/gin"
@@ -69,6 +71,10 @@ func (a *APIKeyController) Create(c *gin.Context) {
 		response.Error(c, 403, "account pending approval")
 		return
 	}
+	if !service.HasActiveSubscription(user, time.Now()) {
+		response.Error(c, 403, "subscription expired")
+		return
+	}
 	if _, err := a.loadUpstream(user.ID); err != nil {
 		response.Error(c, 403, "no active upstream account bound")
 		return
@@ -127,6 +133,10 @@ func (a *APIKeyController) Rotate(c *gin.Context) {
 	user := c.MustGet("user").(model.User)
 	if user.Status != model.UserStatusApproved {
 		response.Error(c, 403, "account pending approval")
+		return
+	}
+	if !service.HasActiveSubscription(user, time.Now()) {
+		response.Error(c, 403, "subscription expired")
 		return
 	}
 	if _, err := a.loadUpstream(user.ID); err != nil {

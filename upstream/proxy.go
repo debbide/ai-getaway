@@ -187,6 +187,9 @@ func applyUsage(db *gorm.DB, log *model.APILog, modelName string, usage response
 	if totalTokens > 0 {
 		log.TotalTokens = totalTokens
 	}
+	if applyUpstreamCost(log, usage) {
+		return
+	}
 	applyBillingResult(log, service.BillUsage(db, log.ModelName, promptTokens, cachedInputTokens, completionTokens, totalTokens))
 }
 
@@ -317,6 +320,36 @@ func applyBillingResult(log *model.APILog, result service.BillingResult) {
 	log.OutputUSDPerMillion = result.OutputUSDPerMillion
 	log.BillingMultiplier = result.BillingMultiplier
 	log.BillingSource = result.BillingSource
+}
+
+func applyUpstreamCost(log *model.APILog, usage responseUsage) bool {
+	costUSD := upstreamCostUSD(usage)
+	if costUSD <= 0 {
+		return false
+	}
+
+	micros := int64(costUSD*1_000_000 + 0.5)
+	log.InputUSDMicros = 0
+	log.CachedInputUSDMicros = 0
+	log.OutputUSDMicros = 0
+	log.EstimatedUSDMicros = micros
+	log.EstimatedUSDCents = service.USDmicrosToCents(micros)
+	log.BillingMultiplier = 1
+	log.BillingSource = "upstream_cost"
+	return true
+}
+
+func upstreamCostUSD(usage responseUsage) float64 {
+	switch {
+	case usage.CostUSD > 0:
+		return usage.CostUSD
+	case usage.TotalCost > 0:
+		return usage.TotalCost
+	case usage.Cost > 0:
+		return usage.Cost
+	default:
+		return 0
+	}
 }
 
 func intToString(v uint) string {
