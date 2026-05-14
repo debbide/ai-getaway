@@ -40,6 +40,7 @@ func AutoMigrate(db *gorm.DB) {
 		&model.Plan{},
 		&model.Order{},
 		&model.UpstreamAccount{},
+		&model.UpstreamChannel{},
 		&model.APIKey{},
 		&model.APILog{},
 		&model.SystemSetting{},
@@ -52,9 +53,9 @@ func AutoMigrate(db *gorm.DB) {
 
 func Seed(db *gorm.DB, cfg config.Config) {
 	plans := []model.Plan{
-		{Name: "日卡套餐", Code: "day-pass", BadgeText: "日用特惠", PlanType: "subscription", PriceCents: 590, SettlementUSDCents: 2000, QuotaTokens: 0, DailyQuotaTokens: 0, WeeklyQuotaTokens: 0, DurationDays: 1, Description: "灵活应对突发需求", Enabled: true},
-		{Name: "月卡（标准）", Code: "monthly", BadgeText: "热卖推荐", PlanType: "subscription", PriceCents: 5900, SettlementUSDCents: 6000, QuotaTokens: 0, DailyQuotaTokens: 0, WeeklyQuotaTokens: 0, DurationDays: 30, Description: "覆盖常规研发工作量", Enabled: true},
-		{Name: "月卡（专业）", Code: "team", BadgeText: "高频进阶", PlanType: "subscription", PriceCents: 9000, SettlementUSDCents: 9000, QuotaTokens: 0, DailyQuotaTokens: 0, WeeklyQuotaTokens: 0, DurationDays: 30, Description: "为高频团队保驾护航", Enabled: true},
+		{Name: "日卡套餐", Code: "day-pass", BadgeText: "日用特惠", PlanType: "subscription", QuotaPeriod: "daily", PriceCents: 590, SettlementUSDCents: 2000, QuotaTokens: 0, DailyQuotaTokens: 0, WeeklyQuotaTokens: 0, DurationDays: 1, Description: "灵活应对突发需求", Enabled: true},
+		{Name: "月卡（标准）", Code: "monthly", BadgeText: "热卖推荐", PlanType: "subscription", QuotaPeriod: "weekly", PriceCents: 5900, SettlementUSDCents: 6000, QuotaTokens: 0, DailyQuotaTokens: 0, WeeklyQuotaTokens: 0, DurationDays: 30, Description: "覆盖常规研发工作量", Enabled: true},
+		{Name: "月卡（专业）", Code: "team", BadgeText: "高频进阶", PlanType: "subscription", QuotaPeriod: "weekly", PriceCents: 9000, SettlementUSDCents: 9000, QuotaTokens: 0, DailyQuotaTokens: 0, WeeklyQuotaTokens: 0, DurationDays: 30, Description: "为高频团队保驾护航", Enabled: true},
 	}
 	for _, plan := range plans {
 		db.FirstOrCreate(&plan, model.Plan{Name: plan.Name})

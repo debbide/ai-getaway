@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"encoding/json"
+	"errors"
 	"time"
 
 	"ai-gateway/model"
@@ -20,8 +22,9 @@ func NewAdminController(db *gorm.DB) *AdminController {
 }
 
 type approveOrderRequest struct {
-	Channel   string `json:"channel" binding:"required"`
-	BaseURL   string `json:"base_url" binding:"required,url"`
+	ChannelID uint   `json:"channel_id"`
+	Channel   string `json:"channel"`
+	BaseURL   string `json:"base_url"`
 	APIKey    string `json:"api_key" binding:"required"`
 	AdminNote string `json:"admin_note"`
 }
@@ -31,6 +34,7 @@ type planRequest struct {
 	Code               string `json:"code"`
 	BadgeText          string `json:"badge_text"`
 	PlanType           string `json:"plan_type"`
+	QuotaPeriod        string `json:"quota_period"`
 	PriceCents         int64  `json:"price_cents" binding:"required,min=1"`
 	SettlementUSDCents int64  `json:"settlement_usd_cents"`
 	QuotaTokens        int64  `json:"quota_tokens"`
@@ -49,8 +53,38 @@ type updateUserRequest struct {
 	Status        string `json:"status"`
 	EmailVerified *bool  `json:"email_verified"`
 	PlanID        *uint  `json:"plan_id"`
+	PlanIDPresent bool   `json:"-"`
 	QuotaTokens   *int64 `json:"quota_tokens"`
 	UsedTokens    *int64 `json:"used_tokens"`
+}
+
+func (r *updateUserRequest) UnmarshalJSON(data []byte) error {
+	type request updateUserRequest
+	if err := json.Unmarshal(data, (*request)(r)); err != nil {
+		return err
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	value, ok := raw["plan_id"]
+	if !ok {
+		return nil
+	}
+
+	r.PlanIDPresent = true
+	if string(value) == "null" {
+		r.PlanID = nil
+		return nil
+	}
+
+	var planID uint
+	if err := json.Unmarshal(value, &planID); err != nil {
+		return err
+	}
+	r.PlanID = &planID
+	return nil
 }
 
 type createUserRequest struct {
@@ -70,12 +104,24 @@ type rejectOrderRequest struct {
 }
 
 type updateOrderRequest struct {
-	Channel    string `json:"channel"`
-	BaseURL    string `json:"base_url"`
-	APIKey     string `json:"api_key"`
-	AdminNote  string `json:"admin_note"`
-	PlanID     *uint  `json:"plan_id"`
+	ChannelID   uint   `json:"channel_id"`
+	Channel     string `json:"channel"`
+	BaseURL     string `json:"base_url"`
+	APIKey      string `json:"api_key"`
+	AdminNote   string `json:"admin_note"`
+	PlanID      *uint  `json:"plan_id"`
 	AmountCents *int64 `json:"amount_cents"`
+}
+
+type upstreamChannelRequest struct {
+	Name    string `json:"name" binding:"required,min=2,max=64"`
+	BaseURL string `json:"base_url" binding:"required,url"`
+	Enabled bool   `json:"enabled"`
+}
+
+type orderResponse struct {
+	model.Order
+	Upstream *model.UpstreamAccount `json:"Upstream,omitempty"`
 }
 
 func (a *AdminController) Users(c *gin.Context) {
@@ -116,6 +162,17 @@ func (a *AdminController) CreateUser(c *gin.Context) {
 		PlanID:        req.PlanID,
 		QuotaTokens:   req.QuotaTokens,
 		UsedTokens:    req.UsedTokens,
+	}
+	if req.PlanID != nil {
+		var plan model.Plan
+		if err := a.db.First(&plan, *req.PlanID).Error; err != nil {
+			response.Error(c, 404, "plan not found")
+			return
+		}
+		expiresAt := time.Now().AddDate(0, 0, plan.DurationDays)
+		user.QuotaTokens = plan.QuotaTokens
+		user.UsedTokens = 0
+		user.ExpiresAt = &expiresAt
 	}
 	if err := a.db.Create(&user).Error; err != nil {
 		response.Error(c, 409, "email already exists")
@@ -159,20 +216,45 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 	if req.EmailVerified != nil {
 		updates["email_verified"] = *req.EmailVerified
 	}
-	if req.PlanID != nil {
-		updates["plan_id"] = *req.PlanID
+	if req.PlanIDPresent {
+		if req.PlanID == nil {
+			updates["plan_id"] = nil
+			updates["expires_at"] = nil
+			updates["quota_tokens"] = 0
+			updates["used_tokens"] = 0
+		} else {
+			var plan model.Plan
+			if err := a.db.First(&plan, *req.PlanID).Error; err != nil {
+				response.Error(c, 404, "plan not found")
+				return
+			}
+			expiresAt := time.Now().AddDate(0, 0, plan.DurationDays)
+			updates["plan_id"] = plan.ID
+			updates["expires_at"] = &expiresAt
+			updates["quota_tokens"] = plan.QuotaTokens
+			updates["used_tokens"] = 0
+		}
 	}
-	if req.QuotaTokens != nil {
+	if req.QuotaTokens != nil && !req.PlanIDPresent {
 		updates["quota_tokens"] = *req.QuotaTokens
 	}
-	if req.UsedTokens != nil {
+	if req.UsedTokens != nil && !req.PlanIDPresent {
 		updates["used_tokens"] = *req.UsedTokens
 	}
 	if len(updates) == 0 {
 		response.OK(c, nil)
 		return
 	}
-	if err := a.db.Model(&model.User{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
+	var user model.User
+	if err := a.db.First(&user, c.Param("id")).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Error(c, 404, "user not found")
+			return
+		}
+		response.Error(c, 500, "failed to update user")
+		return
+	}
+	if err := a.db.Model(&user).Updates(updates).Error; err != nil {
 		response.Error(c, 500, "failed to update user")
 		return
 	}
@@ -190,7 +272,30 @@ func (a *AdminController) DeleteUser(c *gin.Context) {
 func (a *AdminController) Orders(c *gin.Context) {
 	var orders []model.Order
 	a.db.Preload("User").Preload("Plan").Order("id desc").Find(&orders)
-	response.OK(c, orders)
+
+	userIDs := make([]uint, 0, len(orders))
+	for _, order := range orders {
+		userIDs = append(userIDs, order.UserID)
+	}
+
+	var upstreams []model.UpstreamAccount
+	if len(userIDs) > 0 {
+		a.db.Where("user_id IN ?", userIDs).Find(&upstreams)
+	}
+	upstreamByUserID := map[uint]model.UpstreamAccount{}
+	for _, upstream := range upstreams {
+		upstreamByUserID[upstream.UserID] = upstream
+	}
+
+	items := make([]orderResponse, 0, len(orders))
+	for _, order := range orders {
+		item := orderResponse{Order: order}
+		if upstream, ok := upstreamByUserID[order.UserID]; ok {
+			item.Upstream = &upstream
+		}
+		items = append(items, item)
+	}
+	response.OK(c, items)
 }
 
 func (a *AdminController) Plans(c *gin.Context) {
@@ -211,6 +316,7 @@ func (a *AdminController) CreatePlan(c *gin.Context) {
 		Code:               req.Code,
 		BadgeText:          req.BadgeText,
 		PlanType:           fallbackPlanType(req.PlanType),
+		QuotaPeriod:        fallbackQuotaPeriod(req.QuotaPeriod),
 		PriceCents:         req.PriceCents,
 		SettlementUSDCents: req.SettlementUSDCents,
 		QuotaTokens:        req.QuotaTokens,
@@ -238,6 +344,7 @@ func (a *AdminController) UpdatePlan(c *gin.Context) {
 		"code":                 req.Code,
 		"badge_text":           req.BadgeText,
 		"plan_type":            fallbackPlanType(req.PlanType),
+		"quota_period":         fallbackQuotaPeriod(req.QuotaPeriod),
 		"price_cents":          req.PriceCents,
 		"settlement_usd_cents": req.SettlementUSDCents,
 		"quota_tokens":         req.QuotaTokens,
@@ -267,6 +374,20 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 	var req approveOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, 400, err.Error())
+		return
+	}
+
+	if req.ChannelID > 0 {
+		channel, err := a.loadUpstreamChannel(req.ChannelID)
+		if err != nil {
+			response.Error(c, 404, "upstream channel not found")
+			return
+		}
+		req.Channel = channel.Name
+		req.BaseURL = channel.BaseURL
+	}
+	if req.Channel == "" || req.BaseURL == "" {
+		response.Error(c, 400, "upstream channel is required")
 		return
 	}
 
@@ -353,22 +474,81 @@ func (a *AdminController) UpdateOrder(c *gin.Context) {
 		updates["admin_note"] = req.AdminNote
 	}
 	if req.PlanID != nil {
+		if order.Status == model.OrderStatusApproved {
+			response.Error(c, 409, "approved order plan cannot be changed")
+			return
+		}
 		updates["plan_id"] = *req.PlanID
 	}
 	if req.AmountCents != nil && *req.AmountCents > 0 {
 		updates["amount_cents"] = *req.AmountCents
 	}
+	if req.ChannelID > 0 {
+		channel, err := a.loadUpstreamChannel(req.ChannelID)
+		if err != nil {
+			response.Error(c, 404, "upstream channel not found")
+			return
+		}
+		req.Channel = channel.Name
+		req.BaseURL = channel.BaseURL
+	}
 
-	if len(updates) == 0 {
+	upstreamUpdates := map[string]interface{}{}
+	if req.Channel != "" {
+		upstreamUpdates["channel"] = req.Channel
+	}
+	if req.BaseURL != "" {
+		upstreamUpdates["base_url"] = req.BaseURL
+	}
+	if req.APIKey != "" {
+		upstreamUpdates["api_key"] = req.APIKey
+	}
+
+	if len(updates) == 0 && len(upstreamUpdates) == 0 {
 		response.OK(c, nil)
 		return
 	}
 
-	if err := a.db.Model(&order).Updates(updates).Error; err != nil {
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if len(updates) > 0 {
+			if err := tx.Model(&order).Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+		if len(upstreamUpdates) > 0 {
+			if order.Status != model.OrderStatusApproved {
+				return nil
+			}
+			upstream := model.UpstreamAccount{
+				UserID: order.UserID,
+				Status: model.UpstreamStatusActive,
+			}
+			if req.Channel != "" {
+				upstream.Channel = req.Channel
+			}
+			if req.BaseURL != "" {
+				upstream.BaseURL = req.BaseURL
+			}
+			if req.APIKey != "" {
+				upstream.APIKey = req.APIKey
+			}
+			return tx.Where(model.UpstreamAccount{UserID: order.UserID}).Assign(upstreamUpdates).FirstOrCreate(&upstream).Error
+		}
+		return nil
+	})
+	if err != nil {
 		response.Error(c, 500, "failed to update order")
 		return
 	}
 	response.OK(c, nil)
+}
+
+func (a *AdminController) loadUpstreamChannel(id uint) (*model.UpstreamChannel, error) {
+	var channel model.UpstreamChannel
+	if err := a.db.Where("id = ? AND enabled = ?", id, true).First(&channel).Error; err != nil {
+		return nil, err
+	}
+	return &channel, nil
 }
 
 func fallbackPlanType(value string) string {
@@ -378,10 +558,69 @@ func fallbackPlanType(value string) string {
 	return value
 }
 
+func fallbackQuotaPeriod(value string) string {
+	if value == "daily" {
+		return "daily"
+	}
+	return "weekly"
+}
+
 func (a *AdminController) Upstreams(c *gin.Context) {
 	var upstreams []model.UpstreamAccount
 	a.db.Preload("User").Order("id desc").Find(&upstreams)
 	response.OK(c, upstreams)
+}
+
+func (a *AdminController) UpstreamChannels(c *gin.Context) {
+	var channels []model.UpstreamChannel
+	a.db.Order("id desc").Find(&channels)
+	response.OK(c, channels)
+}
+
+func (a *AdminController) CreateUpstreamChannel(c *gin.Context) {
+	var req upstreamChannelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+
+	channel := model.UpstreamChannel{
+		Name:    req.Name,
+		BaseURL: req.BaseURL,
+		Enabled: req.Enabled,
+	}
+	if err := a.db.Create(&channel).Error; err != nil {
+		response.Error(c, 500, "failed to create upstream channel")
+		return
+	}
+	response.Created(c, channel)
+}
+
+func (a *AdminController) UpdateUpstreamChannel(c *gin.Context) {
+	var req upstreamChannelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+
+	updates := map[string]interface{}{
+		"name":     req.Name,
+		"base_url": req.BaseURL,
+		"enabled":  req.Enabled,
+	}
+	if err := a.db.Model(&model.UpstreamChannel{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
+		response.Error(c, 500, "failed to update upstream channel")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) DeleteUpstreamChannel(c *gin.Context) {
+	if err := a.db.Delete(&model.UpstreamChannel{}, c.Param("id")).Error; err != nil {
+		response.Error(c, 500, "failed to delete upstream channel")
+		return
+	}
+	response.OK(c, nil)
 }
 
 func (a *AdminController) APIKeys(c *gin.Context) {

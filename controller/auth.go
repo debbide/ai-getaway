@@ -184,6 +184,9 @@ func (a *AuthController) Me(c *gin.Context) {
 			body["subscription_started_at"] = lastOrder.ApprovedAt
 		}
 	}
+	if hasActiveSubscription(&user) && user.Plan != nil {
+		body["quota_usage"] = service.PlanQuotaUsage(a.db, user.ID, user.Plan, time.Now())
+	}
 	response.OK(c, body)
 }
 
@@ -232,12 +235,14 @@ func publicUser(user model.User) gin.H {
 		"expires_at":     user.ExpiresAt,
 		"email_verified": user.EmailVerified,
 	}
-	if user.Plan != nil {
+	if hasActiveSubscription(&user) && user.Plan != nil {
 		body["plan"] = gin.H{
-			"id":                     user.Plan.ID,
-			"name":                   user.Plan.Name,
-			"settlement_usd_cents":   user.Plan.SettlementUSDCents,
+			"id":                   user.Plan.ID,
+			"name":                 user.Plan.Name,
+			"settlement_usd_cents": user.Plan.SettlementUSDCents,
+			"quota_period":         user.Plan.QuotaPeriod,
 			"duration_days":        user.Plan.DurationDays,
+			"daily_quota_tokens":   user.Plan.DailyQuotaTokens,
 			"weekly_quota_tokens":  user.Plan.WeeklyQuotaTokens,
 			"description":          user.Plan.Description,
 		}

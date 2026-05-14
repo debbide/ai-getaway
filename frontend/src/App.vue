@@ -15,7 +15,7 @@ const defaultNavigation = [
 ]
 
 const defaultSettings = {
-  site_title: 'CodexZH',
+  site_title: '星空AI',
   tutorial_video_url: '',
   navigation_items: JSON.stringify(defaultNavigation),
   pricing_title: '简单透明的定价',
@@ -235,13 +235,17 @@ function priceRmb(plan) {
   return ((plan.PriceCents || 0) / 100).toFixed((plan.PriceCents || 0) % 100 === 0 ? 0 : 1)
 }
 
-function weeklyUsd(plan) {
+function periodUsd(plan) {
   return ((plan.SettlementUSDCents || 0) / 100).toFixed((plan.SettlementUSDCents || 0) % 100 === 0 ? 0 : 2)
 }
 
+function quotaPeriodLabel(plan) {
+  return plan.QuotaPeriod === 'daily' ? '日限额度' : '周限额度'
+}
+
 function totalUsd(plan) {
-  const weeks = Math.max(1, Math.round((plan.DurationDays || 30) / 7))
-  return (((plan.SettlementUSDCents || 0) / 100) * weeks).toFixed(0)
+  const units = plan.QuotaPeriod === 'daily' ? (plan.DurationDays || 1) : Math.max(1, Math.round((plan.DurationDays || 30) / 7))
+  return (((plan.SettlementUSDCents || 0) / 100) * units).toFixed(0)
 }
 
 function planPeriod(plan) {
@@ -264,8 +268,8 @@ function planSubtitle(index) {
     <header class="site-header">
       <div class="site-nav mx-auto flex max-w-7xl items-center justify-between px-4 sm:px-6">
         <button class="brand-lockup focus-ring" @click="navigate('/')">
-          <span class="brand-mark">CZ</span>
-          <strong>{{ publicSettings.site_title || 'CodexZH' }}</strong>
+          <span class="brand-mark">XK</span>
+          <strong>{{ publicSettings.site_title || '星空AI' }}</strong>
         </button>
 
         <nav class="hidden items-center gap-7 text-sm font-bold md:flex">
@@ -324,11 +328,11 @@ function planSubtitle(index) {
         <div class="home-hero-inner mx-auto max-w-7xl px-4 sm:px-6">
           <div class="hero-badge">✣ 为中国开发者量身打造</div>
           <h1>
-            <span>{{ publicSettings.site_title || 'CodexZH' }}</span>
+            <span>{{ publicSettings.site_title || '星空AI' }}</span>
             AI驱动的编程助手
           </h1>
           <p>
-            {{ publicSettings.site_title || 'CodexZH' }} 是专为中国开发者设计的智能编程助手，通过先进的AI技术提供代码生成、调试优化和实时协作功能，让编程更高效、更智能。
+            {{ publicSettings.site_title || '星空AI' }} 是专为中国开发者设计的智能编程助手，通过先进的AI技术提供代码生成、调试优化和实时协作功能，让编程更高效、更智能。
           </p>
           <div class="hero-tags">
             <span>✓ 强大功能，助力开发</span>
@@ -396,7 +400,7 @@ function planSubtitle(index) {
               <span>/{{ planPeriod(plan) }}</span>
             </div>
             <div class="subscription-facts">
-              <div><span class="fact-icon">▣</span><span>周限额度：${{ weeklyUsd(plan) }}</span></div>
+              <div><span class="fact-icon">▣</span><span>{{ quotaPeriodLabel(plan) }}：${{ periodUsd(plan) }}</span></div>
               <div><span class="fact-icon">□</span><span>套餐时长：{{ plan.DurationDays }} 天</span></div>
               <div><span class="fact-icon">↗</span><span>总额度：约${{ totalUsd(plan) }}</span></div>
             </div>
@@ -436,7 +440,7 @@ function planSubtitle(index) {
     </main>
 
     <footer class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-8 text-sm text-muted sm:px-6">
-      <span>{{ publicSettings.site_title || 'CodexZH' }}</span>
+      <span>{{ publicSettings.site_title || '星空AI' }}</span>
       <span>联系邮箱：support@example.com</span>
     </footer>
 

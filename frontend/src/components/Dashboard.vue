@@ -33,6 +33,7 @@ const pagedOrders = computed(() => {
 const hasActiveSubscription = computed(() => {
   const u = auth.user
   if (!u || u.status !== 'approved') return false
+  if (!u.plan?.id) return false
   if (!u.expires_at) return false
   return new Date(u.expires_at) > new Date()
 })
@@ -46,6 +47,18 @@ const planPeriodStartIso = computed(() => {
   const s = new Date(end.getTime())
   s.setDate(s.getDate() - Number(u.plan.duration_days))
   return s.toISOString()
+})
+
+const quotaUsage = computed(() => auth.user?.quota_usage || null)
+const quotaUsagePercent = computed(() => {
+  const percent = Number(quotaUsage.value?.percent || 0)
+  if (!Number.isFinite(percent)) return 0
+  return Math.min(100, Math.max(0, percent))
+})
+const quotaProgressStyle = computed(() => ({ '--quota-progress': `${quotaUsagePercent.value}%` }))
+const quotaResetText = computed(() => {
+  if (!quotaUsage.value?.window_end) return ''
+  return `${quotaPeriodUnit(auth.user?.plan)}额度重置：${formatDateTime(quotaUsage.value.window_end)}`
 })
 
 const soloKey = computed(() => (keys.value.length ? keys.value[0] : null))
@@ -250,6 +263,16 @@ function usd(cents) {
   return `$${((cents || 0) / 100).toFixed(2)}`
 }
 
+function quotaPeriodText(plan) {
+  const period = plan?.QuotaPeriod || plan?.quota_period
+  return period === 'daily' ? '日限额度' : '周限额度'
+}
+
+function quotaPeriodUnit(plan) {
+  const period = plan?.QuotaPeriod || plan?.quota_period
+  return period === 'daily' ? '日' : '周'
+}
+
 function pad2(n) {
   return String(n).padStart(2, '0')
 }
@@ -378,7 +401,7 @@ function statusLabel(value) {
                 <p>{{ plan.Description || '暂无说明' }}</p>
                 <div>
                   <strong>{{ money(plan.PriceCents) }}</strong>
-                  <span>{{ plan.DurationDays }} 天 · 周限额度 {{ usd(plan.SettlementUSDCents) }}</span>
+                  <span>{{ plan.DurationDays }} 天 · {{ quotaPeriodText(plan) }} {{ usd(plan.SettlementUSDCents) }}</span>
                 </div>
                 <button
                   class="ghost-button small"
@@ -457,8 +480,28 @@ function statusLabel(value) {
                     <span class="badge-active">活跃</span>
                   </div>
                   <p class="plan-snapshot-quota text-muted">
-                    每周额度：{{ usd(auth.user?.plan?.settlement_usd_cents || 0) }}/周
+                    {{ quotaPeriodText(auth.user?.plan) }}：{{ usd(auth.user?.plan?.settlement_usd_cents || 0) }}/{{ quotaPeriodUnit(auth.user?.plan) }}
                   </p>
+                  <div v-if="quotaUsage" class="quota-progress-block">
+                    <div class="quota-progress-meta">
+                      <span>已用 {{ usd(quotaUsage.used_usd_cents || 0) }}</span>
+                      <span>剩余 {{ usd(quotaUsage.remaining_usd_cents || 0) }}</span>
+                    </div>
+                    <div
+                      class="quota-progress-track"
+                      role="progressbar"
+                      :aria-valuenow="Math.round(quotaUsagePercent)"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      :style="quotaProgressStyle"
+                    >
+                      <span class="quota-progress-fill"></span>
+                    </div>
+                    <div class="quota-progress-foot text-muted">
+                      <span>{{ quotaUsagePercent.toFixed(1) }}%</span>
+                      <span>{{ quotaResetText }}</span>
+                    </div>
+                  </div>
                 </div>
                 <div class="plan-snapshot-times">
                   <div class="plan-snapshot-timecell">

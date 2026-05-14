@@ -47,6 +47,7 @@ type Plan struct {
 	Code               string `gorm:"size:64;uniqueIndex"`
 	BadgeText          string `gorm:"size:32"`
 	PlanType           string `gorm:"size:32;default:subscription;index"`
+	QuotaPeriod        string `gorm:"size:16;default:weekly;index"`
 	PriceCents         int64  `gorm:"not null"`
 	SettlementUSDCents int64  `gorm:"default:0"`
 	QuotaTokens        int64  `gorm:"not null;default:0"`
@@ -83,6 +84,13 @@ type UpstreamAccount struct {
 	LastUsedAt *time.Time
 }
 
+type UpstreamChannel struct {
+	gorm.Model
+	Name    string `gorm:"size:64;uniqueIndex;not null"`
+	BaseURL string `gorm:"size:255;not null"`
+	Enabled bool   `gorm:"default:true;index"`
+}
+
 type APIKey struct {
 	gorm.Model
 	UserID       uint `gorm:"index;not null"`
@@ -111,7 +119,7 @@ type APILog struct {
 
 type SystemSetting struct {
 	gorm.Model
-	SiteTitle        string `gorm:"size:128;default:CodexZH"`
+	SiteTitle        string `gorm:"size:128;default:星空AI"`
 	TutorialVideoURL string `gorm:"size:512"`
 	NavigationItems  string `gorm:"type:text"`
 	PricingTitle     string `gorm:"size:128;default:简单透明的定价"`

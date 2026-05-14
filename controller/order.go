@@ -343,6 +343,9 @@ func hasActiveSubscription(u *model.User) bool {
 	if u.Status != model.UserStatusApproved {
 		return false
 	}
+	if u.PlanID == nil {
+		return false
+	}
 	if u.ExpiresAt == nil {
 		return false
 	}

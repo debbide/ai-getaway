@@ -6,6 +6,7 @@ const menu = [
   { key: 'overview', label: '总览', hint: '运营数据' },
   { key: 'plans', label: '套餐管理', hint: '价格与额度' },
   { key: 'orders', label: '审核管理', hint: '订单开通' },
+  { key: 'channels', label: '渠道管理', hint: '上游接口' },
   { key: 'users', label: '用户管理', hint: '账号与权限' },
   { key: 'navigation', label: '导航菜单', hint: '顶部菜单' },
   { key: 'settings', label: '系统设置', hint: '邮件与支付' }
@@ -43,14 +44,16 @@ const stats = ref({})
 const orders = ref([])
 const users = ref([])
 const plans = ref([])
+const channels = ref([])
 const error = ref('')
 const notice = ref('')
 const navDraft = ref([])
 const loading = ref(false)
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null })
-const approve = reactive({ orderId: '', channel: 'openai', baseUrl: 'https://api.openai.com', apiKey: '', adminNote: '', planId: '', amountCents: 0 })
+const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', apiKey: '', adminNote: '', planId: '', amountCents: 0, status: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
 const planForm = reactive(emptyPlan())
+const channelForm = reactive(emptyChannel())
 const userForm = reactive(emptyUser())
 const settings = reactive({
   site_title: '',
@@ -78,6 +81,7 @@ const settings = reactive({
 const pendingOrders = computed(() => orders.value.filter((order) => order.Status === 'pending_review').length)
 const enabledPlans = computed(() => plans.value.filter((plan) => plan.Enabled).length)
 const approvedUsers = computed(() => users.value.filter((user) => user.Status === 'approved').length)
+const enabledChannels = computed(() => channels.value.filter((channel) => channel.Enabled).length)
 
 onMounted(loadAll)
 
@@ -88,8 +92,9 @@ function emptyPlan() {
     code: '',
     badge_text: '',
     plan_type: 'subscription',
+    quota_period: 'weekly',
     price_rmb: 9.9,
-    weekly_usd_quota: 20,
+    period_usd_quota: 20,
     price_cents: 990,
     settlement_usd_cents: 2000,
     quota_tokens: 200000,
@@ -116,21 +121,32 @@ function emptyUser() {
   }
 }
 
+function emptyChannel() {
+  return {
+    id: null,
+    name: '',
+    base_url: '',
+    enabled: true
+  }
+}
+
 async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const [statsRes, ordersRes, usersRes, plansRes, settingsRes] = await Promise.all([
+    const [statsRes, ordersRes, usersRes, plansRes, channelsRes, settingsRes] = await Promise.all([
       api.get('/admin/stats'),
       api.get('/admin/orders'),
       api.get('/admin/users'),
       api.get('/admin/plans'),
+      api.get('/admin/upstream-channels'),
       api.get('/admin/settings')
     ])
     stats.value = statsRes.data || {}
     orders.value = ordersRes.data || []
     users.value = usersRes.data || []
     plans.value = plansRes.data || []
+    channels.value = channelsRes.data || []
     Object.assign(settings, settingsRes.data, { smtp_password: '', epay_key: '' })
     setNavigationDraft(settings.navigation_items)
   } catch (err) {
@@ -154,8 +170,9 @@ function openPlanModal(plan = null) {
       code: plan.Code,
       badge_text: plan.BadgeText || '',
       plan_type: plan.PlanType || 'subscription',
+      quota_period: plan.QuotaPeriod || 'weekly',
       price_rmb: centsToAmount(plan.PriceCents),
-      weekly_usd_quota: centsToAmount(plan.SettlementUSDCents),
+      period_usd_quota: centsToAmount(plan.SettlementUSDCents),
       price_cents: plan.PriceCents,
       settlement_usd_cents: plan.SettlementUSDCents,
       quota_tokens: plan.QuotaTokens,
@@ -190,6 +207,43 @@ async function deletePlan() {
   await runAction(async () => {
     await api.delete(`/admin/plans/${modal.payload.plan.ID}`)
     notice.value = '套餐已删除'
+  })
+}
+
+function openChannelModal(channel = null) {
+  Object.assign(channelForm, emptyChannel())
+  if (channel) {
+    Object.assign(channelForm, {
+      id: channel.ID,
+      name: channel.Name,
+      base_url: channel.BaseURL,
+      enabled: channel.Enabled
+    })
+  }
+  showModal(channel ? 'edit-channel' : 'create-channel', channel ? '编辑渠道' : '新增渠道', channel ? '保存修改' : '创建渠道')
+}
+
+async function submitChannel() {
+  const payload = normalizeChannel(channelForm)
+  await runAction(async () => {
+    if (channelForm.id) {
+      await api.put(`/admin/upstream-channels/${channelForm.id}`, payload)
+      notice.value = '渠道已更新'
+    } else {
+      await api.post('/admin/upstream-channels', payload)
+      notice.value = '渠道已创建'
+    }
+  })
+}
+
+function confirmDeleteChannel(channel) {
+  showModal('delete-channel', '删除渠道', '确认删除', { channel }, true)
+}
+
+async function deleteChannel() {
+  await runAction(async () => {
+    await api.delete(`/admin/upstream-channels/${modal.payload.channel.ID}`)
+    notice.value = '渠道已删除'
   })
 }
 
@@ -237,27 +291,34 @@ async function deleteUser() {
 }
 
 function openApproveModal(order) {
+  const channel = channels.value.find((item) => item.Enabled) || null
   Object.assign(approve, {
     orderId: String(order.ID),
-    channel: 'openai',
-    baseUrl: 'https://api.openai.com',
+    channelId: channel?.ID || '',
+    channel: channel?.Name || '',
+    baseUrl: channel?.BaseURL || '',
     apiKey: '',
     adminNote: '',
     planId: order.PlanID || order.Plan?.ID || '',
-    amountCents: order.AmountCents || 0
+    amountCents: order.AmountCents || 0,
+    status: order.Status
   })
   showModal('approve-order', `审核订单 #${order.ID}`, '通过并开通')
 }
 
 function openEditOrderModal(order) {
+  const upstream = order.Upstream || {}
+  const channel = channels.value.find((item) => item.Name === upstream.Channel) || null
   Object.assign(approve, {
     orderId: String(order.ID),
-    channel: order.Channel || 'openai',
-    baseUrl: order.BaseURL || 'https://api.openai.com',
-    apiKey: order.APIKey || '',
+    channelId: channel?.ID || '',
+    channel: upstream.Channel || '',
+    baseUrl: upstream.BaseURL || '',
+    apiKey: '',
     adminNote: order.AdminNote || '',
     planId: order.PlanID || order.Plan?.ID || '',
-    amountCents: order.AmountCents || 0
+    amountCents: order.AmountCents || 0,
+    status: order.Status
   })
   showModal('edit-order', `编辑订单 #${order.ID}`, '保存修改')
 }
@@ -267,9 +328,21 @@ function openRejectModal(order) {
   showModal('reject-order', `拒绝订单 #${order.ID}`, '确认拒绝', null, true)
 }
 
+function selectedApproveChannel() {
+  return channels.value.find((channel) => String(channel.ID) === String(approve.channelId)) || null
+}
+
+function syncApproveChannel() {
+  const channel = selectedApproveChannel()
+  approve.channel = channel?.Name || ''
+  approve.baseUrl = channel?.BaseURL || ''
+}
+
 async function approveOrder() {
+  syncApproveChannel()
   await runAction(async () => {
     await api.post(`/admin/orders/${approve.orderId}/approve`, {
+      channel_id: Number(approve.channelId) || undefined,
       channel: approve.channel,
       base_url: approve.baseUrl,
       api_key: approve.apiKey,
@@ -280,15 +353,20 @@ async function approveOrder() {
 }
 
 async function editOrder() {
+  syncApproveChannel()
+  const payload = {
+    channel_id: Number(approve.channelId) || undefined,
+    channel: approve.channel,
+    base_url: approve.baseUrl,
+    api_key: approve.apiKey,
+    admin_note: approve.adminNote,
+    amount_cents: Number(approve.amountCents) || undefined
+  }
+  if (approve.status !== 'approved') {
+    payload.plan_id = Number(approve.planId) || undefined
+  }
   await runAction(async () => {
-    await api.put(`/admin/orders/${approve.orderId}`, {
-      channel: approve.channel,
-      base_url: approve.baseUrl,
-      api_key: approve.apiKey,
-      admin_note: approve.adminNote,
-      plan_id: Number(approve.planId) || undefined,
-      amount_cents: Number(approve.amountCents) || undefined
-    })
+    await api.put(`/admin/orders/${approve.orderId}`, payload)
     notice.value = '订单已保存'
   })
 }
@@ -440,14 +518,23 @@ function normalizePlan(plan) {
     code: plan.code.trim(),
     badge_text: plan.badge_text.trim(),
     plan_type: plan.plan_type,
+    quota_period: plan.quota_period,
     price_cents: amountToCents(plan.price_rmb),
-    settlement_usd_cents: amountToCents(plan.weekly_usd_quota),
+    settlement_usd_cents: amountToCents(plan.period_usd_quota),
     quota_tokens: 0,
     daily_quota_tokens: 0,
     weekly_quota_tokens: 0,
     duration_days: Number(plan.duration_days || 1),
     description: plan.description.trim(),
     enabled: Boolean(plan.enabled)
+  }
+}
+
+function normalizeChannel(channel) {
+  return {
+    name: channel.name.trim(),
+    base_url: channel.base_url.trim(),
+    enabled: Boolean(channel.enabled)
   }
 }
 
@@ -458,11 +545,9 @@ function normalizeUser(user) {
     role: user.role,
     status: user.status,
     email_verified: Boolean(user.email_verified),
-    quota_tokens: Number(user.quota_tokens || 0),
-    used_tokens: Number(user.used_tokens || 0)
+    plan_id: user.plan_id === '' || user.plan_id === null ? null : Number(user.plan_id)
   }
   if (user.password) payload.password = user.password
-  if (user.plan_id) payload.plan_id = Number(user.plan_id)
   return payload
 }
 
@@ -486,12 +571,17 @@ function usd(value) {
   return `$${((value || 0) / 100).toFixed(2)}`
 }
 
+function quotaPeriodLabel(period) {
+  return period === 'daily' ? '每日' : '每周'
+}
+
 function planWeeks(plan) {
   return Math.max(1, Math.round((plan.DurationDays || 30) / 7))
 }
 
 function totalUsd(plan) {
-  return `$${(((plan.SettlementUSDCents || 0) / 100) * planWeeks(plan)).toFixed(0)}`
+  const units = plan.QuotaPeriod === 'daily' ? (plan.DurationDays || 1) : planWeeks(plan)
+  return `$${(((plan.SettlementUSDCents || 0) / 100) * units).toFixed(0)}`
 }
 
 function compactNumber(value) {
@@ -511,6 +601,9 @@ function submitModal() {
     'create-plan': submitPlan,
     'edit-plan': submitPlan,
     'delete-plan': deletePlan,
+    'create-channel': submitChannel,
+    'edit-channel': submitChannel,
+    'delete-channel': deleteChannel,
     'create-user': submitUser,
     'edit-user': submitUser,
     'delete-user': deleteUser,
@@ -619,7 +712,7 @@ function submitModal() {
                   <span :class="{ off: !plan.Enabled }"></span>
                   <div>
                     <strong>{{ plan.Name }}</strong>
-                    <small>{{ rmb(plan.PriceCents) }} · 周限额度 {{ usd(plan.SettlementUSDCents) }}</small>
+                    <small>{{ rmb(plan.PriceCents) }} · {{ quotaPeriodLabel(plan.QuotaPeriod) }}额度 {{ usd(plan.SettlementUSDCents) }}</small>
                   </div>
                 </article>
               </div>
@@ -655,7 +748,7 @@ function submitModal() {
                 <span>{{ plan.DurationDays }} 天</span>
               </div>
               <div class="quota-grid">
-                <span><b>{{ usd(plan.SettlementUSDCents) }}</b>每周美元额度</span>
+                <span><b>{{ usd(plan.SettlementUSDCents) }}</b>{{ quotaPeriodLabel(plan.QuotaPeriod) }}美元额度</span>
                 <span><b>{{ totalUsd(plan) }}</b>预计总额度</span>
                 <span><b>{{ plan.DurationDays }} 天</b>订阅周期</span>
               </div>
@@ -685,6 +778,7 @@ function submitModal() {
                     <th>订单</th>
                     <th>用户</th>
                     <th>套餐</th>
+                    <th>上游渠道</th>
                     <th>金额</th>
                     <th>状态</th>
                     <th>操作</th>
@@ -695,6 +789,7 @@ function submitModal() {
                     <td>#{{ order.ID }}</td>
                     <td>{{ order.User?.Email || '-' }}</td>
                     <td>{{ order.Plan?.Name || '-' }}</td>
+                    <td>{{ order.Upstream?.Channel || '-' }}</td>
                     <td>{{ money(order.AmountCents) }}</td>
                     <td><span class="status-badge">{{ statusLabel(order.Status) }}</span></td>
                     <td>
@@ -702,6 +797,48 @@ function submitModal() {
                         <button class="ghost-button small" @click="openEditOrderModal(order)">编辑</button>
                         <button class="ghost-button small" :disabled="order.Status !== 'pending_review'" @click="openApproveModal(order)">审核</button>
                         <button class="danger-button small" :disabled="order.Status !== 'pending_review'" @click="openRejectModal(order)">拒绝</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div v-if="active === 'channels'" class="space-y-5">
+          <div class="page-toolbar">
+            <div>
+              <p class="section-kicker">Channels</p>
+              <h2>渠道管理</h2>
+              <span>{{ enabledChannels }} 个启用渠道，{{ channels.length }} 个总渠道</span>
+            </div>
+            <div class="toolbar-actions">
+              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
+              <button class="primary-button" @click="openChannelModal()">新增渠道</button>
+            </div>
+          </div>
+
+          <section class="panel-surface overflow-hidden">
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>渠道名称</th>
+                    <th>API 地址</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="channel in channels" :key="channel.ID">
+                    <td>{{ channel.Name }}</td>
+                    <td>{{ channel.BaseURL }}</td>
+                    <td><span class="status-badge" :class="{ muted: !channel.Enabled }">{{ channel.Enabled ? '已启用' : '已停用' }}</span></td>
+                    <td>
+                      <div class="table-actions">
+                        <button class="ghost-button small" @click="openChannelModal(channel)">编辑</button>
+                        <button class="danger-button small" @click="confirmDeleteChannel(channel)">删除</button>
                       </div>
                     </td>
                   </tr>
@@ -746,7 +883,7 @@ function submitModal() {
                     <td>{{ roleLabel(user.Role) }}</td>
                     <td><span class="status-badge">{{ statusLabel(user.Status) }}</span></td>
                     <td>{{ user.Plan?.Name || '未分配' }}</td>
-                    <td>{{ user.Plan ? `${usd(user.Plan.SettlementUSDCents)} / 周` : '未分配' }}</td>
+                    <td>{{ user.Plan ? `${usd(user.Plan.SettlementUSDCents)} / ${user.Plan.QuotaPeriod === 'daily' ? '日' : '周'}` : '未分配' }}</td>
                     <td>
                       <div class="table-actions">
                         <button class="ghost-button small" @click="openUserModal(user)">编辑</button>
@@ -927,12 +1064,24 @@ function submitModal() {
           <label class="field"><span>套餐名称</span><input v-model="planForm.name" required placeholder="月卡套餐" /></label>
           <label class="field"><span>套餐编码</span><input v-model="planForm.code" placeholder="monthly" /></label>
           <label class="field"><span>套餐角标文案</span><input v-model="planForm.badge_text" placeholder="热卖推荐" maxlength="16" /></label>
+          <label class="field"><span>限额周期</span>
+            <select v-model="planForm.quota_period">
+              <option value="daily">日限额套餐</option>
+              <option value="weekly">周限额套餐</option>
+            </select>
+          </label>
           <label class="field"><span>售价（RMB）</span><input v-model.number="planForm.price_rmb" type="number" min="0.01" step="0.01" required /></label>
-          <label class="field"><span>每周美元额度</span><input v-model.number="planForm.weekly_usd_quota" type="number" min="0" step="0.01" /></label>
+          <label class="field"><span>{{ planForm.quota_period === 'daily' ? '每日美元额度' : '每周美元额度' }}</span><input v-model.number="planForm.period_usd_quota" type="number" min="0" step="0.01" /></label>
           <label class="field"><span>有效期（天）</span><input v-model.number="planForm.duration_days" type="number" min="1" required /></label>
-          <label class="field"><span>预计总美元额度</span><input :value="totalUsd({ SettlementUSDCents: amountToCents(planForm.weekly_usd_quota), DurationDays: planForm.duration_days })" readonly /></label>
+          <label class="field"><span>预计总美元额度</span><input :value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></label>
           <label class="field md:col-span-2"><span>套餐说明</span><textarea v-model="planForm.description" rows="3"></textarea></label>
           <label class="toggle-line md:col-span-2"><input v-model="planForm.enabled" type="checkbox" />启用套餐</label>
+        </div>
+
+        <div v-if="modal.type === 'create-channel' || modal.type === 'edit-channel'" class="modal-body form-grid">
+          <label class="field"><span>渠道名称</span><input v-model="channelForm.name" required placeholder="OpenAI" /></label>
+          <label class="field md:col-span-2"><span>API 地址</span><input v-model="channelForm.base_url" required placeholder="https://api.openai.com" /></label>
+          <label class="toggle-line md:col-span-2"><input v-model="channelForm.enabled" type="checkbox" />启用渠道</label>
         </div>
 
         <div v-if="modal.type === 'create-user' || modal.type === 'edit-user'" class="modal-body form-grid">
@@ -966,8 +1115,12 @@ function submitModal() {
 
         <div v-if="modal.type === 'approve-order'" class="modal-body form-grid">
           <label class="field"><span>订单 ID</span><input v-model="approve.orderId" readonly /></label>
-          <label class="field"><span>上游渠道</span><input v-model="approve.channel" required /></label>
-          <label class="field md:col-span-2"><span>上游 Base URL</span><input v-model="approve.baseUrl" required /></label>
+          <label class="field"><span>上游渠道</span>
+            <select v-model="approve.channelId" required @change="syncApproveChannel">
+              <option value="">请选择渠道</option>
+              <option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}</option>
+            </select>
+          </label>
           <label class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="password" required /></label>
           <label class="field md:col-span-2"><span>审核备注</span><textarea v-model="approve.adminNote" rows="3"></textarea></label>
         </div>
@@ -975,12 +1128,19 @@ function submitModal() {
         <div v-if="modal.type === 'edit-order'" class="modal-body form-grid">
           <label class="field"><span>订单 ID</span><input v-model="approve.orderId" readonly /></label>
           <label class="field"><span>关联套餐</span>
-            <select v-model="approve.planId">
+            <select v-model="approve.planId" :disabled="approve.status === 'approved'">
               <option value="">不分配</option>
               <option v-for="plan in plans" :key="plan.ID" :value="plan.ID">{{ plan.Name }}</option>
             </select>
           </label>
           <label class="field"><span>金额（分）</span><input v-model.number="approve.amountCents" type="number" min="0" /></label>
+          <label class="field"><span>上游渠道</span>
+            <select v-model="approve.channelId" @change="syncApproveChannel">
+              <option value="">不修改</option>
+              <option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}</option>
+            </select>
+          </label>
+          <label class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="password" placeholder="留空不修改" /></label>
           <label class="field md:col-span-2"><span>审核备注</span><textarea v-model="approve.adminNote" rows="3"></textarea></label>
         </div>
 
@@ -991,6 +1151,11 @@ function submitModal() {
         <div v-if="modal.type === 'delete-plan'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.plan?.Name }}」吗？</strong>
           <p>删除后该套餐不会再出现在管理列表和用户可购套餐中，请确认没有正在依赖它的运营流程。</p>
+        </div>
+
+        <div v-if="modal.type === 'delete-channel'" class="modal-body confirm-copy">
+          <strong>确定删除「{{ modal.payload?.channel?.Name }}」吗？</strong>
+          <p>删除后审核弹窗不再提供该渠道，请确认没有新的开通流程依赖它。</p>
         </div>
 
         <div v-if="modal.type === 'delete-user'" class="modal-body confirm-copy">

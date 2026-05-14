@@ -8,6 +8,7 @@ import (
 
 	"ai-gateway/model"
 	"ai-gateway/response"
+	"ai-gateway/service"
 	"ai-gateway/utils"
 
 	"github.com/gin-gonic/gin"
@@ -76,19 +77,11 @@ func allowPlanQuota(db *gorm.DB, user model.User) bool {
 	if user.Plan == nil {
 		return true
 	}
-	if user.Plan.SettlementUSDCents > 0 && usedUSDCentsSince(db, user.ID, time.Now().AddDate(0, 0, -7)) >= user.Plan.SettlementUSDCents {
+	usage := service.PlanQuotaUsage(db, user.ID, user.Plan, time.Now())
+	if usage.LimitUSDCents > 0 && usage.UsedUSDCents >= usage.LimitUSDCents {
 		return false
 	}
 	return true
-}
-
-func usedUSDCentsSince(db *gorm.DB, userID uint, since time.Time) int64 {
-	var total int64
-	db.Model(&model.APILog{}).
-		Where("user_id = ? AND created_at >= ?", userID, since).
-		Select("COALESCE(SUM(estimated_usd_cents), 0)").
-		Scan(&total)
-	return total
 }
 
 func allowAPIKey(redisClient *redis.Client, apiKeyID uint) bool {
