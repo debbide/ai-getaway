@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/smtp"
 	"strings"
+	"time"
 
 	"ai-gateway/model"
 )
@@ -24,6 +25,23 @@ const verificationTemplate = `
           {{.Code}}
         </div>
         <p style="margin:20px 0 0;font-size:13px;line-height:1.7;color:#60746a;">如果不是你本人操作，可以忽略这封邮件。</p>
+      </div>
+    </div>
+  </body>
+</html>`
+
+const smtpTestTemplate = `
+<!doctype html>
+<html>
+  <body style="margin:0;background:#f6faf7;font-family:Arial,'Microsoft YaHei',sans-serif;color:#173f35;">
+    <div style="max-width:560px;margin:0 auto;padding:32px 16px;">
+      <div style="background:#ffffff;border:1px solid #d7e5db;border-radius:8px;padding:28px;">
+        <h1 style="margin:0 0 12px;font-size:22px;color:#173f35;">{{.SiteTitle}} SMTP 测试邮件</h1>
+        <p style="margin:0 0 18px;line-height:1.7;color:#60746a;">如果你收到这封邮件，说明当前 SMTP 配置可以正常发送邮件。</p>
+        <div style="margin:18px 0;padding:14px;border-radius:8px;background:#eef8ef;color:#169b7b;font-weight:700;">
+          测试时间：{{.SentAt}}
+        </div>
+        <p style="margin:20px 0 0;font-size:13px;line-height:1.7;color:#60746a;">这封邮件由管理后台的 SMTP 配置测试功能发送。</p>
       </div>
     </div>
   </body>
@@ -53,12 +71,34 @@ func (m *Mailer) SendVerification(email, code string) error {
 	}); err != nil {
 		return err
 	}
+	return m.SendHTML(email, "邮箱验证码", body.String())
+}
+
+func (m *Mailer) SendSMTPTest(email string) error {
+	var body bytes.Buffer
+	tpl, err := template.New("smtp-test").Parse(smtpTestTemplate)
+	if err != nil {
+		return err
+	}
+	if err := tpl.Execute(&body, map[string]string{
+		"SiteTitle": fallback(m.settings.SiteTitle, "AI Gateway"),
+		"SentAt":    time.Now().Format("2006-01-02 15:04:05"),
+	}); err != nil {
+		return err
+	}
+	return m.SendHTML(email, "SMTP 测试邮件", body.String())
+}
+
+func (m *Mailer) SendHTML(email, subject, html string) error {
+	if m.settings.SMTPHost == "" || m.settings.SMTPFromEmail == "" {
+		return fmt.Errorf("smtp is not configured")
+	}
 
 	fromName := fallback(m.settings.SMTPFromName, m.settings.SiteTitle)
 	headers := map[string]string{
 		"From":         fmt.Sprintf("%s <%s>", fromName, m.settings.SMTPFromEmail),
 		"To":           email,
-		"Subject":      "邮箱验证码",
+		"Subject":      subject,
 		"MIME-Version": "1.0",
 		"Content-Type": `text/html; charset="UTF-8"`,
 	}
@@ -68,7 +108,7 @@ func (m *Mailer) SendVerification(email, code string) error {
 		message.WriteString(key + ": " + value + "\r\n")
 	}
 	message.WriteString("\r\n")
-	message.Write(body.Bytes())
+	message.WriteString(html)
 
 	addr := net.JoinHostPort(m.settings.SMTPHost, fmt.Sprintf("%d", m.settings.SMTPPort))
 	auth := smtp.PlainAuth("", m.settings.SMTPUsername, m.settings.SMTPPassword, m.settings.SMTPHost)

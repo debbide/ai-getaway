@@ -2,10 +2,12 @@ package controller
 
 import (
 	"encoding/json"
+	"net/mail"
 	"strings"
 
 	"ai-gateway/model"
 	"ai-gateway/response"
+	"ai-gateway/service"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -39,6 +41,11 @@ type updateSettingsRequest struct {
 	EpayNotifyURL   string `json:"epay_notify_url"`
 	EpayReturnURL   string `json:"epay_return_url"`
 	EpaySubmitURL   string `json:"epay_submit_url"`
+}
+
+type testSMTPRequest struct {
+	updateSettingsRequest
+	ToEmail string `json:"to_email" binding:"required,email"`
 }
 
 type apiEndpointSetting struct {
@@ -134,6 +141,43 @@ func (s *SettingsController) Update(c *gin.Context) {
 		return
 	}
 	response.OK(c, nil)
+}
+
+func (s *SettingsController) TestSMTP(c *gin.Context) {
+	var req testSMTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	if _, err := mail.ParseAddress(req.ToEmail); err != nil {
+		response.Error(c, 400, "invalid test email")
+		return
+	}
+	if err := ensureSystemSettingColumns(s.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
+
+	setting := loadSettings(s.db)
+	setting.SiteTitle = req.SiteTitle
+	setting.SMTPHost = strings.TrimSpace(req.SMTPHost)
+	setting.SMTPPort = req.SMTPPort
+	setting.SMTPUsername = strings.TrimSpace(req.SMTPUsername)
+	setting.SMTPFromEmail = strings.TrimSpace(req.SMTPFromEmail)
+	setting.SMTPFromName = strings.TrimSpace(req.SMTPFromName)
+	setting.SMTPUseTLS = req.SMTPUseTLS
+	if strings.TrimSpace(req.SMTPPassword) != "" {
+		setting.SMTPPassword = req.SMTPPassword
+	}
+	if setting.SMTPPort == 0 {
+		setting.SMTPPort = 587
+	}
+
+	if err := service.NewMailer(setting).SendSMTPTest(req.ToEmail); err != nil {
+		response.Error(c, 500, "failed to send test email: "+err.Error())
+		return
+	}
+	response.OK(c, gin.H{"sent": true})
 }
 
 func ensureSystemSettingColumns(db *gorm.DB) error {

@@ -85,6 +85,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			admin.DELETE("/plans/:id", adminController.DeletePlan)
 			admin.GET("/settings", settingsController.Get)
 			admin.PUT("/settings", settingsController.Update)
+			admin.POST("/settings/test-smtp", settingsController.TestSMTP)
 			admin.GET("/docs", docsController.AdminList)
 			admin.POST("/docs", docsController.Create)
 			admin.PUT("/docs/:id", docsController.Update)

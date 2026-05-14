@@ -57,6 +57,7 @@ const notice = ref('')
 const navDraft = ref([])
 const apiEndpointDraft = ref([])
 const loading = ref(false)
+const smtpTesting = ref(false)
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null })
 const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountCents: 0, status: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
@@ -87,7 +88,8 @@ const settings = reactive({
   epay_return_url: '',
   epay_submit_url: '',
   smtp_password_configured: false,
-  epay_key_configured: false
+  epay_key_configured: false,
+  smtp_test_email: ''
 })
 
 const pendingOrders = computed(() => orders.value.filter((order) => order.Status === 'pending_review').length)
@@ -620,6 +622,28 @@ async function saveSettings() {
     settings.epay_key = ''
     notice.value = '系统设置已保存'
   }, false)
+}
+
+async function sendSMTPTest() {
+  error.value = ''
+  notice.value = ''
+  if (!String(settings.smtp_test_email || '').trim()) {
+    error.value = '请先填写测试收件邮箱'
+    return
+  }
+  smtpTesting.value = true
+  try {
+    await api.post('/admin/settings/test-smtp', {
+      ...settings,
+      smtp_port: Number(settings.smtp_port || 587),
+      to_email: settings.smtp_test_email.trim()
+    })
+    notice.value = `测试邮件已发送到 ${settings.smtp_test_email.trim()}`
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    smtpTesting.value = false
+  }
 }
 
 async function saveNavigation() {
@@ -1593,10 +1617,15 @@ function submitModal() {
                 <p class="section-kicker">Mail</p>
                 <h3>SMTP 配置</h3>
               </div>
-              <label class="toggle-line">
-                <input v-model="settings.smtp_use_tls" type="checkbox" />
-                使用 TLS
-              </label>
+              <div class="toolbar-actions">
+                <label class="toggle-line">
+                  <input v-model="settings.smtp_use_tls" type="checkbox" />
+                  使用 TLS
+                </label>
+                <button type="button" class="ghost-button small" :disabled="smtpTesting" @click="sendSMTPTest">
+                  {{ smtpTesting ? '发送中...' : '发送测试邮件' }}
+                </button>
+              </div>
             </div>
             <div class="form-grid">
               <label class="field"><span>SMTP 主机</span><input v-model="settings.smtp_host" placeholder="smtp.example.com" /></label>
@@ -1608,6 +1637,10 @@ function submitModal() {
               </label>
               <label class="field"><span>发件邮箱</span><input v-model="settings.smtp_from_email" /></label>
               <label class="field"><span>发件名称</span><input v-model="settings.smtp_from_name" /></label>
+              <label class="field md:col-span-2">
+                <span>测试收件邮箱</span>
+                <input v-model="settings.smtp_test_email" type="email" placeholder="输入一个邮箱用于接收测试邮件" />
+              </label>
             </div>
           </section>
 
