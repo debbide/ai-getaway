@@ -1723,7 +1723,7 @@ function submitModal() {
           </label>
           <label class="field md:col-span-2">
             <span>公告正文</span>
-            <textarea v-model="announcementForm.content" class="markdown-editor" rows="12" required placeholder="支持换行展示。可填写更新说明、使用提醒、教程地址等内容。"></textarea>
+            <textarea v-model="announcementForm.content" class="markdown-editor announcement-editor" rows="8" required placeholder="支持换行展示。可填写更新说明、使用提醒、教程地址等内容。"></textarea>
           </label>
           <label class="field">
             <span>链接文案</span>

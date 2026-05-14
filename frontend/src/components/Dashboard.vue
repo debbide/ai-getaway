@@ -79,6 +79,7 @@ const displayApiEndpoints = computed(() => parseApiEndpoints(props.apiEndpoints)
 const soloKey = computed(() => (keys.value.length ? keys.value[0] : null))
 const hasApiKey = computed(() => Boolean(soloKey.value))
 const currentAnnouncement = computed(() => announcements.value[0] || null)
+const historyAnnouncements = computed(() => announcements.value.slice(1))
 const announcementSummary = computed(() => {
   const item = currentAnnouncement.value
   if (!item) return ''
@@ -836,25 +837,40 @@ function statusLabel(value) {
       </div>
     </div>
 
-    <div v-if="historyModalOpen" class="modal-backdrop" @click.self="closeAnnouncementHistory">
-      <div class="modal-card announcement-history-modal" role="dialog" aria-labelledby="announcement-history-title">
-        <div class="modal-head">
-          <h3 id="announcement-history-title">历史公告</h3>
-          <button type="button" class="icon-button" aria-label="关闭" @click="closeAnnouncementHistory">×</button>
-        </div>
-        <div class="announcement-timeline">
-          <article v-for="item in announcements" :key="item.ID" class="announcement-history-item">
-            <time>{{ announcementDate(item) }}</time>
+    <Transition name="history-pop">
+      <div v-if="historyModalOpen" class="modal-backdrop announcement-history-backdrop" @click.self="closeAnnouncementHistory">
+        <div class="modal-card announcement-history-modal" role="dialog" aria-labelledby="announcement-history-title">
+          <div class="announcement-history-head">
             <div>
-              <h4>{{ item.Title }}</h4>
-              <p v-for="(line, index) in announcementLines(item)" :key="index">{{ line }}</p>
-              <a v-if="item.LinkURL" :href="item.LinkURL" target="_blank" rel="noopener noreferrer">
-                {{ item.LinkText || '查看详情' }}
-              </a>
+              <p class="section-kicker">Announcements</p>
+              <h3 id="announcement-history-title">历史公告</h3>
             </div>
-          </article>
+            <button type="button" class="icon-button" aria-label="关闭" @click="closeAnnouncementHistory">×</button>
+          </div>
+          <div class="announcement-timeline">
+            <div v-if="!historyAnnouncements.length" class="announcement-history-empty">
+              <strong>暂无历史公告</strong>
+              <span>当前只有这一条最新公告，后续发布的新公告会把旧公告归入这里。</span>
+            </div>
+            <article v-for="(item, index) in historyAnnouncements" :key="item.ID" class="announcement-history-item">
+              <div class="announcement-history-marker">
+                <span>{{ index + 1 }}</span>
+              </div>
+              <div class="announcement-history-panel">
+                <div class="announcement-history-meta">
+                  <time>{{ announcementDate(item) }}</time>
+                  <span v-if="item.Pinned">置顶</span>
+                </div>
+                <h4>{{ item.Title }}</h4>
+                <p v-for="(line, lineIndex) in announcementLines(item)" :key="lineIndex">{{ line }}</p>
+                <a v-if="item.LinkURL" :href="item.LinkURL" target="_blank" rel="noopener noreferrer">
+                  {{ item.LinkText || '查看详情' }}
+                </a>
+              </div>
+            </article>
+          </div>
         </div>
       </div>
-    </div>
+    </Transition>
   </section>
 </template>
