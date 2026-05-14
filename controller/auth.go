@@ -191,10 +191,11 @@ func (a *AuthController) Me(c *gin.Context) {
 func subscriptionStartAt(db *gorm.DB, user model.User) *time.Time {
 	if user.PlanID != nil {
 		var lastOrder model.Order
-		err := db.Where("user_id = ? AND plan_id = ? AND status = ?", user.ID, *user.PlanID, model.OrderStatusApproved).
+		result := db.Where("user_id = ? AND plan_id = ? AND status = ?", user.ID, *user.PlanID, model.OrderStatusApproved).
 			Order("approved_at DESC, id DESC").
-			First(&lastOrder).Error
-		if err == nil && lastOrder.ApprovedAt != nil {
+			Limit(1).
+			Find(&lastOrder)
+		if result.Error == nil && result.RowsAffected > 0 && lastOrder.ApprovedAt != nil {
 			return lastOrder.ApprovedAt
 		}
 	}

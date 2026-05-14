@@ -7,6 +7,7 @@ import (
 
 	"ai-gateway/config"
 	"ai-gateway/model"
+	"ai-gateway/service"
 	"ai-gateway/utils"
 
 	"github.com/redis/go-redis/v9"
@@ -43,6 +44,7 @@ func AutoMigrate(db *gorm.DB) {
 		&model.UpstreamChannel{},
 		&model.DocPage{},
 		&model.APIKey{},
+		&model.ModelPricing{},
 		&model.APILog{},
 		&model.SystemSetting{},
 		&model.EmailVerification{},
@@ -63,6 +65,9 @@ func Seed(db *gorm.DB, cfg config.Config) {
 	}
 
 	seedDocs(db)
+	if _, err := service.SyncOfficialOpenAIModelPrices(db); err != nil {
+		log.Printf("seed model pricing failed: %v", err)
+	}
 
 	db.FirstOrCreate(&model.SystemSetting{}, model.SystemSetting{Model: gorm.Model{ID: 1}})
 

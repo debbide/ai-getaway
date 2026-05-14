@@ -7,6 +7,7 @@ import (
 
 	"ai-gateway/model"
 	"ai-gateway/response"
+	"ai-gateway/service"
 	"ai-gateway/utils"
 
 	"github.com/gin-gonic/gin"
@@ -117,6 +118,18 @@ type upstreamChannelRequest struct {
 	Name    string `json:"name" binding:"required,min=2,max=64"`
 	BaseURL string `json:"base_url" binding:"required,url"`
 	Enabled bool   `json:"enabled"`
+}
+
+type modelPricingRequest struct {
+	ModelName                string  `json:"model" binding:"required,min=1,max=128"`
+	DisplayName              string  `json:"display_name"`
+	Provider                 string  `json:"provider"`
+	InputUSDPerMillion       float64 `json:"input_usd_per_million" binding:"min=0"`
+	CachedInputUSDPerMillion float64 `json:"cached_input_usd_per_million" binding:"min=0"`
+	OutputUSDPerMillion      float64 `json:"output_usd_per_million" binding:"min=0"`
+	BillingMultiplier        float64 `json:"billing_multiplier" binding:"min=0"`
+	Status                   string  `json:"status"`
+	Notes                    string  `json:"notes"`
 }
 
 type orderResponse struct {
@@ -565,6 +578,27 @@ func fallbackQuotaPeriod(value string) string {
 	return "weekly"
 }
 
+func fallbackProvider(value string) string {
+	if value == "" {
+		return "openai"
+	}
+	return value
+}
+
+func fallbackMultiplier(value float64) float64 {
+	if value <= 0 {
+		return 1
+	}
+	return value
+}
+
+func fallbackModelPricingStatus(value string) string {
+	if value == model.ModelPricingStatusDisabled {
+		return model.ModelPricingStatusDisabled
+	}
+	return model.ModelPricingStatusActive
+}
+
 func (a *AdminController) Upstreams(c *gin.Context) {
 	var upstreams []model.UpstreamAccount
 	a.db.Preload("User").Order("id desc").Find(&upstreams)
@@ -575,6 +609,84 @@ func (a *AdminController) UpstreamChannels(c *gin.Context) {
 	var channels []model.UpstreamChannel
 	a.db.Order("id desc").Find(&channels)
 	response.OK(c, channels)
+}
+
+func (a *AdminController) ModelPricings(c *gin.Context) {
+	var models []model.ModelPricing
+	a.db.Order("provider asc, model asc").Find(&models)
+	response.OK(c, gin.H{
+		"items":                  models,
+		"official_source":        service.OpenAIPricingSourceURL,
+		"official_snapshot_size": len(service.OfficialOpenAIModelPrices()),
+	})
+}
+
+func (a *AdminController) CreateModelPricing(c *gin.Context) {
+	var req modelPricingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	pricing := model.ModelPricing{
+		ModelName:                req.ModelName,
+		DisplayName:              req.DisplayName,
+		Provider:                 fallbackProvider(req.Provider),
+		InputUSDPerMillion:       req.InputUSDPerMillion,
+		CachedInputUSDPerMillion: req.CachedInputUSDPerMillion,
+		OutputUSDPerMillion:      req.OutputUSDPerMillion,
+		BillingMultiplier:        fallbackMultiplier(req.BillingMultiplier),
+		Status:                   fallbackModelPricingStatus(req.Status),
+		Notes:                    req.Notes,
+	}
+	if err := a.db.Create(&pricing).Error; err != nil {
+		response.Error(c, 500, "failed to create model pricing")
+		return
+	}
+	response.Created(c, pricing)
+}
+
+func (a *AdminController) UpdateModelPricing(c *gin.Context) {
+	var req modelPricingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	updates := map[string]interface{}{
+		"model":                        req.ModelName,
+		"display_name":                 req.DisplayName,
+		"provider":                     fallbackProvider(req.Provider),
+		"input_usd_per_million":        req.InputUSDPerMillion,
+		"cached_input_usd_per_million": req.CachedInputUSDPerMillion,
+		"output_usd_per_million":       req.OutputUSDPerMillion,
+		"billing_multiplier":           fallbackMultiplier(req.BillingMultiplier),
+		"status":                       fallbackModelPricingStatus(req.Status),
+		"notes":                        req.Notes,
+	}
+	if err := a.db.Model(&model.ModelPricing{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
+		response.Error(c, 500, "failed to update model pricing")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) DeleteModelPricing(c *gin.Context) {
+	if err := a.db.Delete(&model.ModelPricing{}, c.Param("id")).Error; err != nil {
+		response.Error(c, 500, "failed to delete model pricing")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) SyncOfficialModelPricings(c *gin.Context) {
+	count, err := service.SyncOfficialOpenAIModelPrices(a.db)
+	if err != nil {
+		response.Error(c, 500, "failed to sync official model pricing")
+		return
+	}
+	response.OK(c, gin.H{
+		"synced":          count,
+		"official_source": service.OpenAIPricingSourceURL,
+	})
 }
 
 func (a *AdminController) CreateUpstreamChannel(c *gin.Context) {

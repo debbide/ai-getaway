@@ -6,6 +6,7 @@ const menu = [
   { key: 'overview', label: '总览', hint: '运营数据' },
   { key: 'plans', label: '套餐管理', hint: '价格与额度' },
   { key: 'orders', label: '审核管理', hint: '订单开通' },
+  { key: 'models', label: '模型管理', hint: '计费倍率' },
   { key: 'channels', label: '渠道管理', hint: '上游接口' },
   { key: 'users', label: '用户管理', hint: '账号与权限' },
   { key: 'docs', label: '配置文档', hint: 'Markdown 内容' },
@@ -45,6 +46,8 @@ const stats = ref({})
 const orders = ref([])
 const users = ref([])
 const plans = ref([])
+const models = ref([])
+const modelSource = ref('')
 const channels = ref([])
 const docs = ref([])
 const error = ref('')
@@ -55,11 +58,13 @@ const modal = reactive({ open: false, type: '', title: '', actionLabel: '', dang
 const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', apiKey: '', adminNote: '', planId: '', amountCents: 0, status: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
 const planForm = reactive(emptyPlan())
+const modelForm = reactive(emptyModel())
 const channelForm = reactive(emptyChannel())
 const userForm = reactive(emptyUser())
 const docForm = reactive(emptyDoc())
 const settings = reactive({
   site_title: '',
+  api_endpoint: '',
   tutorial_video_url: '',
   navigation_items: '',
   pricing_title: '',
@@ -83,6 +88,7 @@ const settings = reactive({
 
 const pendingOrders = computed(() => orders.value.filter((order) => order.Status === 'pending_review').length)
 const enabledPlans = computed(() => plans.value.filter((plan) => plan.Enabled).length)
+const enabledModels = computed(() => models.value.filter((item) => item.Status === 'active').length)
 const approvedUsers = computed(() => users.value.filter((user) => user.Status === 'approved').length)
 const enabledChannels = computed(() => channels.value.filter((channel) => channel.Enabled).length)
 const enabledDocs = computed(() => docs.value.filter((doc) => doc.Enabled).length)
@@ -134,6 +140,21 @@ function emptyChannel() {
   }
 }
 
+function emptyModel() {
+  return {
+    id: null,
+    model: '',
+    display_name: '',
+    provider: 'openai',
+    input_usd_per_million: 0,
+    cached_input_usd_per_million: 0,
+    output_usd_per_million: 0,
+    billing_multiplier: 1,
+    status: 'active',
+    notes: ''
+  }
+}
+
 function emptyDoc() {
   return {
     id: null,
@@ -151,11 +172,12 @@ async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const [statsRes, ordersRes, usersRes, plansRes, channelsRes, docsRes, settingsRes] = await Promise.all([
+    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, docsRes, settingsRes] = await Promise.all([
       api.get('/admin/stats'),
       api.get('/admin/orders'),
       api.get('/admin/users'),
       api.get('/admin/plans'),
+      api.get('/admin/models'),
       api.get('/admin/upstream-channels'),
       api.get('/admin/docs'),
       api.get('/admin/settings')
@@ -164,6 +186,8 @@ async function loadAll() {
     orders.value = ordersRes.data || []
     users.value = usersRes.data || []
     plans.value = plansRes.data || []
+    models.value = modelsRes.data?.items || []
+    modelSource.value = modelsRes.data?.official_source || ''
     channels.value = channelsRes.data || []
     docs.value = docsRes.data || []
     Object.assign(settings, settingsRes.data, { smtp_password: '', epay_key: '' })
@@ -227,6 +251,56 @@ async function deletePlan() {
     await api.delete(`/admin/plans/${modal.payload.plan.ID}`)
     notice.value = '套餐已删除'
   })
+}
+
+function openModelModal(model = null) {
+  Object.assign(modelForm, emptyModel())
+  if (model) {
+    Object.assign(modelForm, {
+      id: model.ID,
+      model: model.ModelName || model.model || '',
+      display_name: model.DisplayName || '',
+      provider: model.Provider || 'openai',
+      input_usd_per_million: model.InputUSDPerMillion || 0,
+      cached_input_usd_per_million: model.CachedInputUSDPerMillion || 0,
+      output_usd_per_million: model.OutputUSDPerMillion || 0,
+      billing_multiplier: model.BillingMultiplier || 1,
+      status: model.Status || 'active',
+      notes: model.Notes || ''
+    })
+  }
+  showModal(model ? 'edit-model' : 'create-model', model ? '编辑模型计费' : '新增模型计费', model ? '保存修改' : '创建模型')
+}
+
+async function submitModel() {
+  const payload = normalizeModel(modelForm)
+  await runAction(async () => {
+    if (modelForm.id) {
+      await api.put(`/admin/models/${modelForm.id}`, payload)
+      notice.value = '模型计费已更新'
+    } else {
+      await api.post('/admin/models', payload)
+      notice.value = '模型计费已创建'
+    }
+  })
+}
+
+function confirmDeleteModel(model) {
+  showModal('delete-model', '删除模型计费', '确认删除', { model }, true)
+}
+
+async function deleteModel() {
+  await runAction(async () => {
+    await api.delete(`/admin/models/${modal.payload.model.ID}`)
+    notice.value = '模型计费已删除'
+  })
+}
+
+async function syncOfficialModels() {
+  await runAction(async () => {
+    const res = await api.post('/admin/models/sync-official')
+    notice.value = `已同步 ${res.data?.synced || 0} 个官方模型价格`
+  }, false)
 }
 
 function openChannelModal(channel = null) {
@@ -590,6 +664,44 @@ function normalizePlan(plan) {
   }
 }
 
+function normalizeModel(item) {
+  return {
+    model: item.model.trim(),
+    display_name: item.display_name.trim(),
+    provider: item.provider.trim() || 'openai',
+    input_usd_per_million: Number(item.input_usd_per_million || 0),
+    cached_input_usd_per_million: Number(item.cached_input_usd_per_million || 0),
+    output_usd_per_million: Number(item.output_usd_per_million || 0),
+    billing_multiplier: Number(item.billing_multiplier || 1),
+    status: item.status === 'disabled' ? 'disabled' : 'active',
+    notes: item.notes.trim()
+  }
+}
+
+function modelUnit(value) {
+  return `$${Number(value || 0).toFixed(4)} / 1M Token`
+}
+
+function modelActualUnit(item, field) {
+  return modelUnit((item[field] || 0) * (item.BillingMultiplier || 1))
+}
+
+function modelStatusLabel(value) {
+  return value === 'disabled' ? '已停用' : '已启用'
+}
+
+function formatSyncTime(value) {
+  if (!value) return '未同步'
+  return formatDate(value)
+}
+
+function formatDate(value) {
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '-'
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 function normalizeChannel(channel) {
   return {
     name: channel.name.trim(),
@@ -673,6 +785,9 @@ function submitModal() {
     'create-plan': submitPlan,
     'edit-plan': submitPlan,
     'delete-plan': deletePlan,
+    'create-model': submitModel,
+    'edit-model': submitModel,
+    'delete-model': deleteModel,
     'create-channel': submitChannel,
     'edit-channel': submitChannel,
     'delete-channel': deleteChannel,
@@ -877,6 +992,80 @@ function submitModal() {
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </section>
+        </div>
+
+        <div v-if="active === 'models'" class="space-y-5">
+          <div class="page-toolbar">
+            <div>
+              <p class="section-kicker">Model Billing</p>
+              <h2>模型管理</h2>
+              <span>{{ enabledModels }} 个启用模型，用户扣费按这里的单价和倍率计算</span>
+            </div>
+            <div class="toolbar-actions">
+              <button class="ghost-button" type="button" :disabled="loading" @click="syncOfficialModels">同步官方倍率</button>
+              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
+              <button class="primary-button" @click="openModelModal()">新增模型</button>
+            </div>
+          </div>
+
+          <section class="panel-surface overflow-hidden">
+            <div class="table-wrap">
+              <table class="data-table model-pricing-table">
+                <thead>
+                  <tr>
+                    <th>模型</th>
+                    <th>输入单价</th>
+                    <th>缓存读取</th>
+                    <th>输出单价</th>
+                    <th>倍率</th>
+                    <th>状态</th>
+                    <th>同步时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in models" :key="item.ID">
+                    <td class="model-cell">
+                      <strong>{{ item.ModelName }}</strong>
+                      <small>{{ item.DisplayName || item.Provider || '-' }}</small>
+                    </td>
+                    <td class="price-cell">
+                      <strong>{{ modelActualUnit(item, 'InputUSDPerMillion') }}</strong>
+                      <small>原价 {{ modelUnit(item.InputUSDPerMillion) }}</small>
+                    </td>
+                    <td class="price-cell">
+                      <strong>{{ modelActualUnit(item, 'CachedInputUSDPerMillion') }}</strong>
+                      <small>原价 {{ modelUnit(item.CachedInputUSDPerMillion) }}</small>
+                    </td>
+                    <td class="price-cell">
+                      <strong>{{ modelActualUnit(item, 'OutputUSDPerMillion') }}</strong>
+                      <small>原价 {{ modelUnit(item.OutputUSDPerMillion) }}</small>
+                    </td>
+                    <td class="multiplier-cell">{{ Number(item.BillingMultiplier || 1).toFixed(2) }}x</td>
+                    <td class="status-cell"><span class="status-badge model-status-badge" :class="{ muted: item.Status !== 'active' }">{{ modelStatusLabel(item.Status) }}</span></td>
+                    <td class="time-cell">{{ formatSyncTime(item.OfficialSyncedAt) }}</td>
+                    <td class="actions-cell">
+                      <div class="table-actions">
+                        <button class="ghost-button small" @click="openModelModal(item)">编辑</button>
+                        <button class="danger-button small" @click="confirmDeleteModel(item)">删除</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel-surface p-5">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Official Snapshot</p>
+                <h3>官方价格同步</h3>
+                <span>同步会更新官方模型的输入、缓存读取和输出单价，但会保留你已设置的倍率。</span>
+              </div>
+              <a v-if="modelSource" class="ghost-button" :href="modelSource" target="_blank" rel="noreferrer">查看官方价格</a>
             </div>
           </section>
         </div>
@@ -1111,6 +1300,10 @@ function submitModal() {
                 <input v-model="settings.site_title" placeholder="AI Gateway" />
               </label>
               <label class="field">
+                <span>API 端点</span>
+                <input v-model="settings.api_endpoint" placeholder="https://ai.itzkb.cn" />
+              </label>
+              <label class="field">
                 <span>视频教程地址</span>
                 <input v-model="settings.tutorial_video_url" placeholder="https://..." />
               </label>
@@ -1206,6 +1399,23 @@ function submitModal() {
           <label class="field"><span>渠道名称</span><input v-model="channelForm.name" required placeholder="OpenAI" /></label>
           <label class="field md:col-span-2"><span>API 地址</span><input v-model="channelForm.base_url" required placeholder="https://api.openai.com" /></label>
           <label class="toggle-line md:col-span-2"><input v-model="channelForm.enabled" type="checkbox" />启用渠道</label>
+        </div>
+
+        <div v-if="modal.type === 'create-model' || modal.type === 'edit-model'" class="modal-body form-grid">
+          <label class="field"><span>模型 ID</span><input v-model="modelForm.model" required placeholder="gpt-5.5" /></label>
+          <label class="field"><span>显示名称</span><input v-model="modelForm.display_name" placeholder="GPT-5.5" /></label>
+          <label class="field"><span>服务商</span><input v-model="modelForm.provider" placeholder="openai" /></label>
+          <label class="field"><span>输入单价 / 1M Token</span><input v-model.number="modelForm.input_usd_per_million" type="number" min="0" step="0.0001" /></label>
+          <label class="field"><span>缓存读取单价 / 1M Token</span><input v-model.number="modelForm.cached_input_usd_per_million" type="number" min="0" step="0.0001" /></label>
+          <label class="field"><span>输出单价 / 1M Token</span><input v-model.number="modelForm.output_usd_per_million" type="number" min="0" step="0.0001" /></label>
+          <label class="field"><span>扣费倍率</span><input v-model.number="modelForm.billing_multiplier" type="number" min="0.0001" step="0.01" /></label>
+          <label class="field"><span>状态</span>
+            <select v-model="modelForm.status">
+              <option value="active">启用</option>
+              <option value="disabled">停用</option>
+            </select>
+          </label>
+          <label class="field md:col-span-2"><span>备注</span><textarea v-model="modelForm.notes" rows="3"></textarea></label>
         </div>
 
         <div v-if="modal.type === 'create-doc' || modal.type === 'edit-doc'" class="modal-body form-grid">
@@ -1308,6 +1518,11 @@ function submitModal() {
         <div v-if="modal.type === 'delete-channel'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.channel?.Name }}」吗？</strong>
           <p>删除后审核弹窗不再提供该渠道，请确认没有新的开通流程依赖它。</p>
+        </div>
+
+        <div v-if="modal.type === 'delete-model'" class="modal-body confirm-copy">
+          <strong>确定删除「{{ modal.payload?.model?.ModelName }}」吗？</strong>
+          <p>删除后该模型会使用系统兜底价格计费，建议仅在确认不再使用该模型时删除。</p>
         </div>
 
         <div v-if="modal.type === 'delete-doc'" class="modal-body confirm-copy">

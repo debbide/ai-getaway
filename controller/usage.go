@@ -31,24 +31,35 @@ type usageSummary struct {
 }
 
 type usageLogItem struct {
-	ID                uint      `json:"id"`
-	APIKeyID          uint      `json:"api_key_id"`
-	APIKeyName        string    `json:"api_key_name"`
-	APIKeyPrefix      string    `json:"api_key_prefix"`
-	Method            string    `json:"method"`
-	Path              string    `json:"path"`
-	Endpoint          string    `json:"endpoint"`
-	Model             string    `json:"model"`
-	RequestType       string    `json:"request_type"`
-	BillingMode       string    `json:"billing_mode"`
-	StatusCode        int       `json:"status_code"`
-	PromptTokens      int64     `json:"prompt_tokens"`
-	CompletionTokens  int64     `json:"completion_tokens"`
-	TotalTokens       int64     `json:"total_tokens"`
-	EstimatedUSDCents int64     `json:"estimated_usd_cents"`
-	LatencyMs         int64     `json:"latency_ms"`
-	ErrorMessage      string    `json:"error_message"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                       uint      `json:"id"`
+	APIKeyID                 uint      `json:"api_key_id"`
+	APIKeyName               string    `json:"api_key_name"`
+	APIKeyPrefix             string    `json:"api_key_prefix"`
+	Method                   string    `json:"method"`
+	Path                     string    `json:"path"`
+	Endpoint                 string    `json:"endpoint"`
+	Model                    string    `json:"model"`
+	RequestType              string    `json:"request_type"`
+	BillingMode              string    `json:"billing_mode"`
+	StatusCode               int       `json:"status_code"`
+	PromptTokens             int64     `json:"prompt_tokens"`
+	CachedInputTokens        int64     `json:"cached_input_tokens"`
+	CompletionTokens         int64     `json:"completion_tokens"`
+	TotalTokens              int64     `json:"total_tokens"`
+	EstimatedUSDCents        int64     `json:"estimated_usd_cents"`
+	EstimatedUSDMicros       int64     `json:"estimated_usd_micros"`
+	InputUSDMicros           int64     `json:"input_usd_micros"`
+	CachedInputUSDMicros     int64     `json:"cached_input_usd_micros"`
+	OutputUSDMicros          int64     `json:"output_usd_micros"`
+	InputUSDPerMillion       float64   `json:"input_usd_per_million"`
+	CachedInputUSDPerMillion float64   `json:"cached_input_usd_per_million"`
+	OutputUSDPerMillion      float64   `json:"output_usd_per_million"`
+	BillingMultiplier        float64   `json:"billing_multiplier"`
+	BillingSource            string    `json:"billing_source"`
+	FirstTokenMs             int64     `json:"first_token_ms"`
+	LatencyMs                int64     `json:"latency_ms"`
+	ErrorMessage             string    `json:"error_message"`
+	CreatedAt                time.Time `json:"created_at"`
 }
 
 func (u *UsageController) List(c *gin.Context) {
@@ -80,8 +91,8 @@ func (u *UsageController) List(c *gin.Context) {
 		COUNT(*) AS total_requests,
 		COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
 		COALESCE(SUM(total_tokens), 0) AS total_tokens,
-		COALESCE(SUM(CASE WHEN total_tokens > prompt_tokens THEN total_tokens - prompt_tokens ELSE 0 END), 0) AS completion_tokens,
-		COALESCE(SUM(estimated_usd_cents), 0) AS total_usd_cents,
+		COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+		COALESCE(SUM(CASE WHEN estimated_usd_micros > 0 THEN CEILING(estimated_usd_micros / 10000) ELSE estimated_usd_cents END), 0) AS total_usd_cents,
 		COALESCE(ROUND(AVG(latency_ms)), 0) AS average_latency_ms
 	`).Scan(&summary).Error; err != nil {
 		response.Error(c, 500, "failed to list usage logs")
@@ -127,29 +138,44 @@ func (u *UsageController) List(c *gin.Context) {
 }
 
 func mapUsageLog(log model.APILog) usageLogItem {
-	completionTokens := int64(0)
-	if log.TotalTokens > log.PromptTokens {
-		completionTokens = log.TotalTokens - log.PromptTokens
+	modelName := log.ModelName
+	if modelName == "" {
+		modelName = "-"
+	}
+	requestType := log.RequestType
+	if requestType == "" {
+		requestType = "chat"
 	}
 	return usageLogItem{
-		ID:                log.ID,
-		APIKeyID:          log.APIKeyID,
-		APIKeyName:        log.APIKey.Name,
-		APIKeyPrefix:      log.APIKey.KeyPrefix,
-		Method:            log.Method,
-		Path:              log.Path,
-		Endpoint:          strings.TrimPrefix(log.Path, "/v1"),
-		Model:             "-",
-		RequestType:       "chat",
-		BillingMode:       "usage",
-		StatusCode:        log.StatusCode,
-		PromptTokens:      log.PromptTokens,
-		CompletionTokens:  completionTokens,
-		TotalTokens:       log.TotalTokens,
-		EstimatedUSDCents: log.EstimatedUSDCents,
-		LatencyMs:         log.LatencyMs,
-		ErrorMessage:      log.ErrorMessage,
-		CreatedAt:         log.CreatedAt,
+		ID:                       log.ID,
+		APIKeyID:                 log.APIKeyID,
+		APIKeyName:               log.APIKey.Name,
+		APIKeyPrefix:             log.APIKey.KeyPrefix,
+		Method:                   log.Method,
+		Path:                     log.Path,
+		Endpoint:                 strings.TrimPrefix(log.Path, "/v1"),
+		Model:                    modelName,
+		RequestType:              requestType,
+		BillingMode:              "usage",
+		StatusCode:               log.StatusCode,
+		PromptTokens:             log.PromptTokens,
+		CachedInputTokens:        log.CachedInputTokens,
+		CompletionTokens:         log.CompletionTokens,
+		TotalTokens:              log.TotalTokens,
+		EstimatedUSDCents:        log.EstimatedUSDCents,
+		EstimatedUSDMicros:       log.EstimatedUSDMicros,
+		InputUSDMicros:           log.InputUSDMicros,
+		CachedInputUSDMicros:     log.CachedInputUSDMicros,
+		OutputUSDMicros:          log.OutputUSDMicros,
+		InputUSDPerMillion:       log.InputUSDPerMillion,
+		CachedInputUSDPerMillion: log.CachedInputUSDPerMillion,
+		OutputUSDPerMillion:      log.OutputUSDPerMillion,
+		BillingMultiplier:        log.BillingMultiplier,
+		BillingSource:            log.BillingSource,
+		FirstTokenMs:             log.FirstTokenMs,
+		LatencyMs:                log.LatencyMs,
+		ErrorMessage:             log.ErrorMessage,
+		CreatedAt:                log.CreatedAt,
 	}
 }
 

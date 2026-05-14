@@ -1146,6 +1146,57 @@ button:disabled {
   color: var(--muted);
 }
 
+.model-pricing-table {
+  min-width: 1180px;
+  table-layout: fixed;
+}
+
+.model-pricing-table th,
+.model-pricing-table td {
+  padding: 16px 14px;
+}
+
+.model-pricing-table th:nth-child(1) { width: 170px; }
+.model-pricing-table th:nth-child(2),
+.model-pricing-table th:nth-child(3),
+.model-pricing-table th:nth-child(4) { width: 190px; }
+.model-pricing-table th:nth-child(5) { width: 90px; }
+.model-pricing-table th:nth-child(6) { width: 88px; }
+.model-pricing-table th:nth-child(7) { width: 150px; }
+.model-pricing-table th:nth-child(8) { width: 118px; }
+
+.model-pricing-table .model-cell strong,
+.model-pricing-table .price-cell strong {
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.model-pricing-table .price-cell small {
+  max-width: 160px;
+  line-height: 1.35;
+}
+
+.model-pricing-table .multiplier-cell,
+.model-pricing-table .status-cell,
+.model-pricing-table .time-cell,
+.model-pricing-table .actions-cell {
+  white-space: nowrap;
+}
+
+.model-pricing-table .status-cell .model-status-badge {
+  display: inline-flex;
+  width: 64px;
+  justify-content: center;
+  align-items: center;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
+
+.model-pricing-table .actions-cell .table-actions {
+  flex-wrap: nowrap;
+}
+
 .settings-tabs,
 .auth-tabs {
   display: inline-flex;
@@ -1729,6 +1780,38 @@ button:disabled {
   .console-dashboard-aside {
     order: unset;
   }
+}
+
+.endpoint-card {
+  border-radius: 16px;
+  border: 1px solid rgba(56, 189, 248, 0.24);
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.14), rgba(34, 197, 94, 0.08)),
+    rgba(15, 23, 42, 0.36);
+  padding: 14px 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.endpoint-card h3 {
+  margin: 2px 0 10px;
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--ink);
+}
+
+.endpoint-card code {
+  display: block;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(2, 6, 23, 0.22);
+  color: #7dd3fc;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.45;
+  padding: 10px 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 当前订阅：侧栏摘要卡片 */

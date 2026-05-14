@@ -24,6 +24,9 @@ const (
 
 	UpstreamStatusActive   = "active"
 	UpstreamStatusDisabled = "disabled"
+
+	ModelPricingStatusActive   = "active"
+	ModelPricingStatusDisabled = "disabled"
 )
 
 type User struct {
@@ -114,24 +117,55 @@ type APIKey struct {
 	LastUsedAt   *time.Time
 }
 
+type ModelPricing struct {
+	gorm.Model
+	ModelName                string `gorm:"column:model;size:128;uniqueIndex;not null"`
+	DisplayName              string `gorm:"size:128"`
+	Provider                 string `gorm:"size:64;default:openai;index"`
+	InputUSDPerMillion       float64
+	CachedInputUSDPerMillion float64
+	OutputUSDPerMillion      float64
+	BillingMultiplier        float64 `gorm:"default:1"`
+	Status                   string  `gorm:"size:32;default:active;index"`
+	Official                 bool    `gorm:"default:false;index"`
+	OfficialSource           string  `gorm:"size:255"`
+	OfficialSyncedAt         *time.Time
+	Notes                    string `gorm:"size:255"`
+}
+
 type APILog struct {
 	gorm.Model
-	UserID            uint `gorm:"index;not null"`
-	APIKeyID          uint `gorm:"index;not null"`
-	APIKey            APIKey
-	Method            string
-	Path              string
-	StatusCode        int
-	PromptTokens      int64
-	TotalTokens       int64
-	EstimatedUSDCents int64 `gorm:"default:0;index"`
-	LatencyMs         int64
-	ErrorMessage      string `gorm:"size:512"`
+	UserID                   uint `gorm:"index;not null"`
+	APIKeyID                 uint `gorm:"index;not null"`
+	APIKey                   APIKey
+	Method                   string
+	Path                     string
+	ModelName                string `gorm:"column:model;size:128;index"`
+	RequestType              string `gorm:"size:32;default:chat;index"`
+	StatusCode               int
+	PromptTokens             int64
+	CachedInputTokens        int64
+	CompletionTokens         int64
+	TotalTokens              int64
+	EstimatedUSDCents        int64   `gorm:"default:0;index"`
+	EstimatedUSDMicros       int64   `gorm:"default:0;index"`
+	InputUSDMicros           int64   `gorm:"default:0"`
+	CachedInputUSDMicros     int64   `gorm:"default:0"`
+	OutputUSDMicros          int64   `gorm:"default:0"`
+	InputUSDPerMillion       float64 `gorm:"default:0"`
+	CachedInputUSDPerMillion float64 `gorm:"default:0"`
+	OutputUSDPerMillion      float64 `gorm:"default:0"`
+	BillingMultiplier        float64 `gorm:"default:1"`
+	BillingSource            string  `gorm:"size:64"`
+	FirstTokenMs             int64
+	LatencyMs                int64
+	ErrorMessage             string `gorm:"size:512"`
 }
 
 type SystemSetting struct {
 	gorm.Model
 	SiteTitle        string `gorm:"size:128;default:星空AI"`
+	APIEndpoint      string `gorm:"size:512;default:https://ai.itzkb.cn"`
 	TutorialVideoURL string `gorm:"size:512"`
 	NavigationItems  string `gorm:"type:text"`
 	PricingTitle     string `gorm:"size:128;default:简单透明的定价"`

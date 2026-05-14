@@ -134,8 +134,8 @@ function exportCsv() {
     item.prompt_tokens || 0,
     item.completion_tokens || 0,
     item.total_tokens || 0,
-    usd(item.estimated_usd_cents || 0),
-    '-',
+    item.estimated_usd_micros ? usdMicros(item.estimated_usd_micros) : usd(item.estimated_usd_cents || 0),
+    latency(item.first_token_ms),
     latency(item.latency_ms),
     item.status_code,
     formatDateTime(item.created_at)
@@ -163,6 +163,18 @@ function statToken(value) {
 
 function usd(cents) {
   return `$${((cents || 0) / 100).toFixed(4)}`
+}
+
+function usdMicros(value) {
+  return `$${(Number(value || 0) / 1000000).toFixed(6)}`
+}
+
+function modelUnit(value) {
+  return `$${Number(value || 0).toFixed(4)} / 1M Token`
+}
+
+function billingSourceLabel(value) {
+  return { model_management: '后台模型', official_fallback: '官方兜底', fallback: '系统兜底' }[value] || value || '-'
 }
 
 function latency(ms) {
@@ -307,10 +319,14 @@ function statusClass(code) {
               <td><span class="usage-chip muted">{{ billingModeLabel(item.billing_mode) }}</span></td>
               <td>
                 <strong>{{ statToken(item.total_tokens) }}</strong>
-                <small>↓ {{ statToken(item.prompt_tokens) }} / ↑ {{ statToken(item.completion_tokens) }}</small>
+                <small>输入 {{ statToken(item.prompt_tokens) }} / 输出 {{ statToken(item.completion_tokens) }} / 缓存 {{ statToken(item.cached_input_tokens) }}</small>
               </td>
-              <td><strong class="usage-cost">{{ usd(item.estimated_usd_cents || 0) }}</strong></td>
-              <td>-</td>
+              <td>
+                <strong class="usage-cost">{{ item.estimated_usd_micros ? usdMicros(item.estimated_usd_micros) : usd(item.estimated_usd_cents || 0) }}</strong>
+                <small>输入 {{ usdMicros(item.input_usd_micros) }} · 输出 {{ usdMicros(item.output_usd_micros) }}<template v-if="item.cached_input_usd_micros"> · 缓存 {{ usdMicros(item.cached_input_usd_micros) }}</template></small>
+                <small>{{ modelUnit(item.input_usd_per_million) }} / {{ modelUnit(item.output_usd_per_million) }} · {{ Number(item.billing_multiplier || 1).toFixed(2) }}x · {{ billingSourceLabel(item.billing_source) }}</small>
+              </td>
+              <td>{{ latency(item.first_token_ms) }}</td>
               <td>{{ latency(item.latency_ms) }}</td>
               <td><span class="usage-status" :class="statusClass(item.status_code)">{{ item.status_code }}</span></td>
               <td>{{ formatDateTime(item.created_at) }}</td>

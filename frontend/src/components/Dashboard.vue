@@ -3,7 +3,10 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
-const props = defineProps({ plans: { type: Array, default: () => [] } })
+const props = defineProps({
+  plans: { type: Array, default: () => [] },
+  apiEndpoint: { type: String, default: 'https://ai.itzkb.cn' }
+})
 const emit = defineEmits(['navigate'])
 
 const auth = useAuthStore()
@@ -68,6 +71,7 @@ const quotaResetText = computed(() => {
   if (!quotaUsage.value?.window_end) return ''
   return `${quotaPeriodUnit(auth.user?.plan)}额度重置：${formatDateTime(quotaUsage.value.window_end)}`
 })
+const displayApiEndpoint = computed(() => (props.apiEndpoint || 'https://ai.itzkb.cn').trim())
 
 const soloKey = computed(() => (keys.value.length ? keys.value[0] : null))
 const hasApiKey = computed(() => Boolean(soloKey.value))
@@ -398,6 +402,74 @@ function statusLabel(value) {
     <div class="console-stack">
       <div class="console-dashboard-grid">
         <div class="console-dashboard-main">
+          <!-- API Key -->
+          <section class="panel-surface dashboard-card p-4">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Keys</p>
+                <h3>API 密钥管理</h3>
+              </div>
+              <div class="toolbar-actions">
+                <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshDashboard">↻</button>
+                <button v-if="!hasApiKey" class="primary-button" @click="openKeyModal">创建 Key</button>
+              </div>
+            </div>
+
+            <div class="notice-card notice-warn mt-3">
+              <strong>安全提示</strong>
+              <span>每个账号仅保留一条 API Key。列表中只显示掩码，复制时会从服务端安全取出完整密钥。更新密钥将删除旧密钥并立即生效。</span>
+            </div>
+
+            <div v-if="!hasApiKey" class="notice-card api-key-empty-panel mt-4">
+              <strong>尚未创建 API Key</strong>
+              <span class="text-muted">通过审核并绑定上游后，点击右上角「创建 Key」生成密钥。</span>
+            </div>
+
+            <div v-else class="mt-4">
+              <article class="api-key-block">
+                <div class="api-key-block-head">
+                  <div>
+                    <strong>{{ soloKey.name }}</strong>
+                    <span class="text-muted">{{ statusLabel(soloKey.status) }}</span>
+                  </div>
+                  <div class="api-key-head-actions">
+                    <button
+                      v-if="soloKey.status === 'disabled'"
+                      type="button"
+                      class="ghost-button small"
+                      @click="enableKey(soloKey)"
+                    >
+                      启用
+                    </button>
+                    <button
+                      v-else
+                      type="button"
+                      class="danger-button small"
+                      @click="confirmDisableKey(soloKey)"
+                    >
+                      禁用
+                    </button>
+                  </div>
+                </div>
+                <div class="api-key-strip">
+                  <code class="api-key-code api-key-code--mask">{{ soloKey.key_masked || soloKey.key_prefix + '···' }}</code>
+                  <div class="api-key-strip-actions">
+                    <button
+                      type="button"
+                      class="ghost-button small"
+                      :disabled="!soloKey.can_copy"
+                      @click="copySecretFromServer"
+                    >
+                      复制完整密钥
+                    </button>
+                    <button type="button" class="ghost-button small" @click="openRotateModal">更新密钥</button>
+                  </div>
+                </div>
+                <p v-if="!soloKey.can_copy" class="api-key-legacy-hint text-muted">该密钥无法在线解密，请点击「更新密钥」重新生成后即可复制。</p>
+              </article>
+            </div>
+          </section>
+
           <!-- 套餐购买 -->
           <section class="panel-surface dashboard-card p-5">
             <div class="section-head">
@@ -481,6 +553,14 @@ function statusLabel(value) {
         </div>
 
         <aside class="console-dashboard-aside">
+          <section class="endpoint-card">
+            <div>
+              <p class="section-kicker">Endpoint</p>
+              <h3>API 端点</h3>
+            </div>
+            <code>{{ displayApiEndpoint }}</code>
+          </section>
+
           <!-- 套餐管理：侧栏紧凑区 -->
           <section class="panel-surface dashboard-card p-4">
             <div class="section-head">
@@ -583,73 +663,6 @@ function statusLabel(value) {
             </div>
           </section>
 
-          <!-- API Key -->
-          <section class="panel-surface dashboard-card p-4">
-            <div class="section-head">
-              <div>
-                <p class="section-kicker">Keys</p>
-                <h3>API 密钥管理</h3>
-              </div>
-              <div class="toolbar-actions">
-                <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshDashboard">↻</button>
-                <button v-if="!hasApiKey" class="primary-button" @click="openKeyModal">创建 Key</button>
-              </div>
-            </div>
-
-            <div class="notice-card notice-warn mt-3">
-              <strong>安全提示</strong>
-              <span>每个账号仅保留一条 API Key。列表中只显示掩码，复制时会从服务端安全取出完整密钥。更新密钥将删除旧密钥并立即生效。</span>
-            </div>
-
-            <div v-if="!hasApiKey" class="notice-card api-key-empty-panel mt-4">
-              <strong>尚未创建 API Key</strong>
-              <span class="text-muted">通过审核并绑定上游后，点击右上角「创建 Key」生成密钥。</span>
-            </div>
-
-            <div v-else class="mt-4">
-              <article class="api-key-block">
-                <div class="api-key-block-head">
-                  <div>
-                    <strong>{{ soloKey.name }}</strong>
-                    <span class="text-muted">{{ statusLabel(soloKey.status) }}</span>
-                  </div>
-                  <div class="api-key-head-actions">
-                    <button
-                      v-if="soloKey.status === 'disabled'"
-                      type="button"
-                      class="ghost-button small"
-                      @click="enableKey(soloKey)"
-                    >
-                      启用
-                    </button>
-                    <button
-                      v-else
-                      type="button"
-                      class="danger-button small"
-                      @click="confirmDisableKey(soloKey)"
-                    >
-                      禁用
-                    </button>
-                  </div>
-                </div>
-                <div class="api-key-strip">
-                  <code class="api-key-code api-key-code--mask">{{ soloKey.key_masked || soloKey.key_prefix + '···' }}</code>
-                  <div class="api-key-strip-actions">
-                    <button
-                      type="button"
-                      class="ghost-button small"
-                      :disabled="!soloKey.can_copy"
-                      @click="copySecretFromServer"
-                    >
-                      复制完整密钥
-                    </button>
-                    <button type="button" class="ghost-button small" @click="openRotateModal">更新密钥</button>
-                  </div>
-                </div>
-                <p v-if="!soloKey.can_copy" class="api-key-legacy-hint text-muted">该密钥无法在线解密，请点击「更新密钥」重新生成后即可复制。</p>
-              </article>
-            </div>
-          </section>
         </aside>
       </div>
     </div>

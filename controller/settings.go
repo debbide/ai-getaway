@@ -18,6 +18,7 @@ func NewSettingsController(db *gorm.DB) *SettingsController {
 
 type updateSettingsRequest struct {
 	SiteTitle        string `json:"site_title"`
+	APIEndpoint      string `json:"api_endpoint"`
 	TutorialVideoURL string `json:"tutorial_video_url"`
 	NavigationItems  string `json:"navigation_items"`
 	PricingTitle     string `json:"pricing_title"`
@@ -41,6 +42,7 @@ func (s *SettingsController) Public(c *gin.Context) {
 	setting := loadSettings(s.db)
 	response.OK(c, gin.H{
 		"site_title":         setting.SiteTitle,
+		"api_endpoint":       setting.APIEndpoint,
 		"tutorial_video_url": setting.TutorialVideoURL,
 		"navigation_items":   setting.NavigationItems,
 		"pricing_title":      setting.PricingTitle,
@@ -58,6 +60,7 @@ func (s *SettingsController) Get(c *gin.Context) {
 	response.OK(c, gin.H{
 		"id":                       setting.ID,
 		"site_title":               setting.SiteTitle,
+		"api_endpoint":             setting.APIEndpoint,
 		"tutorial_video_url":       setting.TutorialVideoURL,
 		"navigation_items":         setting.NavigationItems,
 		"pricing_title":            setting.PricingTitle,
@@ -92,6 +95,7 @@ func (s *SettingsController) Update(c *gin.Context) {
 	setting := loadSettings(s.db)
 	updates := map[string]interface{}{
 		"site_title":         req.SiteTitle,
+		"api_endpoint":       req.APIEndpoint,
 		"tutorial_video_url": req.TutorialVideoURL,
 		"navigation_items":   req.NavigationItems,
 		"pricing_title":      req.PricingTitle,
@@ -125,6 +129,7 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 	}
 	columns := map[string]string{
 		"navigation_items": "TEXT",
+		"api_endpoint":     "VARCHAR(512)",
 		"pricing_title":    "VARCHAR(128)",
 		"pricing_subtitle": "VARCHAR(255)",
 		"pricing_notice":   "VARCHAR(512)",
@@ -181,6 +186,9 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 	}
 	if setting.SiteTitle == "" {
 		setting.SiteTitle = "星空AI"
+	}
+	if setting.APIEndpoint == "" {
+		setting.APIEndpoint = "https://ai.itzkb.cn"
 	}
 	if setting.NavigationItems == "" {
 		setting.NavigationItems = `[{"label":"首页","path":"/"},{"label":"教程 ↗","path":"/docs"},{"label":"定价","path":"/plans"},{"label":"模型","path":"/models"},{"label":"常见问题","path":"/faq"},{"label":"更多中转⌄","path":"#","children":[{"label":"Claude Code 中转","path":"/claude"}]}]`

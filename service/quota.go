@@ -120,7 +120,7 @@ func UsedUSDCentsSince(db *gorm.DB, userID uint, since time.Time) int64 {
 	var total int64
 	db.Model(&model.APILog{}).
 		Where("user_id = ? AND created_at >= ?", userID, since).
-		Select("COALESCE(SUM(estimated_usd_cents), 0)").
+		Select("COALESCE(SUM(CASE WHEN estimated_usd_micros > 0 THEN CEILING(estimated_usd_micros / 10000) ELSE estimated_usd_cents END), 0)").
 		Scan(&total)
 	return total
 }
