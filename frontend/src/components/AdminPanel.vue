@@ -53,9 +53,10 @@ const docs = ref([])
 const error = ref('')
 const notice = ref('')
 const navDraft = ref([])
+const apiEndpointDraft = ref([])
 const loading = ref(false)
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null })
-const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', apiKey: '', adminNote: '', planId: '', amountCents: 0, status: '' })
+const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountCents: 0, status: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
 const planForm = reactive(emptyPlan())
 const modelForm = reactive(emptyModel())
@@ -64,7 +65,7 @@ const userForm = reactive(emptyUser())
 const docForm = reactive(emptyDoc())
 const settings = reactive({
   site_title: '',
-  api_endpoint: '',
+  api_endpoints: '',
   tutorial_video_url: '',
   navigation_items: '',
   pricing_title: '',
@@ -125,6 +126,8 @@ function emptyUser() {
     plan_id: '',
     original_plan_id: '',
     channel_id: '',
+    upstream_username: '',
+    upstream_password: '',
     api_key: ''
   }
 }
@@ -190,6 +193,7 @@ async function loadAll() {
     docs.value = docsRes.data || []
     Object.assign(settings, settingsRes.data, { smtp_password: '', epay_key: '' })
     setNavigationDraft(settings.navigation_items)
+    setAPIEndpointDraft(settings.api_endpoints)
   } catch (err) {
     error.value = err.message
   } finally {
@@ -378,6 +382,8 @@ async function deleteChannel() {
 
 function openUserModal(user = null) {
   Object.assign(userForm, emptyUser())
+  const upstream = user?.Upstream || {}
+  const channel = channels.value.find((item) => item.Name === upstream.Channel) || null
   if (user) {
     Object.assign(userForm, {
       id: user.ID,
@@ -389,16 +395,18 @@ function openUserModal(user = null) {
       email_verified: Boolean(user.EmailVerified),
       plan_id: user.PlanID || '',
       original_plan_id: user.PlanID || '',
-      channel_id: '',
-      api_key: ''
+      channel_id: channel?.ID || '',
+      upstream_username: upstream.Username || '',
+      upstream_password: upstream.Password || '',
+      api_key: upstream.APIKey || ''
     })
   }
   showModal(user ? 'edit-user' : 'create-user', user ? '编辑用户' : '新增用户', user ? '保存修改' : '创建用户')
 }
 
 async function submitUser() {
-  if (requiresUserUpstreamRebind(userForm) && (!Number(userForm.channel_id) || !String(userForm.api_key || '').trim())) {
-    error.value = '修改用户套餐后，必须重新绑定上游渠道并填写新的上游 API Key'
+  if (requiresUserUpstreamRebind(userForm) && (!Number(userForm.channel_id) || !String(userForm.upstream_username || '').trim() || !String(userForm.upstream_password || '').trim() || !String(userForm.api_key || '').trim())) {
+    error.value = '修改用户套餐后，必须重新绑定上游渠道并填写上游账号、上游密码和 API Key'
     return
   }
   const payload = normalizeUser(userForm)
@@ -411,6 +419,21 @@ async function submitUser() {
       notice.value = '用户已创建'
     }
   })
+}
+
+async function openUserUpstreamModal(user) {
+  error.value = ''
+  const cached = user.Upstream
+  if (cached) {
+    showModal('user-upstream', `渠道 #${user.ID}`, '关闭', { user, upstream: cached })
+    return
+  }
+  try {
+    const res = await api.get(`/admin/users/${user.ID}/upstream`)
+    showModal('user-upstream', `渠道 #${user.ID}`, '关闭', { user, upstream: res.data })
+  } catch (err) {
+    error.value = err.message
+  }
 }
 
 function confirmDeleteUser(user) {
@@ -431,6 +454,8 @@ function openApproveModal(order) {
     channelId: channel?.ID || '',
     channel: channel?.Name || '',
     baseUrl: channel?.BaseURL || '',
+    username: '',
+    password: '',
     apiKey: '',
     adminNote: '',
     planId: order.PlanID || order.Plan?.ID || '',
@@ -448,7 +473,9 @@ function openEditOrderModal(order) {
     channelId: channel?.ID || '',
     channel: upstream.Channel || '',
     baseUrl: upstream.BaseURL || '',
-    apiKey: '',
+    username: upstream.Username || '',
+    password: upstream.Password || '',
+    apiKey: upstream.APIKey || '',
     adminNote: order.AdminNote || '',
     planId: order.PlanID || order.Plan?.ID || '',
     amountCents: order.AmountCents || 0,
@@ -479,6 +506,8 @@ async function approveOrder() {
       channel_id: Number(approve.channelId) || undefined,
       channel: approve.channel,
       base_url: approve.baseUrl,
+      username: approve.username,
+      password: approve.password,
       api_key: approve.apiKey,
       admin_note: approve.adminNote
     })
@@ -492,6 +521,8 @@ async function editOrder() {
     channel_id: Number(approve.channelId) || undefined,
     channel: approve.channel,
     base_url: approve.baseUrl,
+    username: approve.username,
+    password: approve.password,
     api_key: approve.apiKey,
     admin_note: approve.adminNote,
     amount_cents: Number(approve.amountCents) || undefined
@@ -513,6 +544,7 @@ async function rejectOrder() {
 }
 
 async function saveSettings() {
+  syncAPIEndpointSetting()
   await runAction(async () => {
     await api.put('/admin/settings', {
       ...settings,
@@ -526,6 +558,7 @@ async function saveSettings() {
 
 async function saveNavigation() {
   syncNavigationSetting()
+  syncAPIEndpointSetting()
   await runAction(async () => {
     await api.put('/admin/settings', {
       ...settings,
@@ -586,6 +619,58 @@ function normalizeNavigation(items) {
 function syncNavigationSetting() {
   const normalized = normalizeNavigation(navDraft.value)
   settings.navigation_items = JSON.stringify(normalized.length ? normalized : cloneDefaultNavigation())
+}
+
+function createAPIEndpoint(overrides = {}) {
+  return {
+    label: '',
+    description: '',
+    url: '',
+    ...overrides
+  }
+}
+
+function setAPIEndpointDraft(value) {
+  apiEndpointDraft.value = parseAPIEndpoints(value).map((item) => createAPIEndpoint(item))
+  syncAPIEndpointSetting()
+}
+
+function parseAPIEndpoints(value) {
+  try {
+    const parsed = JSON.parse(value || '[]')
+    return Array.isArray(parsed) && parsed.length ? normalizeAPIEndpoints(parsed) : defaultAPIEndpoints()
+  } catch {
+    return defaultAPIEndpoints()
+  }
+}
+
+function defaultAPIEndpoints() {
+  return [{ label: '默认', description: '主线路', url: 'https://ai.itzkb.cn' }]
+}
+
+function normalizeAPIEndpoints(items) {
+  return items
+    .map((item) => ({
+      label: String(item.label || '').trim() || 'API',
+      description: String(item.description || '').trim(),
+      url: String(item.url || '').trim()
+    }))
+    .filter((item) => item.url)
+}
+
+function syncAPIEndpointSetting() {
+  const normalized = normalizeAPIEndpoints(apiEndpointDraft.value)
+  settings.api_endpoints = JSON.stringify(normalized.length ? normalized : defaultAPIEndpoints())
+}
+
+function addAPIEndpoint() {
+  apiEndpointDraft.value.push(createAPIEndpoint({ label: '新线路', description: '备用线路', url: 'https://' }))
+  syncAPIEndpointSetting()
+}
+
+function removeAPIEndpoint(index) {
+  apiEndpointDraft.value.splice(index, 1)
+  syncAPIEndpointSetting()
 }
 
 function addNavItem() {
@@ -730,6 +815,8 @@ function normalizeUser(user) {
   }
   if (requiresUserUpstreamRebind(user)) {
     payload.channel_id = Number(user.channel_id || 0)
+    payload.upstream_username = user.upstream_username.trim()
+    payload.upstream_password = user.upstream_password
     payload.api_key = user.api_key
   }
   if (user.password) payload.password = user.password
@@ -801,6 +888,7 @@ function submitModal() {
     'delete-doc': deleteDoc,
     'create-user': submitUser,
     'edit-user': submitUser,
+    'user-upstream': closeModal,
     'delete-user': deleteUser,
     'approve-order': approveOrder,
     'reject-order': rejectOrder,
@@ -1156,6 +1244,7 @@ function submitModal() {
                     <td>
                       <div class="table-actions">
                         <button class="ghost-button small" @click="openUserModal(user)">编辑</button>
+                        <button class="ghost-button small" @click="openUserUpstreamModal(user)">渠道</button>
                         <button class="danger-button small" @click="confirmDeleteUser(user)">删除</button>
                       </div>
                     </td>
@@ -1294,6 +1383,7 @@ function submitModal() {
 
           <div class="settings-tabs">
             <button type="button" :class="{ active: settingsTab === 'basic' }" @click="settingsTab = 'basic'">基础信息</button>
+            <button type="button" :class="{ active: settingsTab === 'endpoints' }" @click="settingsTab = 'endpoints'">API 端点</button>
             <button type="button" :class="{ active: settingsTab === 'smtp' }" @click="settingsTab = 'smtp'">SMTP 配置</button>
             <button type="button" :class="{ active: settingsTab === 'epay' }" @click="settingsTab = 'epay'">易支付配置</button>
           </div>
@@ -1303,10 +1393,6 @@ function submitModal() {
               <label class="field">
                 <span>网站标题</span>
                 <input v-model="settings.site_title" placeholder="AI Gateway" />
-              </label>
-              <label class="field">
-                <span>API 端点</span>
-                <input v-model="settings.api_endpoint" placeholder="https://ai.itzkb.cn" />
               </label>
               <label class="field">
                 <span>视频教程地址</span>
@@ -1324,6 +1410,36 @@ function submitModal() {
                 <span>定价页提示内容</span>
                 <textarea v-model="settings.pricing_notice" rows="3" placeholder="展示在定价页顶部提示框中的说明文字"></textarea>
               </label>
+            </div>
+          </section>
+
+          <section v-if="settingsTab === 'endpoints'" class="panel-surface p-5">
+            <div class="section-head mb-5">
+              <div>
+                <p class="section-kicker">API Endpoints</p>
+                <h3>API 端点</h3>
+                <span>配置用户控制台展示的 API 接入地址、标签和线路说明。</span>
+              </div>
+              <button type="button" class="primary-button small" @click="addAPIEndpoint">新增端点</button>
+            </div>
+            <div class="endpoint-admin-list">
+              <article v-for="(endpoint, index) in apiEndpointDraft" :key="index" class="endpoint-admin-item">
+                <div class="form-grid">
+                  <label class="field">
+                    <span>展示标签</span>
+                    <input v-model="endpoint.label" placeholder="CN2 优化" @input="syncAPIEndpointSetting" />
+                  </label>
+                  <label class="field">
+                    <span>线路说明</span>
+                    <input v-model="endpoint.description" placeholder="国内直连优化线路" @input="syncAPIEndpointSetting" />
+                  </label>
+                  <label class="field md:col-span-2">
+                    <span>API 地址</span>
+                    <input v-model="endpoint.url" placeholder="https://api.example.com/v1" @input="syncAPIEndpointSetting" />
+                  </label>
+                </div>
+                <button type="button" class="danger-button small" :disabled="apiEndpointDraft.length <= 1" @click="removeAPIEndpoint(index)">删除</button>
+              </article>
             </div>
           </section>
 
@@ -1485,10 +1601,30 @@ function submitModal() {
             </select>
           </label>
           <label v-if="requiresUserUpstreamRebind(userForm)" class="field md:col-span-2">
+            <span>上游账号</span>
+            <input v-model="userForm.upstream_username" required placeholder="请输入上游账号" />
+          </label>
+          <label v-if="requiresUserUpstreamRebind(userForm)" class="field">
+            <span>上游密码</span>
+            <input v-model="userForm.upstream_password" type="text" required placeholder="请输入上游密码" />
+          </label>
+          <label v-if="requiresUserUpstreamRebind(userForm)" class="field">
             <span>新的上游 API Key</span>
-            <input v-model="userForm.api_key" type="password" required placeholder="修改套餐后必须重新绑定" />
+            <input v-model="userForm.api_key" type="text" required placeholder="修改套餐后必须重新绑定" />
           </label>
           <label class="toggle-line md:col-span-2"><input v-model="userForm.email_verified" type="checkbox" />邮箱已验证</label>
+        </div>
+
+        <div v-if="modal.type === 'user-upstream'" class="modal-body form-grid">
+          <label class="field"><span>用户</span><input :value="modal.payload?.user?.Email || '-'" readonly /></label>
+          <label class="field"><span>状态</span><input :value="statusLabel(modal.payload?.upstream?.Status || '-')" readonly /></label>
+          <label class="field"><span>上游渠道</span><input :value="modal.payload?.upstream?.Channel || '-'" readonly /></label>
+          <label class="field md:col-span-2"><span>API 地址</span><input :value="modal.payload?.upstream?.BaseURL || '-'" readonly /></label>
+          <label class="field"><span>上游账号</span><input :value="modal.payload?.upstream?.Username || '-'" readonly /></label>
+          <label class="field"><span>上游密码</span><input :value="modal.payload?.upstream?.Password || '-'" readonly /></label>
+          <label class="field md:col-span-2"><span>API Key</span><textarea :value="modal.payload?.upstream?.APIKey || '-'" rows="4" readonly></textarea></label>
+          <label class="field"><span>最后使用</span><input :value="formatDate(modal.payload?.upstream?.LastUsedAt)" readonly /></label>
+          <label class="field"><span>更新时间</span><input :value="formatDate(modal.payload?.upstream?.UpdatedAt)" readonly /></label>
         </div>
 
         <div v-if="modal.type === 'approve-order'" class="modal-body form-grid">
@@ -1499,7 +1635,9 @@ function submitModal() {
               <option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}</option>
             </select>
           </label>
-          <label class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="password" required /></label>
+          <label class="field"><span>上游账号</span><input v-model="approve.username" required /></label>
+          <label class="field"><span>上游密码</span><input v-model="approve.password" type="text" required /></label>
+          <label class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="text" required /></label>
           <label class="field md:col-span-2"><span>审核备注</span><textarea v-model="approve.adminNote" rows="3"></textarea></label>
         </div>
 
@@ -1518,7 +1656,9 @@ function submitModal() {
               <option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}</option>
             </select>
           </label>
-          <label class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="password" placeholder="留空不修改" /></label>
+          <label class="field"><span>上游账号</span><input v-model="approve.username" placeholder="留空不修改" /></label>
+          <label class="field"><span>上游密码</span><input v-model="approve.password" type="text" placeholder="留空不修改" /></label>
+          <label class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="text" placeholder="留空不修改" /></label>
           <label class="field md:col-span-2"><span>审核备注</span><textarea v-model="approve.adminNote" rows="3"></textarea></label>
         </div>
 

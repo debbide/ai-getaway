@@ -68,6 +68,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 		{
 			admin.GET("/users", adminController.Users)
 			admin.POST("/users", adminController.CreateUser)
+			admin.GET("/users/:id/upstream", adminController.UserUpstream)
 			admin.PATCH("/users/:id", adminController.UpdateUser)
 			admin.DELETE("/users/:id", adminController.DeleteUser)
 			admin.GET("/orders", adminController.Orders)

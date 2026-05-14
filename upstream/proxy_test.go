@@ -119,6 +119,58 @@ func TestFillUsageGPT54MatchesObservedUpstreamCost(t *testing.T) {
 	}
 }
 
+func TestFillUsageGPT55MatchesObservedUpstreamCost(t *testing.T) {
+	log := model.APILog{}
+
+	fillUsage(nil, &log, []byte(`{
+		"model": "gpt-5.5",
+		"usage": {
+			"input_tokens": 4055,
+			"output_tokens": 22,
+			"total_tokens": 14677,
+			"input_tokens_details": {
+				"cached_tokens": 10600
+			}
+		}
+	}`))
+
+	if log.InputUSDMicros != 20275 {
+		t.Fatalf("InputUSDMicros = %d, want 20275", log.InputUSDMicros)
+	}
+	if log.CachedInputUSDMicros != 14342 {
+		t.Fatalf("CachedInputUSDMicros = %d, want 14342", log.CachedInputUSDMicros)
+	}
+	if log.OutputUSDMicros != 660 {
+		t.Fatalf("OutputUSDMicros = %d, want 660", log.OutputUSDMicros)
+	}
+	if log.EstimatedUSDMicros != 35277 {
+		t.Fatalf("EstimatedUSDMicros = %d, want 35277", log.EstimatedUSDMicros)
+	}
+}
+
+func TestFillUsageGPT55VariantUsesGPT55Pricing(t *testing.T) {
+	log := model.APILog{}
+
+	fillUsage(nil, &log, []byte(`{
+		"model": "gpt-5.5-2026-05-01",
+		"usage": {
+			"input_tokens": 1000,
+			"output_tokens": 100,
+			"total_tokens": 2100,
+			"input_tokens_details": {
+				"cached_tokens": 1000
+			}
+		}
+	}`))
+
+	if log.InputUSDPerMillion != 5.00 || log.CachedInputUSDPerMillion != 1.353 || log.OutputUSDPerMillion != 30.00 {
+		t.Fatalf("pricing = %.3f/%.3f/%.3f, want 5.000/1.353/30.000", log.InputUSDPerMillion, log.CachedInputUSDPerMillion, log.OutputUSDPerMillion)
+	}
+	if log.EstimatedUSDMicros != 9353 {
+		t.Fatalf("EstimatedUSDMicros = %d, want 9353", log.EstimatedUSDMicros)
+	}
+}
+
 func TestFillUsagePrefersUpstreamCost(t *testing.T) {
 	log := model.APILog{}
 

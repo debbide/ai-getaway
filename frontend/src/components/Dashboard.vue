@@ -5,7 +5,7 @@ import { useAuthStore } from '../stores/auth'
 
 const props = defineProps({
   plans: { type: Array, default: () => [] },
-  apiEndpoint: { type: String, default: 'https://ai.itzkb.cn' }
+  apiEndpoints: { type: String, default: '[]' }
 })
 const emit = defineEmits(['navigate'])
 
@@ -71,7 +71,7 @@ const quotaResetText = computed(() => {
   if (!quotaUsage.value?.window_end) return ''
   return `${quotaPeriodUnit(auth.user?.plan)}额度重置：${formatDateTime(quotaUsage.value.window_end)}`
 })
-const displayApiEndpoint = computed(() => (props.apiEndpoint || 'https://ai.itzkb.cn').trim())
+const displayApiEndpoints = computed(() => parseApiEndpoints(props.apiEndpoints))
 
 const soloKey = computed(() => (keys.value.length ? keys.value[0] : null))
 const hasApiKey = computed(() => Boolean(soloKey.value))
@@ -307,6 +307,27 @@ function formatDateTime(value) {
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return '—'
   return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+function parseApiEndpoints(value) {
+  try {
+    const parsed = JSON.parse(value || '[]')
+    if (!Array.isArray(parsed)) return defaultApiEndpoints()
+    const endpoints = parsed
+      .map((item) => ({
+        label: String(item.label || 'API').trim() || 'API',
+        description: String(item.description || '').trim(),
+        url: String(item.url || '').trim()
+      }))
+      .filter((item) => item.url)
+    return endpoints.length ? endpoints : defaultApiEndpoints()
+  } catch {
+    return defaultApiEndpoints()
+  }
+}
+
+function defaultApiEndpoints() {
+  return [{ label: '默认', description: '主线路', url: 'https://ai.itzkb.cn' }]
 }
 
 async function copyKey(text, showSuccessModal = false) {
@@ -558,7 +579,21 @@ function statusLabel(value) {
               <p class="section-kicker">Endpoint</p>
               <h3>API 端点</h3>
             </div>
-            <code>{{ displayApiEndpoint }}</code>
+            <div class="endpoint-list">
+              <article v-for="endpoint in displayApiEndpoints" :key="endpoint.url" class="endpoint-item">
+                <div class="endpoint-icon" aria-hidden="true">▤</div>
+                <div class="endpoint-main">
+                  <div class="endpoint-meta">
+                    <strong>{{ endpoint.label }}</strong>
+                    <span v-if="endpoint.description">{{ endpoint.description }}</span>
+                  </div>
+                  <code>{{ endpoint.url }}</code>
+                </div>
+                <button type="button" class="endpoint-copy-button" aria-label="复制 API 端点" title="复制 API 端点" @click="copyKey(endpoint.url)">
+                  ⧉
+                </button>
+              </article>
+            </div>
           </section>
 
           <!-- 套餐管理：侧栏紧凑区 -->

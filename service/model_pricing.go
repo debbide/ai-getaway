@@ -40,7 +40,7 @@ type BillingResult struct {
 
 func OfficialOpenAIModelPrices() []OfficialModelPrice {
 	return []OfficialModelPrice{
-		{ModelName: "gpt-5.5", DisplayName: "GPT-5.5", InputUSDPerMillion: 5.00, CachedInputUSDPerMillion: 0.50, OutputUSDPerMillion: 30.00},
+		{ModelName: "gpt-5.5", DisplayName: "GPT-5.5", InputUSDPerMillion: 5.00, CachedInputUSDPerMillion: 1.353, OutputUSDPerMillion: 30.00},
 		{ModelName: "gpt-5.4", DisplayName: "GPT-5.4", InputUSDPerMillion: 2.50, CachedInputUSDPerMillion: 0.85, OutputUSDPerMillion: 15.00},
 		{ModelName: "gpt-5.4-mini", DisplayName: "GPT-5.4 Mini", InputUSDPerMillion: 0.75, CachedInputUSDPerMillion: 0.075, OutputUSDPerMillion: 4.50},
 		{ModelName: "gpt-5.4-nano", DisplayName: "GPT-5.4 Nano", InputUSDPerMillion: 0.20, CachedInputUSDPerMillion: 0.02, OutputUSDPerMillion: 1.25},
@@ -175,22 +175,19 @@ func FindModelPricing(db *gorm.DB, modelName string) (model.ModelPricing, string
 		}
 	}
 
-	name := strings.ToLower(modelName)
-	for _, item := range OfficialOpenAIModelPrices() {
-		if name == strings.ToLower(item.ModelName) {
-			return model.ModelPricing{
-				ModelName:                item.ModelName,
-				DisplayName:              item.DisplayName,
-				Provider:                 "openai",
-				InputUSDPerMillion:       item.InputUSDPerMillion,
-				CachedInputUSDPerMillion: item.CachedInputUSDPerMillion,
-				OutputUSDPerMillion:      item.OutputUSDPerMillion,
-				BillingMultiplier:        1,
-				Status:                   model.ModelPricingStatusActive,
-				Official:                 true,
-				OfficialSource:           OpenAIPricingSourceURL,
-			}, "official_fallback"
-		}
+	if item, ok := findOfficialModelPrice(modelName); ok {
+		return model.ModelPricing{
+			ModelName:                item.ModelName,
+			DisplayName:              item.DisplayName,
+			Provider:                 "openai",
+			InputUSDPerMillion:       item.InputUSDPerMillion,
+			CachedInputUSDPerMillion: item.CachedInputUSDPerMillion,
+			OutputUSDPerMillion:      item.OutputUSDPerMillion,
+			BillingMultiplier:        1,
+			Status:                   model.ModelPricingStatusActive,
+			Official:                 true,
+			OfficialSource:           OpenAIPricingSourceURL,
+		}, "official_fallback"
 	}
 
 	input, cached, output := fallbackRatesUSD(modelName)
@@ -205,6 +202,27 @@ func FindModelPricing(db *gorm.DB, modelName string) (model.ModelPricing, string
 	}, "fallback"
 }
 
+func findOfficialModelPrice(modelName string) (OfficialModelPrice, bool) {
+	name := strings.ToLower(strings.TrimSpace(modelName))
+	if name == "" {
+		return OfficialModelPrice{}, false
+	}
+
+	var matched OfficialModelPrice
+	matchedLen := 0
+	for _, item := range OfficialOpenAIModelPrices() {
+		itemName := strings.ToLower(item.ModelName)
+		if name != itemName && !strings.HasPrefix(name, itemName+"-") {
+			continue
+		}
+		if len(itemName) > matchedLen {
+			matched = item
+			matchedLen = len(itemName)
+		}
+	}
+	return matched, matchedLen > 0
+}
+
 func USDmicrosToCents(micros int64) int64 {
 	if micros <= 0 {
 		return 0
@@ -216,7 +234,7 @@ func priceMicros(tokens int64, usdPerMillion float64, multiplier float64) int64 
 	if tokens <= 0 || usdPerMillion <= 0 {
 		return 0
 	}
-	return int64(math.Ceil(float64(tokens) * usdPerMillion * multiplier))
+	return int64(math.Round(float64(tokens) * usdPerMillion * multiplier))
 }
 
 func fallbackRatesUSD(modelName string) (float64, float64, float64) {

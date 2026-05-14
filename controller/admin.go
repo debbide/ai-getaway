@@ -26,6 +26,8 @@ type approveOrderRequest struct {
 	ChannelID uint   `json:"channel_id"`
 	Channel   string `json:"channel"`
 	BaseURL   string `json:"base_url"`
+	Username  string `json:"username" binding:"required"`
+	Password  string `json:"password" binding:"required"`
 	APIKey    string `json:"api_key" binding:"required"`
 	AdminNote string `json:"admin_note"`
 }
@@ -44,16 +46,18 @@ type planRequest struct {
 }
 
 type updateUserRequest struct {
-	Username      string `json:"username"`
-	Email         string `json:"email"`
-	Password      string `json:"password"`
-	Role          string `json:"role"`
-	Status        string `json:"status"`
-	EmailVerified *bool  `json:"email_verified"`
-	PlanID        *uint  `json:"plan_id"`
-	PlanIDPresent bool   `json:"-"`
-	ChannelID     uint   `json:"channel_id"`
-	APIKey        string `json:"api_key"`
+	Username         string `json:"username"`
+	Email            string `json:"email"`
+	Password         string `json:"password"`
+	Role             string `json:"role"`
+	Status           string `json:"status"`
+	EmailVerified    *bool  `json:"email_verified"`
+	PlanID           *uint  `json:"plan_id"`
+	PlanIDPresent    bool   `json:"-"`
+	ChannelID        uint   `json:"channel_id"`
+	UpstreamUsername string `json:"upstream_username"`
+	UpstreamPassword string `json:"upstream_password"`
+	APIKey           string `json:"api_key"`
 }
 
 func (r *updateUserRequest) UnmarshalJSON(data []byte) error {
@@ -103,6 +107,8 @@ type updateOrderRequest struct {
 	ChannelID   uint   `json:"channel_id"`
 	Channel     string `json:"channel"`
 	BaseURL     string `json:"base_url"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
 	APIKey      string `json:"api_key"`
 	AdminNote   string `json:"admin_note"`
 	PlanID      *uint  `json:"plan_id"`
@@ -132,10 +138,65 @@ type orderResponse struct {
 	Upstream *model.UpstreamAccount `json:"Upstream,omitempty"`
 }
 
+type adminUserResponse struct {
+	model.User
+	Upstream *adminUpstreamResponse `json:"Upstream,omitempty"`
+}
+
+type adminUpstreamResponse struct {
+	ID         uint       `json:"ID"`
+	UserID     uint       `json:"UserID"`
+	Channel    string     `json:"Channel"`
+	BaseURL    string     `json:"BaseURL"`
+	Username   string     `json:"Username"`
+	Password   string     `json:"Password"`
+	APIKey     string     `json:"APIKey"`
+	Status     string     `json:"Status"`
+	LastUsedAt *time.Time `json:"LastUsedAt"`
+	CreatedAt  time.Time  `json:"CreatedAt"`
+	UpdatedAt  time.Time  `json:"UpdatedAt"`
+}
+
 func (a *AdminController) Users(c *gin.Context) {
 	var users []model.User
 	a.db.Preload("Plan").Order("id desc").Find(&users)
-	response.OK(c, users)
+
+	userIDs := make([]uint, 0, len(users))
+	for _, user := range users {
+		userIDs = append(userIDs, user.ID)
+	}
+
+	var upstreams []model.UpstreamAccount
+	if len(userIDs) > 0 {
+		a.db.Where("user_id IN ?", userIDs).Find(&upstreams)
+	}
+	upstreamByUserID := map[uint]model.UpstreamAccount{}
+	for _, upstream := range upstreams {
+		upstreamByUserID[upstream.UserID] = upstream
+	}
+
+	items := make([]adminUserResponse, 0, len(users))
+	for _, user := range users {
+		item := adminUserResponse{User: user}
+		if upstream, ok := upstreamByUserID[user.ID]; ok {
+			item.Upstream = mapAdminUpstream(upstream)
+		}
+		items = append(items, item)
+	}
+	response.OK(c, items)
+}
+
+func (a *AdminController) UserUpstream(c *gin.Context) {
+	var upstream model.UpstreamAccount
+	if err := a.db.Where("user_id = ?", c.Param("id")).First(&upstream).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Error(c, 404, "upstream account not found")
+			return
+		}
+		response.Error(c, 500, "failed to load upstream account")
+		return
+	}
+	response.OK(c, mapAdminUpstream(upstream))
 }
 
 func (a *AdminController) CreateUser(c *gin.Context) {
@@ -251,7 +312,7 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 	planChanged := req.PlanIDPresent && !sameUintPointer(user.PlanID, req.PlanID)
 	var selectedChannel *model.UpstreamChannel
 	if planChanged && req.PlanID != nil {
-		if req.ChannelID == 0 || req.APIKey == "" {
+		if req.ChannelID == 0 || req.UpstreamUsername == "" || req.UpstreamPassword == "" || req.APIKey == "" {
 			response.Error(c, 400, "upstream rebinding required after plan change")
 			return
 		}
@@ -266,22 +327,28 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		response.Error(c, 500, "failed to update user")
 		return
 	}
-	if selectedChannel != nil {
-		if err := a.db.Model(&model.UpstreamAccount{}).
-			Where("user_id = ?", user.ID).
-			Updates(map[string]interface{}{
-				"channel": selectedChannel.Name,
-				"base_url": selectedChannel.BaseURL,
-				"api_key": req.APIKey,
-				"status": model.UpstreamStatusActive,
-			}).Error; err != nil {
-			response.Error(c, 500, "failed to update user")
-			return
-		}
-	}
 	if err := a.syncUserAccessState(&user, updates); err != nil {
 		response.Error(c, 500, "failed to update user")
 		return
+	}
+	if selectedChannel != nil {
+		upstream := model.UpstreamAccount{
+			UserID: user.ID,
+			Status: model.UpstreamStatusActive,
+		}
+		if err := a.db.Where(model.UpstreamAccount{UserID: user.ID}).
+			Assign(map[string]interface{}{
+				"channel":  selectedChannel.Name,
+				"base_url": selectedChannel.BaseURL,
+				"username": req.UpstreamUsername,
+				"password": req.UpstreamPassword,
+				"api_key":  req.APIKey,
+				"status":   model.UpstreamStatusActive,
+			}).
+			FirstOrCreate(&upstream).Error; err != nil {
+			response.Error(c, 500, "failed to update user")
+			return
+		}
 	}
 	response.OK(c, nil)
 }
@@ -433,19 +500,21 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 		}
 
 		if err := tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
-			"status":       model.UserStatusApproved,
-			"plan_id":      order.PlanID,
-			"expires_at":   &expiresAt,
+			"status":     model.UserStatusApproved,
+			"plan_id":    order.PlanID,
+			"expires_at": &expiresAt,
 		}).Error; err != nil {
 			return err
 		}
 
 		upstream := model.UpstreamAccount{
-			UserID:  order.UserID,
-			Channel: req.Channel,
-			BaseURL: req.BaseURL,
-			APIKey:  req.APIKey,
-			Status:  model.UpstreamStatusActive,
+			UserID:   order.UserID,
+			Channel:  req.Channel,
+			BaseURL:  req.BaseURL,
+			Username: req.Username,
+			Password: req.Password,
+			APIKey:   req.APIKey,
+			Status:   model.UpstreamStatusActive,
 		}
 		return tx.Where(model.UpstreamAccount{UserID: order.UserID}).Assign(upstream).FirstOrCreate(&upstream).Error
 	})
@@ -517,6 +586,12 @@ func (a *AdminController) UpdateOrder(c *gin.Context) {
 	if req.BaseURL != "" {
 		upstreamUpdates["base_url"] = req.BaseURL
 	}
+	if req.Username != "" {
+		upstreamUpdates["username"] = req.Username
+	}
+	if req.Password != "" {
+		upstreamUpdates["password"] = req.Password
+	}
 	if req.APIKey != "" {
 		upstreamUpdates["api_key"] = req.APIKey
 	}
@@ -545,6 +620,12 @@ func (a *AdminController) UpdateOrder(c *gin.Context) {
 			}
 			if req.BaseURL != "" {
 				upstream.BaseURL = req.BaseURL
+			}
+			if req.Username != "" {
+				upstream.Username = req.Username
+			}
+			if req.Password != "" {
+				upstream.Password = req.Password
 			}
 			if req.APIKey != "" {
 				upstream.APIKey = req.APIKey
@@ -660,6 +741,22 @@ func (a *AdminController) Upstreams(c *gin.Context) {
 	var upstreams []model.UpstreamAccount
 	a.db.Preload("User").Order("id desc").Find(&upstreams)
 	response.OK(c, upstreams)
+}
+
+func mapAdminUpstream(upstream model.UpstreamAccount) *adminUpstreamResponse {
+	return &adminUpstreamResponse{
+		ID:         upstream.ID,
+		UserID:     upstream.UserID,
+		Channel:    upstream.Channel,
+		BaseURL:    upstream.BaseURL,
+		Username:   upstream.Username,
+		Password:   upstream.Password,
+		APIKey:     upstream.APIKey,
+		Status:     upstream.Status,
+		LastUsedAt: upstream.LastUsedAt,
+		CreatedAt:  upstream.CreatedAt,
+		UpdatedAt:  upstream.UpdatedAt,
+	}
 }
 
 func (a *AdminController) UpstreamChannels(c *gin.Context) {

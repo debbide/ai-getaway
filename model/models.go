@@ -77,6 +77,8 @@ type UpstreamAccount struct {
 	User       User
 	Channel    string `gorm:"size:64;not null"`
 	BaseURL    string `gorm:"size:255;not null"`
+	Username   string `gorm:"size:128"`
+	Password   string `gorm:"size:255" json:"-"`
 	APIKey     string `gorm:"size:512;not null" json:"-"`
 	Status     string `gorm:"size:32;default:active;index"`
 	LastUsedAt *time.Time
@@ -160,7 +162,7 @@ type APILog struct {
 type SystemSetting struct {
 	gorm.Model
 	SiteTitle        string `gorm:"size:128;default:星空AI"`
-	APIEndpoint      string `gorm:"size:512;default:https://ai.itzkb.cn"`
+	APIEndpoints     string `gorm:"type:text"`
 	TutorialVideoURL string `gorm:"size:512"`
 	NavigationItems  string `gorm:"type:text"`
 	PricingTitle     string `gorm:"size:128;default:简单透明的定价"`

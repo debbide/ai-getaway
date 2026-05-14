@@ -18,7 +18,7 @@ const defaultNavigation = [
 
 const defaultSettings = {
   site_title: '星空AI',
-  api_endpoint: 'https://ai.itzkb.cn',
+  api_endpoints: JSON.stringify([{ label: '默认', description: '主线路', url: 'https://ai.itzkb.cn' }]),
   tutorial_video_url: '',
   navigation_items: JSON.stringify(defaultNavigation),
   pricing_title: '简单透明的定价',
@@ -508,7 +508,7 @@ function planSubtitle(index) {
           </div>
         </div>
       </section>
-      <Dashboard v-if="auth.loggedIn" :plans="plans" :api-endpoint="publicSettings.api_endpoint" @navigate="navigate" />
+      <Dashboard v-if="auth.loggedIn" :plans="plans" :api-endpoints="publicSettings.api_endpoints" @navigate="navigate" />
     </main>
 
     <footer class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-8 text-sm text-muted sm:px-6">

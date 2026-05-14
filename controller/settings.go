@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"encoding/json"
+	"strings"
+
 	"ai-gateway/model"
 	"ai-gateway/response"
 
@@ -18,7 +21,7 @@ func NewSettingsController(db *gorm.DB) *SettingsController {
 
 type updateSettingsRequest struct {
 	SiteTitle        string `json:"site_title"`
-	APIEndpoint      string `json:"api_endpoint"`
+	APIEndpoints     string `json:"api_endpoints"`
 	TutorialVideoURL string `json:"tutorial_video_url"`
 	NavigationItems  string `json:"navigation_items"`
 	PricingTitle     string `json:"pricing_title"`
@@ -38,11 +41,21 @@ type updateSettingsRequest struct {
 	EpaySubmitURL    string `json:"epay_submit_url"`
 }
 
+type apiEndpointSetting struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
+}
+
 func (s *SettingsController) Public(c *gin.Context) {
+	if err := ensureSystemSettingColumns(s.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
 	setting := loadSettings(s.db)
 	response.OK(c, gin.H{
 		"site_title":         setting.SiteTitle,
-		"api_endpoint":       setting.APIEndpoint,
+		"api_endpoints":      setting.APIEndpoints,
 		"tutorial_video_url": setting.TutorialVideoURL,
 		"navigation_items":   setting.NavigationItems,
 		"pricing_title":      setting.PricingTitle,
@@ -60,7 +73,7 @@ func (s *SettingsController) Get(c *gin.Context) {
 	response.OK(c, gin.H{
 		"id":                       setting.ID,
 		"site_title":               setting.SiteTitle,
-		"api_endpoint":             setting.APIEndpoint,
+		"api_endpoints":            setting.APIEndpoints,
 		"tutorial_video_url":       setting.TutorialVideoURL,
 		"navigation_items":         setting.NavigationItems,
 		"pricing_title":            setting.PricingTitle,
@@ -95,7 +108,7 @@ func (s *SettingsController) Update(c *gin.Context) {
 	setting := loadSettings(s.db)
 	updates := map[string]interface{}{
 		"site_title":         req.SiteTitle,
-		"api_endpoint":       req.APIEndpoint,
+		"api_endpoints":      normalizeAPIEndpointsJSON(req.APIEndpoints),
 		"tutorial_video_url": req.TutorialVideoURL,
 		"navigation_items":   req.NavigationItems,
 		"pricing_title":      req.PricingTitle,
@@ -129,7 +142,7 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 	}
 	columns := map[string]string{
 		"navigation_items": "TEXT",
-		"api_endpoint":     "VARCHAR(512)",
+		"api_endpoints":    "TEXT",
 		"pricing_title":    "VARCHAR(128)",
 		"pricing_subtitle": "VARCHAR(255)",
 		"pricing_notice":   "VARCHAR(512)",
@@ -144,6 +157,39 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 			continue
 		}
 		if err := db.Exec("ALTER TABLE `system_settings` ADD COLUMN `" + column + "` " + definition).Error; err != nil {
+			return err
+		}
+	}
+	if systemSettingColumnExists(db, "api_endpoint") {
+		if err := migrateLegacyAPIEndpoint(db); err != nil {
+			return err
+		}
+		if err := db.Exec("ALTER TABLE `system_settings` DROP COLUMN `api_endpoint`").Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateLegacyAPIEndpoint(db *gorm.DB) error {
+	var rows []struct {
+		ID           uint
+		APIEndpoint  string
+		APIEndpoints string
+	}
+	if err := db.Raw("SELECT `id`, `api_endpoint`, `api_endpoints` FROM `system_settings`").Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if strings.TrimSpace(row.APIEndpoints) != "" || strings.TrimSpace(row.APIEndpoint) == "" {
+			continue
+		}
+		endpoints := mustMarshalAPIEndpoints([]apiEndpointSetting{{
+			Label:       "默认",
+			Description: "主线路",
+			URL:         row.APIEndpoint,
+		}})
+		if err := db.Exec("UPDATE `system_settings` SET `api_endpoints` = ? WHERE `id` = ?", endpoints, row.ID).Error; err != nil {
 			return err
 		}
 	}
@@ -187,11 +233,11 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 	if setting.SiteTitle == "" {
 		setting.SiteTitle = "星空AI"
 	}
-	if setting.APIEndpoint == "" {
-		setting.APIEndpoint = "https://ai.itzkb.cn"
+	if strings.TrimSpace(setting.APIEndpoints) == "" {
+		setting.APIEndpoints = defaultAPIEndpointsJSON()
 	}
 	if setting.NavigationItems == "" {
-		setting.NavigationItems = `[{"label":"首页","path":"/"},{"label":"教程 ↗","path":"/docs"},{"label":"定价","path":"/plans"},{"label":"模型","path":"/models"},{"label":"常见问题","path":"/faq"},{"label":"更多中转⌄","path":"#","children":[{"label":"Claude Code 中转","path":"/claude"}]}]`
+		setting.NavigationItems = `[{"label":"首页","path":"/"},{"label":"教程 ↗","path":"/docs"},{"label":"定价","path":"/plans"},{"label":"模型","path":"/models"},{"label":"常见问题","path":"/faq"},{"label":"更多中转↱","path":"#","children":[{"label":"Claude Code 中转","path":"/claude"}]}]`
 	}
 	if setting.PricingTitle == "" {
 		setting.PricingTitle = "简单透明的定价"
@@ -206,4 +252,46 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 		setting.SMTPPort = 587
 	}
 	return setting
+}
+
+func defaultAPIEndpointsJSON() string {
+	return mustMarshalAPIEndpoints([]apiEndpointSetting{{
+		Label:       "默认",
+		Description: "主线路",
+		URL:         "https://ai.itzkb.cn",
+	}})
+}
+
+func normalizeAPIEndpointsJSON(value string) string {
+	var endpoints []apiEndpointSetting
+	if err := json.Unmarshal([]byte(value), &endpoints); err != nil {
+		return defaultAPIEndpointsJSON()
+	}
+	normalized := make([]apiEndpointSetting, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		item := apiEndpointSetting{
+			Label:       strings.TrimSpace(endpoint.Label),
+			Description: strings.TrimSpace(endpoint.Description),
+			URL:         strings.TrimSpace(endpoint.URL),
+		}
+		if item.URL == "" {
+			continue
+		}
+		if item.Label == "" {
+			item.Label = "API"
+		}
+		normalized = append(normalized, item)
+	}
+	if len(normalized) == 0 {
+		return defaultAPIEndpointsJSON()
+	}
+	return mustMarshalAPIEndpoints(normalized)
+}
+
+func mustMarshalAPIEndpoints(endpoints []apiEndpointSetting) string {
+	body, err := json.Marshal(endpoints)
+	if err != nil {
+		return "[]"
+	}
+	return string(body)
 }
