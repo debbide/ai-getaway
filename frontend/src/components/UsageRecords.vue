@@ -123,7 +123,7 @@ async function setPage(page) {
 }
 
 function exportCsv() {
-  const head = ['API密钥', '模型', '推理强度', '端点', '类型', '计费模式', '输入Token', '输出Token', '总Token', '费用', '首Token', '耗时', '状态', '时间']
+  const head = ['API密钥', '模型', '推理强度', '端点', '类型', '计费模式', '计费输入Token', '缓存Token', '输出Token', '总Token', '费用', '首Token', '耗时', '状态', '时间']
   const rows = records.value.map((item) => [
     item.api_key_name || maskKey(item),
     item.model || '-',
@@ -131,7 +131,8 @@ function exportCsv() {
     item.endpoint || item.path || '-',
     requestTypeLabel(item.request_type),
     billingModeLabel(item.billing_mode),
-    item.prompt_tokens || 0,
+    billableInputTokens(item),
+    item.cached_input_tokens || 0,
     item.completion_tokens || 0,
     item.total_tokens || 0,
     item.estimated_usd_micros ? usdMicros(item.estimated_usd_micros) : usd(item.estimated_usd_cents || 0),
@@ -159,6 +160,10 @@ function statToken(value) {
   if (n >= 1000000) return `${(n / 1000000).toFixed(2)}M`
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
   return n.toLocaleString()
+}
+
+function billableInputTokens(item) {
+  return Math.max(0, Number(item?.prompt_tokens || 0) - Number(item?.cached_input_tokens || 0))
 }
 
 function usd(cents) {
@@ -319,7 +324,7 @@ function statusClass(code) {
               <td><span class="usage-chip muted">{{ billingModeLabel(item.billing_mode) }}</span></td>
               <td>
                 <strong>{{ statToken(item.total_tokens) }}</strong>
-                <small>输入 {{ statToken(item.prompt_tokens) }} / 输出 {{ statToken(item.completion_tokens) }} / 缓存 {{ statToken(item.cached_input_tokens) }}</small>
+                <small>输入 {{ statToken(billableInputTokens(item)) }} / 输出 {{ statToken(item.completion_tokens) }} / 缓存 {{ statToken(item.cached_input_tokens) }}</small>
               </td>
               <td>
                 <strong class="usage-cost">{{ item.estimated_usd_micros ? usdMicros(item.estimated_usd_micros) : usd(item.estimated_usd_cents || 0) }}</strong>

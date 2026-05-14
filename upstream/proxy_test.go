@@ -90,6 +90,35 @@ func TestFillUsageCachedInputTokens(t *testing.T) {
 	}
 }
 
+func TestFillUsageGPT54MatchesObservedUpstreamCost(t *testing.T) {
+	log := model.APILog{}
+
+	fillUsage(nil, &log, []byte(`{
+		"model": "gpt-5.4",
+		"usage": {
+			"input_tokens": 13294,
+			"output_tokens": 6,
+			"total_tokens": 13300,
+			"input_tokens_details": {
+				"cached_tokens": 9600
+			}
+		}
+	}`))
+
+	if log.InputUSDMicros != 9235 {
+		t.Fatalf("InputUSDMicros = %d, want 9235", log.InputUSDMicros)
+	}
+	if log.CachedInputUSDMicros != 8160 {
+		t.Fatalf("CachedInputUSDMicros = %d, want 8160", log.CachedInputUSDMicros)
+	}
+	if log.OutputUSDMicros != 90 {
+		t.Fatalf("OutputUSDMicros = %d, want 90", log.OutputUSDMicros)
+	}
+	if log.EstimatedUSDMicros != 17485 {
+		t.Fatalf("EstimatedUSDMicros = %d, want 17485", log.EstimatedUSDMicros)
+	}
+}
+
 func TestFillUsagePrefersUpstreamCost(t *testing.T) {
 	log := model.APILog{}
 

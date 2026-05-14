@@ -41,7 +41,7 @@ type BillingResult struct {
 func OfficialOpenAIModelPrices() []OfficialModelPrice {
 	return []OfficialModelPrice{
 		{ModelName: "gpt-5.5", DisplayName: "GPT-5.5", InputUSDPerMillion: 5.00, CachedInputUSDPerMillion: 0.50, OutputUSDPerMillion: 30.00},
-		{ModelName: "gpt-5.4", DisplayName: "GPT-5.4", InputUSDPerMillion: 2.50, CachedInputUSDPerMillion: 0.25, OutputUSDPerMillion: 15.00},
+		{ModelName: "gpt-5.4", DisplayName: "GPT-5.4", InputUSDPerMillion: 2.50, CachedInputUSDPerMillion: 0.85, OutputUSDPerMillion: 15.00},
 		{ModelName: "gpt-5.4-mini", DisplayName: "GPT-5.4 Mini", InputUSDPerMillion: 0.75, CachedInputUSDPerMillion: 0.075, OutputUSDPerMillion: 4.50},
 		{ModelName: "gpt-5.4-nano", DisplayName: "GPT-5.4 Nano", InputUSDPerMillion: 0.20, CachedInputUSDPerMillion: 0.02, OutputUSDPerMillion: 1.25},
 		{ModelName: "gpt-5.3-codex", DisplayName: "GPT-5.3 Codex", InputUSDPerMillion: 1.75, CachedInputUSDPerMillion: 0.175, OutputUSDPerMillion: 14.00},
