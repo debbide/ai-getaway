@@ -102,6 +102,19 @@ type DocPage struct {
 	Enabled     bool   `gorm:"default:true;index"`
 }
 
+type Announcement struct {
+	gorm.Model
+	Title       string `gorm:"size:160;not null"`
+	Summary     string `gorm:"size:512"`
+	Content     string `gorm:"type:longtext"`
+	LinkText    string `gorm:"size:64"`
+	LinkURL     string `gorm:"size:512"`
+	SortOrder   int    `gorm:"default:0;index"`
+	Pinned      bool   `gorm:"default:false;index"`
+	Enabled     bool   `gorm:"default:true;index"`
+	PublishedAt *time.Time
+}
+
 type APIKey struct {
 	gorm.Model
 	UserID       uint `gorm:"index;not null"`
@@ -124,6 +137,7 @@ type ModelPricing struct {
 	OutputUSDPerMillion      float64
 	BillingMultiplier        float64 `gorm:"default:1"`
 	Status                   string  `gorm:"size:32;default:active;index"`
+	Featured                 bool    `gorm:"default:false;index"`
 	Official                 bool    `gorm:"default:false;index"`
 	OfficialSource           string  `gorm:"size:255"`
 	OfficialSyncedAt         *time.Time
@@ -161,25 +175,25 @@ type APILog struct {
 
 type SystemSetting struct {
 	gorm.Model
-	SiteTitle        string `gorm:"size:128;default:星空AI"`
-	APIEndpoints     string `gorm:"type:text"`
-	TutorialVideoURL string `gorm:"size:512"`
-	NavigationItems  string `gorm:"type:text"`
-	PricingTitle     string `gorm:"size:128;default:简单透明的定价"`
-	PricingSubtitle  string `gorm:"size:255;default:保质保量无降智不掺假"`
-	PricingNotice    string `gorm:"size:512;default:本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转"`
-	SMTPHost         string `gorm:"size:128"`
-	SMTPPort         int    `gorm:"default:587"`
-	SMTPUsername     string `gorm:"size:128"`
-	SMTPPassword     string `gorm:"size:255" json:"-"`
-	SMTPFromEmail    string `gorm:"size:128"`
-	SMTPFromName     string `gorm:"size:128"`
-	SMTPUseTLS       bool   `gorm:"default:true"`
-	EpayPID          string `gorm:"column:epay_pid;size:128"`
-	EpayKey          string `gorm:"size:255" json:"-"`
-	EpayNotifyURL    string `gorm:"size:512"`
-	EpayReturnURL    string `gorm:"size:512"`
-	EpaySubmitURL    string `gorm:"size:512"`
+	SiteTitle       string `gorm:"size:128;default:星空AI"`
+	ContactEmail    string `gorm:"size:128;default:support@example.com"`
+	APIEndpoints    string `gorm:"type:text"`
+	NavigationItems string `gorm:"type:text"`
+	PricingTitle    string `gorm:"size:128;default:简单透明的定价"`
+	PricingSubtitle string `gorm:"size:255;default:保质保量无降智不掺假"`
+	PricingNotice   string `gorm:"size:512;default:本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转"`
+	SMTPHost        string `gorm:"size:128"`
+	SMTPPort        int    `gorm:"default:587"`
+	SMTPUsername    string `gorm:"size:128"`
+	SMTPPassword    string `gorm:"size:255" json:"-"`
+	SMTPFromEmail   string `gorm:"size:128"`
+	SMTPFromName    string `gorm:"size:128"`
+	SMTPUseTLS      bool   `gorm:"default:true"`
+	EpayPID         string `gorm:"column:epay_pid;size:128"`
+	EpayKey         string `gorm:"size:255" json:"-"`
+	EpayNotifyURL   string `gorm:"size:512"`
+	EpayReturnURL   string `gorm:"size:512"`
+	EpaySubmitURL   string `gorm:"size:512"`
 }
 
 type EmailVerification struct {

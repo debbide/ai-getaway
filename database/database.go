@@ -43,6 +43,7 @@ func AutoMigrate(db *gorm.DB) {
 		&model.UpstreamAccount{},
 		&model.UpstreamChannel{},
 		&model.DocPage{},
+		&model.Announcement{},
 		&model.APIKey{},
 		&model.ModelPricing{},
 		&model.APILog{},

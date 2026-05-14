@@ -1,9 +1,11 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { api } from '../api/client'
+import { useAuthStore } from '../stores/auth'
 
 const emit = defineEmits(['navigate'])
 
+const auth = useAuthStore()
 const loading = ref(false)
 const error = ref('')
 const keys = ref([])
@@ -31,6 +33,16 @@ const selectedKeyLabel = computed(() => {
 const totalPages = computed(() => Math.max(1, pages.value || Math.ceil(total.value / filters.pageSize) || 1))
 const displayStart = computed(() => (total.value > 0 ? (filters.page - 1) * filters.pageSize + 1 : 0))
 const displayEnd = computed(() => (total.value > 0 ? Math.min(filters.page * filters.pageSize, total.value) : 0))
+const quotaUsage = computed(() => auth.user?.quota_usage || null)
+const totalQuotaUsage = computed(() => auth.user?.total_quota_usage || null)
+const quotaUsagePercent = computed(() => normalizePercent(quotaUsage.value?.percent))
+const totalQuotaUsagePercent = computed(() => normalizePercent(totalQuotaUsage.value?.percent))
+const quotaProgressStyle = computed(() => ({ '--quota-progress': `${quotaUsagePercent.value}%` }))
+const totalQuotaProgressStyle = computed(() => ({ '--quota-progress': `${totalQuotaUsagePercent.value}%` }))
+const quotaResetText = computed(() => {
+  if (!quotaUsage.value?.window_end) return '暂无重置时间'
+  return `${quotaPeriodUnit(auth.user?.plan)}额度重置：${formatDateTime(quotaUsage.value.window_end)}`
+})
 
 onMounted(loadAll)
 onBeforeUnmount(stopAutoRefresh)
@@ -39,7 +51,7 @@ async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const [keyRes] = await Promise.all([api.get('/keys'), loadRecords()])
+    const [keyRes] = await Promise.all([api.get('/keys'), loadRecords(), auth.loadMe()])
     keys.value = keyRes.data || []
   } catch (err) {
     error.value = err.message || '使用记录暂时不可用，请稍后重试'
@@ -67,6 +79,7 @@ async function refreshRecords() {
   error.value = ''
   try {
     await loadRecords()
+    await auth.loadMe()
   } catch (err) {
     error.value = err.message || '使用记录暂时不可用，请稍后重试'
   } finally {
@@ -79,6 +92,7 @@ async function refreshRecordsSilently() {
   autoRefreshing.value = true
   try {
     await loadRecords()
+    await auth.loadMe()
     error.value = ''
   } catch (err) {
     error.value = err.message || '使用记录暂时不可用，请稍后重试'
@@ -170,6 +184,21 @@ function usd(cents) {
   return `$${((cents || 0) / 100).toFixed(4)}`
 }
 
+function usdCompact(cents) {
+  return `$${((cents || 0) / 100).toFixed(2)}`
+}
+
+function normalizePercent(value) {
+  const percent = Number(value || 0)
+  if (!Number.isFinite(percent)) return 0
+  return Math.min(100, Math.max(0, percent))
+}
+
+function quotaPeriodUnit(plan) {
+  const period = plan?.QuotaPeriod || plan?.quota_period
+  return period === 'daily' ? '日' : '周'
+}
+
 function usdMicros(value) {
   return `$${(Number(value || 0) / 1000000).toFixed(6)}`
 }
@@ -221,7 +250,6 @@ function statusClass(code) {
 <template>
   <section class="console-shell usage-records-page mx-auto max-w-7xl px-4 pb-12 sm:px-6">
     <div class="usage-records-head">
-      <button class="ghost-button small" type="button" @click="emit('navigate', '/console')">返回控制台</button>
       <div>
         <p class="section-kicker">Usage Logs</p>
         <h2>使用记录</h2>
@@ -251,6 +279,55 @@ function statusClass(code) {
         <span>平均耗时</span>
         <strong>{{ latency(summary?.average_latency_ms) }}</strong>
         <small>每次请求</small>
+      </article>
+    </div>
+
+    <div v-if="quotaUsage || totalQuotaUsage" class="usage-quota-grid">
+      <article v-if="quotaUsage" class="usage-quota-card">
+        <div class="quota-meter-head">
+          <span>周期额度</span>
+          <strong>{{ quotaUsagePercent.toFixed(1) }}%</strong>
+        </div>
+        <div class="quota-meter-values">
+          <span>已用 {{ usdCompact(quotaUsage.used_usd_cents || 0) }}</span>
+          <span>剩余 {{ usdCompact(quotaUsage.remaining_usd_cents || 0) }}</span>
+        </div>
+        <div
+          class="quota-progress-track"
+          role="progressbar"
+          :aria-valuenow="Math.round(quotaUsagePercent)"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :style="quotaProgressStyle"
+        >
+          <span class="quota-progress-fill"></span>
+        </div>
+        <div class="quota-meter-foot text-muted">{{ quotaResetText }}</div>
+      </article>
+
+      <article v-if="totalQuotaUsage" class="usage-quota-card usage-quota-card-total">
+        <div class="quota-meter-head">
+          <span>总额度</span>
+          <strong>{{ totalQuotaUsagePercent.toFixed(1) }}%</strong>
+        </div>
+        <div class="quota-meter-values">
+          <span>已用 {{ usdCompact(totalQuotaUsage.used_usd_cents || 0) }}</span>
+          <span>总额 {{ usdCompact(totalQuotaUsage.limit_usd_cents || 0) }}</span>
+        </div>
+        <div
+          class="quota-progress-track quota-progress-track--total"
+          role="progressbar"
+          :aria-valuenow="Math.round(totalQuotaUsagePercent)"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :style="totalQuotaProgressStyle"
+        >
+          <span class="quota-progress-fill"></span>
+        </div>
+        <div class="quota-meter-foot quota-meter-foot--range text-muted">
+          <span>套餐总周期</span>
+          <strong>{{ formatDateTime(totalQuotaUsage.window_start) }} - {{ formatDateTime(totalQuotaUsage.window_end) }}</strong>
+        </div>
       </article>
     </div>
 
@@ -296,44 +373,74 @@ function statusClass(code) {
             <tr>
               <th>API 密钥</th>
               <th>模型</th>
-              <th>推理强度</th>
               <th>端点</th>
-              <th>类型</th>
-              <th>计费模式</th>
               <th>Token</th>
               <th>费用</th>
               <th>首 Token</th>
-              <th>耗时</th>
-              <th>状态</th>
+              <th>耗时 / 状态</th>
               <th>时间</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!loading && !records.length">
-              <td colspan="12" class="usage-empty">暂无调用记录</td>
+              <td colspan="8" class="usage-empty">暂无调用记录</td>
             </tr>
             <tr v-for="item in records" :key="item.id">
               <td>
-                <strong>{{ item.api_key_name || maskKey(item) }}</strong>
-                <small>{{ maskKey(item) }}</small>
-              </td>
-              <td><strong>{{ item.model || '-' }}</strong></td>
-              <td>Medium</td>
-              <td><code>{{ item.endpoint || item.path || '-' }}</code></td>
-              <td><span class="usage-chip">{{ requestTypeLabel(item.request_type) }}</span></td>
-              <td><span class="usage-chip muted">{{ billingModeLabel(item.billing_mode) }}</span></td>
-              <td>
-                <strong>{{ statToken(item.total_tokens) }}</strong>
-                <small>输入 {{ statToken(billableInputTokens(item)) }} / 输出 {{ statToken(item.completion_tokens) }} / 缓存 {{ statToken(item.cached_input_tokens) }}</small>
+                <div class="usage-main-value">
+                  <strong>{{ item.api_key_name || maskKey(item) }}</strong>
+                  <span class="usage-info-dot" tabindex="0">
+                    !
+                    <span class="usage-tooltip">密钥标识：{{ maskKey(item) }}</span>
+                  </span>
+                </div>
               </td>
               <td>
-                <strong class="usage-cost">{{ item.estimated_usd_micros ? usdMicros(item.estimated_usd_micros) : usd(item.estimated_usd_cents || 0) }}</strong>
-                <small>输入 {{ usdMicros(item.input_usd_micros) }} · 输出 {{ usdMicros(item.output_usd_micros) }}<template v-if="item.cached_input_usd_micros"> · 缓存 {{ usdMicros(item.cached_input_usd_micros) }}</template></small>
-                <small>{{ modelUnit(item.input_usd_per_million) }} / {{ modelUnit(item.output_usd_per_million) }} · {{ Number(item.billing_multiplier || 1).toFixed(2) }}x · {{ billingSourceLabel(item.billing_source) }}</small>
+                <strong>{{ item.model || '-' }}</strong>
+                <span class="usage-cell-sub">Medium</span>
+              </td>
+              <td class="usage-endpoint-cell">
+                <code>{{ item.endpoint || item.path || '-' }}</code>
+                <span class="usage-cell-chips">
+                  <span class="usage-chip">{{ requestTypeLabel(item.request_type) }}</span>
+                  <span class="usage-chip muted">{{ billingModeLabel(item.billing_mode) }}</span>
+                </span>
+              </td>
+              <td>
+                <div class="usage-main-value">
+                  <strong>{{ statToken(item.total_tokens) }}</strong>
+                  <span class="usage-info-dot" tabindex="0">
+                    !
+                    <span class="usage-tooltip">
+                      输入 {{ statToken(billableInputTokens(item)) }} / 输出 {{ statToken(item.completion_tokens) }} / 缓存 {{ statToken(item.cached_input_tokens) }}
+                    </span>
+                  </span>
+                </div>
+              </td>
+              <td>
+                <div class="usage-main-value">
+                  <strong class="usage-cost">{{ item.estimated_usd_micros ? usdMicros(item.estimated_usd_micros) : usd(item.estimated_usd_cents || 0) }}</strong>
+                  <span class="usage-info-dot" tabindex="0">
+                    !
+                    <span class="usage-tooltip usage-tooltip-wide">
+                      <span class="usage-tip-title">费用明细</span>
+                      <span class="usage-tip-grid">
+                        <span>输入</span><b>{{ usdMicros(item.input_usd_micros) }}</b>
+                        <span>输出</span><b>{{ usdMicros(item.output_usd_micros) }}</b>
+                        <span v-if="item.cached_input_usd_micros">缓存</span><b v-if="item.cached_input_usd_micros">{{ usdMicros(item.cached_input_usd_micros) }}</b>
+                        <span>倍率</span><b>{{ Number(item.billing_multiplier || 1).toFixed(2) }}x</b>
+                        <span>来源</span><b>{{ billingSourceLabel(item.billing_source) }}</b>
+                      </span>
+                      <span class="usage-tip-rate">{{ modelUnit(item.input_usd_per_million) }} 输入 / {{ modelUnit(item.output_usd_per_million) }} 输出</span>
+                    </span>
+                  </span>
+                </div>
               </td>
               <td>{{ latency(item.first_token_ms) }}</td>
-              <td>{{ latency(item.latency_ms) }}</td>
-              <td><span class="usage-status" :class="statusClass(item.status_code)">{{ item.status_code }}</span></td>
+              <td>
+                <strong>{{ latency(item.latency_ms) }}</strong>
+                <span class="usage-status mt-1" :class="statusClass(item.status_code)">{{ item.status_code }}</span>
+              </td>
               <td>{{ formatDateTime(item.created_at) }}</td>
             </tr>
           </tbody>

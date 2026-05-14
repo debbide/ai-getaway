@@ -130,6 +130,7 @@ type modelPricingRequest struct {
 	OutputUSDPerMillion      float64 `json:"output_usd_per_million" binding:"min=0"`
 	BillingMultiplier        float64 `json:"billing_multiplier" binding:"min=0"`
 	Status                   string  `json:"status"`
+	Featured                 bool    `json:"featured"`
 	Notes                    string  `json:"notes"`
 }
 
@@ -790,6 +791,7 @@ func (a *AdminController) CreateModelPricing(c *gin.Context) {
 		OutputUSDPerMillion:      req.OutputUSDPerMillion,
 		BillingMultiplier:        fallbackMultiplier(req.BillingMultiplier),
 		Status:                   fallbackModelPricingStatus(req.Status),
+		Featured:                 req.Featured,
 		Notes:                    req.Notes,
 	}
 	if err := a.db.Create(&pricing).Error; err != nil {
@@ -814,6 +816,7 @@ func (a *AdminController) UpdateModelPricing(c *gin.Context) {
 		"output_usd_per_million":       req.OutputUSDPerMillion,
 		"billing_multiplier":           fallbackMultiplier(req.BillingMultiplier),
 		"status":                       fallbackModelPricingStatus(req.Status),
+		"featured":                     req.Featured,
 		"notes":                        req.Notes,
 	}
 	if err := a.db.Model(&model.ModelPricing{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {

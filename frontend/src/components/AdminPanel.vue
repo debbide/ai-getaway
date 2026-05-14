@@ -9,6 +9,7 @@ const menu = [
   { key: 'models', label: '模型管理', hint: '计费倍率' },
   { key: 'channels', label: '渠道管理', hint: '上游接口' },
   { key: 'users', label: '用户管理', hint: '账号与权限' },
+  { key: 'announcements', label: '公告管理', hint: '控制台公告' },
   { key: 'docs', label: '配置文档', hint: 'Markdown 内容' },
   { key: 'navigation', label: '导航菜单', hint: '顶部菜单' },
   { key: 'settings', label: '系统设置', hint: '邮件与支付' }
@@ -50,6 +51,7 @@ const models = ref([])
 const modelSource = ref('')
 const channels = ref([])
 const docs = ref([])
+const announcements = ref([])
 const error = ref('')
 const notice = ref('')
 const navDraft = ref([])
@@ -63,10 +65,11 @@ const modelForm = reactive(emptyModel())
 const channelForm = reactive(emptyChannel())
 const userForm = reactive(emptyUser())
 const docForm = reactive(emptyDoc())
+const announcementForm = reactive(emptyAnnouncement())
 const settings = reactive({
   site_title: '',
+  contact_email: '',
   api_endpoints: '',
-  tutorial_video_url: '',
   navigation_items: '',
   pricing_title: '',
   pricing_subtitle: '',
@@ -93,6 +96,7 @@ const enabledModels = computed(() => models.value.filter((item) => item.Status =
 const approvedUsers = computed(() => users.value.filter((user) => user.Status === 'approved').length)
 const enabledChannels = computed(() => channels.value.filter((channel) => channel.Enabled).length)
 const enabledDocs = computed(() => docs.value.filter((doc) => doc.Enabled).length)
+const enabledAnnouncements = computed(() => announcements.value.filter((item) => item.Enabled).length)
 
 onMounted(loadAll)
 
@@ -152,6 +156,7 @@ function emptyModel() {
     output_usd_per_million: 0,
     billing_multiplier: 1,
     status: 'active',
+    featured: false,
     notes: ''
   }
 }
@@ -169,11 +174,26 @@ function emptyDoc() {
   }
 }
 
+function emptyAnnouncement() {
+  return {
+    id: null,
+    title: '',
+    summary: '',
+    content: '',
+    link_text: '',
+    link_url: '',
+    sort_order: 100,
+    pinned: false,
+    enabled: true,
+    published_at: ''
+  }
+}
+
 async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, docsRes, settingsRes] = await Promise.all([
+    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, docsRes, announcementsRes, settingsRes] = await Promise.all([
       api.get('/admin/stats'),
       api.get('/admin/orders'),
       api.get('/admin/users'),
@@ -181,6 +201,7 @@ async function loadAll() {
       api.get('/admin/models'),
       api.get('/admin/upstream-channels'),
       api.get('/admin/docs'),
+      api.get('/admin/announcements'),
       api.get('/admin/settings')
     ])
     stats.value = statsRes.data || {}
@@ -191,6 +212,7 @@ async function loadAll() {
     modelSource.value = modelsRes.data?.official_source || ''
     channels.value = channelsRes.data || []
     docs.value = docsRes.data || []
+    announcements.value = announcementsRes.data || []
     Object.assign(settings, settingsRes.data, { smtp_password: '', epay_key: '' })
     setNavigationDraft(settings.navigation_items)
     setAPIEndpointDraft(settings.api_endpoints)
@@ -265,6 +287,7 @@ function openModelModal(model = null) {
       output_usd_per_million: model.OutputUSDPerMillion || 0,
       billing_multiplier: model.BillingMultiplier || 1,
       status: model.Status || 'active',
+      featured: Boolean(model.Featured),
       notes: model.Notes || ''
     })
   }
@@ -330,6 +353,49 @@ function openDocModal(doc = null) {
     })
   }
   showModal(doc ? 'edit-doc' : 'create-doc', doc ? '编辑配置文档' : '新增配置文档', doc ? '保存修改' : '创建文档')
+}
+
+function openAnnouncementModal(item = null) {
+  Object.assign(announcementForm, emptyAnnouncement())
+  if (item) {
+    Object.assign(announcementForm, {
+      id: item.ID,
+      title: item.Title,
+      summary: item.Summary || '',
+      content: item.Content || '',
+      link_text: item.LinkText || '',
+      link_url: item.LinkURL || '',
+      sort_order: item.SortOrder || 0,
+      pinned: Boolean(item.Pinned),
+      enabled: Boolean(item.Enabled),
+      published_at: toDateTimeLocal(item.PublishedAt)
+    })
+  }
+  showModal(item ? 'edit-announcement' : 'create-announcement', item ? '编辑公告' : '发布公告', item ? '保存修改' : '发布公告')
+}
+
+async function submitAnnouncement() {
+  const payload = normalizeAnnouncement(announcementForm)
+  await runAction(async () => {
+    if (announcementForm.id) {
+      await api.put(`/admin/announcements/${announcementForm.id}`, payload)
+      notice.value = '公告已更新'
+    } else {
+      await api.post('/admin/announcements', payload)
+      notice.value = '公告已发布'
+    }
+  })
+}
+
+function confirmDeleteAnnouncement(item) {
+  showModal('delete-announcement', '删除公告', '确认删除', { announcement: item }, true)
+}
+
+async function deleteAnnouncement() {
+  await runAction(async () => {
+    await api.delete(`/admin/announcements/${modal.payload.announcement.ID}`)
+    notice.value = '公告已删除'
+  })
 }
 
 async function submitDoc() {
@@ -756,6 +822,7 @@ function normalizeModel(item) {
     output_usd_per_million: Number(item.output_usd_per_million || 0),
     billing_multiplier: Number(item.billing_multiplier || 1),
     status: item.status === 'disabled' ? 'disabled' : 'active',
+    featured: Boolean(item.featured),
     notes: item.notes.trim()
   }
 }
@@ -802,6 +869,28 @@ function normalizeDoc(doc) {
     sort_order: Number(doc.sort_order || 0),
     enabled: Boolean(doc.enabled)
   }
+}
+
+function normalizeAnnouncement(item) {
+  return {
+    title: item.title.trim(),
+    summary: item.summary.trim(),
+    content: item.content.trim(),
+    link_text: item.link_text.trim(),
+    link_url: item.link_url.trim(),
+    sort_order: Number(item.sort_order || 0),
+    pinned: Boolean(item.pinned),
+    enabled: Boolean(item.enabled),
+    published_at: item.published_at
+  }
+}
+
+function toDateTimeLocal(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function normalizeUser(user) {
@@ -886,6 +975,9 @@ function submitModal() {
     'create-doc': submitDoc,
     'edit-doc': submitDoc,
     'delete-doc': deleteDoc,
+    'create-announcement': submitAnnouncement,
+    'edit-announcement': submitAnnouncement,
+    'delete-announcement': deleteAnnouncement,
     'create-user': submitUser,
     'edit-user': submitUser,
     'user-upstream': closeModal,
@@ -1113,6 +1205,7 @@ function submitModal() {
                     <th>缓存读取</th>
                     <th>输出单价</th>
                     <th>倍率</th>
+                    <th>展示卡片</th>
                     <th>状态</th>
                     <th>同步时间</th>
                     <th>操作</th>
@@ -1137,6 +1230,7 @@ function submitModal() {
                       <small>原价 {{ modelUnit(item.OutputUSDPerMillion) }}</small>
                     </td>
                     <td class="multiplier-cell">{{ Number(item.BillingMultiplier || 1).toFixed(2) }}x</td>
+                    <td class="status-cell"><span class="status-badge" :class="{ muted: !item.Featured }">{{ item.Featured ? '展示' : '不展示' }}</span></td>
                     <td class="status-cell"><span class="status-badge model-status-badge" :class="{ muted: item.Status !== 'active' }">{{ modelStatusLabel(item.Status) }}</span></td>
                     <td class="time-cell">{{ formatSyncTime(item.OfficialSyncedAt) }}</td>
                     <td class="actions-cell">
@@ -1255,6 +1349,56 @@ function submitModal() {
           </section>
         </div>
 
+        <div v-if="active === 'announcements'" class="space-y-5">
+          <div class="page-toolbar">
+            <div>
+              <p class="section-kicker">Announcements</p>
+              <h2>公告管理</h2>
+              <span>{{ enabledAnnouncements }} 条启用公告，{{ announcements.length }} 条总公告。用户控制台默认展示最新启用公告。</span>
+            </div>
+            <div class="toolbar-actions">
+              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
+              <button class="primary-button" @click="openAnnouncementModal()">发布公告</button>
+            </div>
+          </div>
+
+          <section class="panel-surface overflow-hidden">
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>公告</th>
+                    <th>发布时间</th>
+                    <th>排序</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in announcements" :key="item.ID">
+                    <td>
+                      <strong>{{ item.Title }}</strong>
+                      <small>{{ item.Summary || item.Content }}</small>
+                    </td>
+                    <td>{{ formatDate(item.PublishedAt || item.CreatedAt) }}</td>
+                    <td>{{ item.SortOrder }}</td>
+                    <td>
+                      <span class="status-badge" :class="{ muted: !item.Enabled }">{{ item.Enabled ? '已启用' : '已停用' }}</span>
+                      <span v-if="item.Pinned" class="status-badge">置顶</span>
+                    </td>
+                    <td>
+                      <div class="table-actions">
+                        <button class="ghost-button small" @click="openAnnouncementModal(item)">编辑</button>
+                        <button class="danger-button small" @click="confirmDeleteAnnouncement(item)">删除</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
         <div v-if="active === 'docs'" class="space-y-5">
           <div class="page-toolbar">
             <div>
@@ -1322,7 +1466,7 @@ function submitModal() {
               <div class="nav-builder-head">
                 <div>
                   <span>顶部导航配置</span>
-                  <small>按顺序维护顶部导航，链接可填写 /plans、#tutorial 或完整网址。</small>
+                  <small>按顺序维护顶部导航，链接可填写 /plans、/models 或完整网址。</small>
                 </div>
                 <div class="nav-builder-actions">
                   <button type="button" class="ghost-button small" @click="resetNavigationDefault">恢复默认</button>
@@ -1395,8 +1539,8 @@ function submitModal() {
                 <input v-model="settings.site_title" placeholder="AI Gateway" />
               </label>
               <label class="field">
-                <span>视频教程地址</span>
-                <input v-model="settings.tutorial_video_url" placeholder="https://..." />
+                <span>联系邮箱</span>
+                <input v-model="settings.contact_email" type="email" placeholder="support@example.com" />
               </label>
               <label class="field">
                 <span>定价页主标题</span>
@@ -1536,6 +1680,7 @@ function submitModal() {
               <option value="disabled">停用</option>
             </select>
           </label>
+          <label class="toggle-line md:col-span-2"><input v-model="modelForm.featured" type="checkbox" />展示在 /models 顶部卡片中</label>
           <label class="field md:col-span-2"><span>备注</span><textarea v-model="modelForm.notes" rows="3"></textarea></label>
         </div>
 
@@ -1565,6 +1710,39 @@ function submitModal() {
             <textarea v-model="docForm.content" class="markdown-editor" rows="18" placeholder="# 标题&#10;&#10;这里填写 Markdown 文档内容"></textarea>
           </label>
           <label class="toggle-line md:col-span-2"><input v-model="docForm.enabled" type="checkbox" />启用文档</label>
+        </div>
+
+        <div v-if="modal.type === 'create-announcement' || modal.type === 'edit-announcement'" class="modal-body form-grid">
+          <label class="field md:col-span-2">
+            <span>公告标题</span>
+            <input v-model="announcementForm.title" required placeholder="【2026-05-14】服务更新说明" />
+          </label>
+          <label class="field md:col-span-2">
+            <span>摘要</span>
+            <textarea v-model="announcementForm.summary" rows="3" placeholder="收起状态下展示的短内容，留空时自动使用正文前段"></textarea>
+          </label>
+          <label class="field md:col-span-2">
+            <span>公告正文</span>
+            <textarea v-model="announcementForm.content" class="markdown-editor" rows="12" required placeholder="支持换行展示。可填写更新说明、使用提醒、教程地址等内容。"></textarea>
+          </label>
+          <label class="field">
+            <span>链接文案</span>
+            <input v-model="announcementForm.link_text" placeholder="教程地址" />
+          </label>
+          <label class="field">
+            <span>链接地址</span>
+            <input v-model="announcementForm.link_url" placeholder="https://docs.example.com/..." />
+          </label>
+          <label class="field">
+            <span>发布时间</span>
+            <input v-model="announcementForm.published_at" type="datetime-local" />
+          </label>
+          <label class="field">
+            <span>排序</span>
+            <input v-model.number="announcementForm.sort_order" type="number" />
+          </label>
+          <label class="toggle-line"><input v-model="announcementForm.pinned" type="checkbox" />置顶公告</label>
+          <label class="toggle-line"><input v-model="announcementForm.enabled" type="checkbox" />启用公告</label>
         </div>
 
         <div v-if="modal.type === 'create-user' || modal.type === 'edit-user'" class="modal-body form-grid">
@@ -1684,6 +1862,11 @@ function submitModal() {
         <div v-if="modal.type === 'delete-doc'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.doc?.Title }}」吗？</strong>
           <p>删除后用户侧配置文档页面将不再展示这篇内容。</p>
+        </div>
+
+        <div v-if="modal.type === 'delete-announcement'" class="modal-body confirm-copy">
+          <strong>确定删除「{{ modal.payload?.announcement?.Title }}」吗？</strong>
+          <p>删除后用户控制台和历史公告中都不会再展示这条内容。</p>
         </div>
 
         <div v-if="modal.type === 'delete-user'" class="modal-body confirm-copy">

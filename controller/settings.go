@@ -20,25 +20,25 @@ func NewSettingsController(db *gorm.DB) *SettingsController {
 }
 
 type updateSettingsRequest struct {
-	SiteTitle        string `json:"site_title"`
-	APIEndpoints     string `json:"api_endpoints"`
-	TutorialVideoURL string `json:"tutorial_video_url"`
-	NavigationItems  string `json:"navigation_items"`
-	PricingTitle     string `json:"pricing_title"`
-	PricingSubtitle  string `json:"pricing_subtitle"`
-	PricingNotice    string `json:"pricing_notice"`
-	SMTPHost         string `json:"smtp_host"`
-	SMTPPort         int    `json:"smtp_port"`
-	SMTPUsername     string `json:"smtp_username"`
-	SMTPPassword     string `json:"smtp_password"`
-	SMTPFromEmail    string `json:"smtp_from_email"`
-	SMTPFromName     string `json:"smtp_from_name"`
-	SMTPUseTLS       bool   `json:"smtp_use_tls"`
-	EpayPID          string `json:"epay_pid"`
-	EpayKey          string `json:"epay_key"`
-	EpayNotifyURL    string `json:"epay_notify_url"`
-	EpayReturnURL    string `json:"epay_return_url"`
-	EpaySubmitURL    string `json:"epay_submit_url"`
+	SiteTitle       string `json:"site_title"`
+	ContactEmail    string `json:"contact_email"`
+	APIEndpoints    string `json:"api_endpoints"`
+	NavigationItems string `json:"navigation_items"`
+	PricingTitle    string `json:"pricing_title"`
+	PricingSubtitle string `json:"pricing_subtitle"`
+	PricingNotice   string `json:"pricing_notice"`
+	SMTPHost        string `json:"smtp_host"`
+	SMTPPort        int    `json:"smtp_port"`
+	SMTPUsername    string `json:"smtp_username"`
+	SMTPPassword    string `json:"smtp_password"`
+	SMTPFromEmail   string `json:"smtp_from_email"`
+	SMTPFromName    string `json:"smtp_from_name"`
+	SMTPUseTLS      bool   `json:"smtp_use_tls"`
+	EpayPID         string `json:"epay_pid"`
+	EpayKey         string `json:"epay_key"`
+	EpayNotifyURL   string `json:"epay_notify_url"`
+	EpayReturnURL   string `json:"epay_return_url"`
+	EpaySubmitURL   string `json:"epay_submit_url"`
 }
 
 type apiEndpointSetting struct {
@@ -54,13 +54,13 @@ func (s *SettingsController) Public(c *gin.Context) {
 	}
 	setting := loadSettings(s.db)
 	response.OK(c, gin.H{
-		"site_title":         setting.SiteTitle,
-		"api_endpoints":      setting.APIEndpoints,
-		"tutorial_video_url": setting.TutorialVideoURL,
-		"navigation_items":   setting.NavigationItems,
-		"pricing_title":      setting.PricingTitle,
-		"pricing_subtitle":   setting.PricingSubtitle,
-		"pricing_notice":     setting.PricingNotice,
+		"site_title":       setting.SiteTitle,
+		"contact_email":    setting.ContactEmail,
+		"api_endpoints":    setting.APIEndpoints,
+		"navigation_items": setting.NavigationItems,
+		"pricing_title":    setting.PricingTitle,
+		"pricing_subtitle": setting.PricingSubtitle,
+		"pricing_notice":   setting.PricingNotice,
 	})
 }
 
@@ -73,8 +73,8 @@ func (s *SettingsController) Get(c *gin.Context) {
 	response.OK(c, gin.H{
 		"id":                       setting.ID,
 		"site_title":               setting.SiteTitle,
+		"contact_email":            setting.ContactEmail,
 		"api_endpoints":            setting.APIEndpoints,
-		"tutorial_video_url":       setting.TutorialVideoURL,
 		"navigation_items":         setting.NavigationItems,
 		"pricing_title":            setting.PricingTitle,
 		"pricing_subtitle":         setting.PricingSubtitle,
@@ -107,21 +107,21 @@ func (s *SettingsController) Update(c *gin.Context) {
 
 	setting := loadSettings(s.db)
 	updates := map[string]interface{}{
-		"site_title":         req.SiteTitle,
-		"api_endpoints":      normalizeAPIEndpointsJSON(req.APIEndpoints),
-		"tutorial_video_url": req.TutorialVideoURL,
-		"navigation_items":   req.NavigationItems,
-		"pricing_title":      req.PricingTitle,
-		"pricing_subtitle":   req.PricingSubtitle,
-		"pricing_notice":     req.PricingNotice,
-		"smtp_host":          req.SMTPHost,
-		"smtp_port":          req.SMTPPort,
-		"smtp_username":      req.SMTPUsername,
-		"smtp_from_email":    req.SMTPFromEmail,
-		"smtp_from_name":     req.SMTPFromName,
-		"smtp_use_tls":       req.SMTPUseTLS,
-		"epay_pid":           req.EpayPID,
-		"epay_submit_url":    req.EpaySubmitURL,
+		"site_title":       req.SiteTitle,
+		"contact_email":    req.ContactEmail,
+		"api_endpoints":    normalizeAPIEndpointsJSON(req.APIEndpoints),
+		"navigation_items": req.NavigationItems,
+		"pricing_title":    req.PricingTitle,
+		"pricing_subtitle": req.PricingSubtitle,
+		"pricing_notice":   req.PricingNotice,
+		"smtp_host":        req.SMTPHost,
+		"smtp_port":        req.SMTPPort,
+		"smtp_username":    req.SMTPUsername,
+		"smtp_from_email":  req.SMTPFromEmail,
+		"smtp_from_name":   req.SMTPFromName,
+		"smtp_use_tls":     req.SMTPUseTLS,
+		"epay_pid":         req.EpayPID,
+		"epay_submit_url":  req.EpaySubmitURL,
 	}
 	if req.SMTPPassword != "" {
 		updates["smtp_password"] = req.SMTPPassword
@@ -143,6 +143,7 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 	columns := map[string]string{
 		"navigation_items": "TEXT",
 		"api_endpoints":    "TEXT",
+		"contact_email":    "VARCHAR(128)",
 		"pricing_title":    "VARCHAR(128)",
 		"pricing_subtitle": "VARCHAR(255)",
 		"pricing_notice":   "VARCHAR(512)",
@@ -197,6 +198,11 @@ func migrateLegacyAPIEndpoint(db *gorm.DB) error {
 }
 
 func cleanupLegacySystemSettingColumns(db *gorm.DB) error {
+	if systemSettingColumnExists(db, "tutorial_video_url") {
+		if err := db.Exec("ALTER TABLE `system_settings` DROP COLUMN `tutorial_video_url`").Error; err != nil {
+			return err
+		}
+	}
 	if !systemSettingColumnExists(db, "epay_p_id") {
 		return nil
 	}
@@ -232,6 +238,9 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 	}
 	if setting.SiteTitle == "" {
 		setting.SiteTitle = "星空AI"
+	}
+	if setting.ContactEmail == "" {
+		setting.ContactEmail = "support@example.com"
 	}
 	if strings.TrimSpace(setting.APIEndpoints) == "" {
 		setting.APIEndpoints = defaultAPIEndpointsJSON()

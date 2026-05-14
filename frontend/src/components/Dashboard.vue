@@ -12,6 +12,9 @@ const emit = defineEmits(['navigate'])
 const auth = useAuthStore()
 const orders = ref([])
 const keys = ref([])
+const announcements = ref([])
+const announcementExpanded = ref(localStorage.getItem('announcementExpanded') !== 'false')
+const historyModalOpen = ref(false)
 const selectedPlan = ref('')
 const pendingPlainKey = ref('')
 const lastKeyMasked = ref('')
@@ -75,6 +78,12 @@ const displayApiEndpoints = computed(() => parseApiEndpoints(props.apiEndpoints)
 
 const soloKey = computed(() => (keys.value.length ? keys.value[0] : null))
 const hasApiKey = computed(() => Boolean(soloKey.value))
+const currentAnnouncement = computed(() => announcements.value[0] || null)
+const announcementSummary = computed(() => {
+  const item = currentAnnouncement.value
+  if (!item) return ''
+  return item.Summary || String(item.Content || '').split('\n').find(Boolean) || ''
+})
 
 onMounted(loadAll)
 
@@ -82,9 +91,10 @@ async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const [orderRes, keyRes] = await Promise.all([api.get('/orders'), api.get('/keys')])
+    const [orderRes, keyRes, announcementRes] = await Promise.all([api.get('/orders'), api.get('/keys'), api.get('/announcements')])
     orders.value = orderRes.data || []
     keys.value = keyRes.data || []
+    announcements.value = announcementRes.data || []
     if (orderPage.value > totalOrderPages.value) orderPage.value = totalOrderPages.value
     await auth.loadMe()
     if (auth.meError) notice.value = auth.meError
@@ -280,6 +290,31 @@ function openDocs() {
   emit('navigate', '/docs')
 }
 
+function toggleAnnouncement() {
+  announcementExpanded.value = !announcementExpanded.value
+  localStorage.setItem('announcementExpanded', String(announcementExpanded.value))
+}
+
+function openAnnouncementHistory() {
+  historyModalOpen.value = true
+}
+
+function closeAnnouncementHistory() {
+  historyModalOpen.value = false
+}
+
+function announcementDate(item) {
+  const value = item?.PublishedAt || item?.CreatedAt
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+
+function announcementLines(item) {
+  return String(item?.Content || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+}
+
 function money(cents, currency = '￥') {
   return `${currency}${((cents || 0) / 100).toFixed(2)}`
 }
@@ -423,6 +458,28 @@ function statusLabel(value) {
     <div class="console-stack">
       <div class="console-dashboard-grid">
         <div class="console-dashboard-main">
+          <section v-if="currentAnnouncement" class="announcement-card" :class="{ 'announcement-card--collapsed': !announcementExpanded }">
+            <div class="announcement-icon" aria-hidden="true">i</div>
+            <div class="announcement-main">
+              <div class="announcement-head">
+                <h3>{{ currentAnnouncement.Title }}</h3>
+                <div class="announcement-actions">
+                  <button type="button" class="announcement-link-button" @click="openAnnouncementHistory">历史公告</button>
+                  <button type="button" class="announcement-link-button" @click="toggleAnnouncement">
+                    {{ announcementExpanded ? '收起' : '展开' }}
+                  </button>
+                </div>
+              </div>
+              <div v-if="announcementExpanded" class="announcement-content">
+                <p v-for="(line, index) in announcementLines(currentAnnouncement)" :key="index">{{ line }}</p>
+                <a v-if="currentAnnouncement.LinkURL" :href="currentAnnouncement.LinkURL" target="_blank" rel="noopener noreferrer">
+                  {{ currentAnnouncement.LinkText || '查看详情' }}
+                </a>
+              </div>
+              <p v-else class="announcement-summary">{{ announcementSummary }}</p>
+            </div>
+          </section>
+
           <!-- API Key -->
           <section class="panel-surface dashboard-card p-4">
             <div class="section-head">
@@ -775,6 +832,27 @@ function statusLabel(value) {
         </div>
         <div class="modal-actions">
           <button type="button" class="primary-button" @click="closeCopySuccessModal">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="historyModalOpen" class="modal-backdrop" @click.self="closeAnnouncementHistory">
+      <div class="modal-card announcement-history-modal" role="dialog" aria-labelledby="announcement-history-title">
+        <div class="modal-head">
+          <h3 id="announcement-history-title">历史公告</h3>
+          <button type="button" class="icon-button" aria-label="关闭" @click="closeAnnouncementHistory">×</button>
+        </div>
+        <div class="announcement-timeline">
+          <article v-for="item in announcements" :key="item.ID" class="announcement-history-item">
+            <time>{{ announcementDate(item) }}</time>
+            <div>
+              <h4>{{ item.Title }}</h4>
+              <p v-for="(line, index) in announcementLines(item)" :key="index">{{ line }}</p>
+              <a v-if="item.LinkURL" :href="item.LinkURL" target="_blank" rel="noopener noreferrer">
+                {{ item.LinkText || '查看详情' }}
+              </a>
+            </div>
+          </article>
         </div>
       </div>
     </div>

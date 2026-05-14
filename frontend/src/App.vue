@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard.vue'
 import AdminPanel from './components/AdminPanel.vue'
 import UsageRecords from './components/UsageRecords.vue'
 import DocsPage from './components/DocsPage.vue'
+import ModelsPage from './components/ModelsPage.vue'
 
 const defaultNavigation = [
   { label: '首页', path: '/' },
@@ -18,8 +19,8 @@ const defaultNavigation = [
 
 const defaultSettings = {
   site_title: '星空AI',
+  contact_email: 'support@example.com',
   api_endpoints: JSON.stringify([{ label: '默认', description: '主线路', url: 'https://ai.itzkb.cn' }]),
-  tutorial_video_url: '',
   navigation_items: JSON.stringify(defaultNavigation),
   pricing_title: '简单透明的定价',
   pricing_subtitle: '保质保量无降智不掺假',
@@ -46,6 +47,7 @@ const isConsolePage = computed(() => currentPath.value === '/console')
 const isAdminPage = computed(() => currentPath.value === '/admin')
 const isUsageRecordsPage = computed(() => currentPath.value === '/usage-records')
 const isPlansPage = computed(() => currentPath.value === '/plans')
+const isModelsPage = computed(() => currentPath.value === '/models')
 const isDocsPage = computed(() => currentPath.value === '/docs' || currentPath.value.startsWith('/docs/'))
 const navItems = computed(() => parseNavigation(publicSettings.value.navigation_items))
 const activeThemeLabel = computed(() => ({ light: '浅色', dark: '深色', system: '系统' })[themeMode.value] || '深色')
@@ -339,6 +341,8 @@ function planSubtitle(index) {
 
     <DocsPage v-if="isDocsPage" />
 
+    <ModelsPage v-else-if="isModelsPage" @navigate="navigate" @start="afterPrimaryAction" />
+
     <main v-else-if="!isConsolePage && !isAdminPage && !isPlansPage && !isUsageRecordsPage">
       <section class="home-hero">
         <div class="home-hero-inner mx-auto max-w-7xl px-4 sm:px-6">
@@ -356,31 +360,42 @@ function planSubtitle(index) {
           </div>
           <div class="hero-actions">
             <button class="hero-primary" @click="afterPrimaryAction">立即使用 <span>→</span></button>
-            <button class="hero-secondary" @click="navigateSection('tutorial')">▷ 观看演示</button>
+            <button class="hero-secondary" @click="navigate('/models')">查看模型</button>
           </div>
         </div>
       </section>
 
-      <section id="tutorial" class="tutorial-section">
-        <div class="mx-auto grid max-w-7xl gap-8 px-4 py-14 sm:px-6 lg:grid-cols-[0.8fr_1.2fr] lg:items-center">
-          <div>
-            <p class="section-kicker">Tutorial</p>
-            <h2 class="mt-3 text-3xl font-black text-ink sm:text-4xl">视频教程</h2>
-            <p class="mt-4 leading-7 text-muted">
-              先了解接入流程，再进入定价页选择方案。登录控制台后下单，等待管理员审核并开通上游通道。
+      <section class="home-value-stage">
+        <div class="mx-auto grid max-w-7xl gap-6 px-4 py-14 sm:px-6">
+          <article class="home-value-panel reveal-copy">
+            <p class="section-kicker">Low Cost API</p>
+            <h2>超低价爽用的AI大模型API服务</h2>
+            <p>
+              全站调用0.06RMB=1USD，坦白说：我们至少比友商便宜 60%，亚洲服务器中转，快速稳定，价低量大。
             </p>
-          </div>
-          <div class="video-shell">
-            <iframe
-              v-if="publicSettings.tutorial_video_url"
-              class="aspect-video w-full"
-              :src="publicSettings.tutorial_video_url"
-              title="视频教程"
-              allowfullscreen
-            ></iframe>
-            <div v-else class="video-empty">
-              <div class="play-core">▶</div>
+            <div class="value-metrics">
+              <span><strong>0.06RMB</strong><small>= 1USD</small></span>
+              <span><strong>60%+</strong><small>成本优势</small></span>
+              <span><strong>亚洲节点</strong><small>稳定中转</small></span>
             </div>
+          </article>
+
+          <article class="home-value-panel home-value-panel-alt reveal-copy">
+            <p class="section-kicker">Fast Stable Service</p>
+            <h2>更低廉的价格 · 更快速的响应 · 更稳定的服务</h2>
+            <p>
+              0.06RMB=1USD，价格低得令人难以置信。亚洲服务器中转，快速稳定，价低量大。
+            </p>
+            <div class="value-strip">
+              <span>更低价格</span>
+              <span>更快响应</span>
+              <span>更稳服务</span>
+            </div>
+          </article>
+
+          <div class="home-pricing-cta reveal-copy">
+            <span>想看具体套餐和模型价格？</span>
+            <button type="button" @click="navigate('/plans')">查看模型价格 <b>→</b></button>
           </div>
         </div>
       </section>
@@ -437,7 +452,10 @@ function planSubtitle(index) {
             <h1>{{ auth.loggedIn ? '使用记录' : '登录后查看使用记录' }}</h1>
             <p>查看 API 调用日志、Token、费用和响应耗时。</p>
           </div>
-          <div v-if="auth.loggedIn" class="user-chip">{{ auth.user?.email || auth.user?.username }}</div>
+          <div v-if="auth.loggedIn" class="console-title-actions">
+            <button class="ghost-button" type="button" @click="navigate('/console')">返回控制台</button>
+            <div class="user-chip">{{ auth.user?.email || auth.user?.username }}</div>
+          </div>
         </div>
 
         <div v-if="!auth.loggedIn" class="panel-surface grid gap-4 p-5 sm:grid-cols-[1fr_auto] sm:items-center">
@@ -513,7 +531,7 @@ function planSubtitle(index) {
 
     <footer class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-8 text-sm text-muted sm:px-6">
       <span>{{ publicSettings.site_title || '星空AI' }}</span>
-      <span>联系邮箱：support@example.com</span>
+      <span>联系邮箱：{{ publicSettings.contact_email || 'support@example.com' }}</span>
     </footer>
 
     <AuthModal v-model:open="authOpen" v-model:mode="authMode" />
