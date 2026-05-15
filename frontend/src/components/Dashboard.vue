@@ -29,6 +29,7 @@ const orderPage = ref(1)
 const nowMs = ref(Date.now())
 const orderPageSize = 5
 let orderTimer = null
+let paymentPollTimer = null
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', payload: null, danger: false })
 const orderForm = reactive({ planId: '', order: null, paymentUrl: '', paymentOpened: false })
 const keyForm = reactive({ name: 'Default' })
@@ -107,6 +108,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (orderTimer) window.clearInterval(orderTimer)
+  stopPaymentPolling()
 })
 
 async function loadAll() {
@@ -163,6 +165,7 @@ function openPayModal(order) {
   orderForm.paymentUrl = ''
   orderForm.paymentOpened = false
   showModal('pay-order', `支付订单 #${order.ID}`, '已完成支付')
+  startPaymentPolling()
 }
 
 function openKeyModal() {
@@ -222,6 +225,7 @@ async function startPayment() {
     orderForm.paymentUrl = res.data.payment_url
     orderForm.paymentOpened = true
     window.open(orderForm.paymentUrl, '_blank', 'noopener,noreferrer')
+    startPaymentPolling()
   } catch (err) {
     modalError.value = err.message
   }
@@ -295,7 +299,36 @@ function showModal(type, title, actionLabel, payload = null, danger = false) {
 
 function closeModal() {
   modalError.value = ''
+  if (modal.type === 'pay-order') stopPaymentPolling()
   Object.assign(modal, { open: false, type: '', title: '', actionLabel: '', payload: null, danger: false })
+}
+
+function startPaymentPolling() {
+  if (paymentPollTimer || !orderForm.order?.ID) return
+  paymentPollTimer = window.setInterval(refreshPayingOrder, 3000)
+}
+
+function stopPaymentPolling() {
+  if (!paymentPollTimer) return
+  window.clearInterval(paymentPollTimer)
+  paymentPollTimer = null
+}
+
+async function refreshPayingOrder() {
+  if (!modal.open || modal.type !== 'pay-order' || !orderForm.order?.ID) {
+    stopPaymentPolling()
+    return
+  }
+  try {
+    const res = await api.get('/orders')
+    orders.value = res.data || []
+    const fresh = orders.value.find((item) => item.ID === orderForm.order.ID)
+    if (!fresh) return
+    orderForm.order = fresh
+    if (['pending_review', 'approved', 'payment_timeout', 'paid_late', 'pending_manual_review'].includes(fresh.Status)) {
+      stopPaymentPolling()
+    }
+  } catch {}
 }
 
 function submitModal() {
@@ -489,6 +522,8 @@ function statusLabel(value) {
     pending_review: '待审核',
     pending_payment: '待支付',
     payment_timeout: '支付超时',
+    paid_late: '超时已支付',
+    pending_manual_review: '待人工处理',
     approved: '已通过',
     rejected: '已拒绝',
     active: '启用中',
@@ -886,6 +921,7 @@ function statusLabel(value) {
             <strong>{{ orderForm.order?.Plan?.Name || '套餐订单' }}</strong>
             <span>订单金额：{{ money(orderForm.order?.AmountCents) }}</span>
             <span v-if="orderForm.order?.Status === 'pending_payment'" class="payment-countdown">支付剩余时间：{{ orderCountdown(orderForm.order) }}</span>
+            <span v-else-if="orderForm.order?.Status" class="payment-countdown">当前状态：{{ statusLabel(orderForm.order.Status) }}</span>
             <p>请在 5 分钟内点击“去支付”打开支付页面。完成支付后回到这里点击“已完成支付”，系统确认支付成功后才会进入待审核。</p>
             <button type="button" class="primary-button" @click="startPayment">
               {{ orderForm.paymentOpened ? '重新打开支付页面' : '去支付' }}

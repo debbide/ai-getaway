@@ -140,6 +140,8 @@ func (s *SettingsController) Update(c *gin.Context) {
 		"subscription_expire_email_enabled": req.SubscriptionExpireEmailEnabled,
 		"subscription_expire_remind_days":   normalizeRemindDays(req.SubscriptionExpireRemindDays),
 		"epay_pid":                          req.EpayPID,
+		"epay_notify_url":                   req.EpayNotifyURL,
+		"epay_return_url":                   req.EpayReturnURL,
 		"epay_submit_url":                   req.EpaySubmitURL,
 	}
 	if req.SMTPPassword != "" {

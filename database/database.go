@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"log"
+	"strconv"
 	"time"
 
 	"ai-gateway/config"
@@ -36,6 +37,7 @@ func InitRedis(cfg config.Config) *redis.Client {
 }
 
 func AutoMigrate(db *gorm.DB) {
+	backfillOrderPaymentRefs(db)
 	if err := db.AutoMigrate(
 		&model.User{},
 		&model.Plan{},
@@ -56,6 +58,7 @@ func AutoMigrate(db *gorm.DB) {
 		log.Fatalf("auto migrate failed: %v", err)
 	}
 	dropLegacyQuotaColumns(db)
+	backfillOrderPaymentRefs(db)
 }
 
 func Seed(db *gorm.DB, cfg config.Config) {
@@ -176,6 +179,23 @@ func dropColumnIfExists(db *gorm.DB, value interface{}, name string) {
 	}
 	if err := db.Migrator().DropColumn(value, name); err != nil {
 		log.Printf("drop legacy column %s failed: %v", name, err)
+	}
+}
+
+func backfillOrderPaymentRefs(db *gorm.DB) {
+	if db == nil || !db.Migrator().HasTable(&model.Order{}) || !db.Migrator().HasColumn(&model.Order{}, "payment_ref") {
+		return
+	}
+	var orders []model.Order
+	if err := db.Unscoped().Where("payment_ref IS NULL OR payment_ref = ''").Find(&orders).Error; err != nil {
+		log.Printf("load empty order payment refs failed: %v", err)
+		return
+	}
+	for _, order := range orders {
+		ref := "ORDERLEGACY" + strconv.FormatUint(uint64(order.ID), 10)
+		if err := db.Unscoped().Model(&model.Order{}).Where("id = ?", order.ID).Update("payment_ref", ref).Error; err != nil {
+			log.Printf("backfill order payment ref failed: %v", err)
+		}
 	}
 }
 

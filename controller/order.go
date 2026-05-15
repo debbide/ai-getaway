@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"ai-gateway/config"
 	"ai-gateway/model"
 	"ai-gateway/response"
 	"ai-gateway/service"
@@ -21,13 +24,26 @@ import (
 )
 
 type OrderController struct {
-	db *gorm.DB
+	db  *gorm.DB
+	cfg config.Config
 }
 
 const pendingPaymentTTL = 5 * time.Minute
 
-func NewOrderController(db *gorm.DB) *OrderController {
-	return &OrderController{db: db}
+func NewOrderController(cfg config.Config, db *gorm.DB) *OrderController {
+	return &OrderController{db: db, cfg: cfg}
+}
+
+type epayPaymentResult struct {
+	PID             string
+	OutTradeNo      string
+	TradeNo         string
+	TradeStatus     string
+	Money           string
+	PaymentChannel  string
+	PaidAmountCents int64
+	PaidAt          *time.Time
+	RawSummary      string
 }
 
 type createOrderRequest struct {
@@ -144,11 +160,13 @@ func (o *OrderController) Pay(c *gin.Context) {
 		return
 	}
 	setting := loadSettings(o.db)
-	payURL, err := buildEpayURL(c, setting, order)
+	payURL, err := buildEpayURL(c, o.cfg, setting, order)
 	if err != nil {
 		response.Error(c, 400, err.Error())
 		return
 	}
+	now := time.Now()
+	o.db.Model(&order).Update("payment_url_generated_at", &now)
 	response.OK(c, gin.H{"payment_url": payURL, "order": order})
 }
 
@@ -159,15 +177,12 @@ func (o *OrderController) MarkPaid(c *gin.Context) {
 		response.Error(c, 404, "order not found")
 		return
 	}
-	if expirePendingPaymentOrder(o.db, &order) {
-		response.Error(c, 409, "order payment timeout")
-		return
-	}
 	if order.Status == model.OrderStatusPendingReview || order.Status == model.OrderStatusApproved {
 		response.OK(c, gin.H{"order": order})
 		return
 	}
-	if order.Status != model.OrderStatusPendingPayment {
+	expirePendingPaymentOrder(o.db, &order)
+	if order.Status != model.OrderStatusPendingPayment && order.Status != model.OrderStatusPaymentTimeout {
 		response.Error(c, 409, "order not pending payment")
 		return
 	}
@@ -177,7 +192,7 @@ func (o *OrderController) MarkPaid(c *gin.Context) {
 		return
 	}
 	setting := loadSettings(o.db)
-	paid, err := queryEpayPaid(c, setting, order)
+	payment, paid, err := queryEpayPaid(c, o.db, setting, order)
 	if err != nil {
 		response.Error(c, 400, err.Error())
 		return
@@ -187,7 +202,7 @@ func (o *OrderController) MarkPaid(c *gin.Context) {
 		return
 	}
 
-	if err := completePaidOrder(o.db, &order, nil); err != nil {
+	if err := completePaidOrder(o.db, &order, payment, nil); err != nil {
 		response.Error(c, 500, "failed to update order")
 		return
 	}
@@ -228,15 +243,15 @@ func (o *OrderController) EpayNotify(c *gin.Context) {
 		c.String(404, "fail")
 		return
 	}
-	if expirePendingPaymentOrder(o.db, &order) {
+	payment, err := validateEpayPayment(setting, order, epayPaymentResultFromParams(params))
+	if err != nil {
+		markPaymentManualReview(o.db, &order, epayPaymentResultFromParams(params), err.Error())
 		c.String(200, "success")
 		return
 	}
-	if order.Status == model.OrderStatusPendingPayment {
-		if err := completePaidOrder(o.db, &order, nil); err != nil {
-			c.String(500, "fail")
-			return
-		}
+	if err := completePaidOrder(o.db, &order, payment, nil); err != nil {
+		c.String(500, "fail")
+		return
 	}
 	c.String(200, "success")
 }
@@ -263,17 +278,27 @@ func expirePendingPaymentOrder(db *gorm.DB, order *model.Order) bool {
 	return true
 }
 
-func completePaidOrder(db *gorm.DB, order *model.Order, approvedByID *uint) error {
+func completePaidOrder(db *gorm.DB, order *model.Order, payment *epayPaymentResult, approvedByID *uint) error {
 	if order.Plan.ID == 0 {
 		if err := db.Preload("Plan").First(order, order.ID).Error; err != nil {
 			return err
 		}
 	}
 	if order.Plan.PlanType != model.PlanTypePublic {
-		if err := db.Model(order).Update("status", model.OrderStatusPendingReview).Error; err != nil {
+		now := time.Now()
+		updates := paymentOrderUpdates(model.OrderStatusPendingReview, payment, now)
+		result := db.Model(&model.Order{}).
+			Where("id = ? AND status = ?", order.ID, model.OrderStatusPendingPayment).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return handlePaidOrderAlreadyProcessed(db, order, payment)
+		}
+		if err := db.Preload("Plan").First(order, order.ID).Error; err != nil {
 			return err
 		}
-		order.Status = model.OrderStatusPendingReview
 		go service.SendOrderPaymentAdminNotification(db, order.ID)
 		return nil
 	}
@@ -285,10 +310,23 @@ func completePaidOrder(db *gorm.DB, order *model.Order, approvedByID *uint) erro
 		if err := tx.Preload("PublicChannel").First(&plan, order.PlanID).Error; err != nil {
 			return err
 		}
+		orderUpdates := paymentOrderUpdates(model.OrderStatusApproved, payment, now)
+		if approvedByID != nil {
+			orderUpdates["approved_by_id"] = *approvedByID
+		}
+		result := tx.Model(&model.Order{}).
+			Where("id = ? AND status = ?", order.ID, model.OrderStatusPendingPayment).
+			Updates(orderUpdates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return handlePaidOrderAlreadyProcessed(tx, order, payment)
+		}
 		if plan.PublicChannelID == nil || plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents {
 			return fmt.Errorf("public plan sold out")
 		}
-		result := tx.Model(&model.PublicChannel{}).
+		result = tx.Model(&model.PublicChannel{}).
 			Where("id = ? AND remaining_usd_cents >= ?", *plan.PublicChannelID, plan.SettlementUSDCents).
 			Update("remaining_usd_cents", gorm.Expr("remaining_usd_cents - ?", plan.SettlementUSDCents))
 		if result.Error != nil {
@@ -296,16 +334,6 @@ func completePaidOrder(db *gorm.DB, order *model.Order, approvedByID *uint) erro
 		}
 		if result.RowsAffected == 0 {
 			return fmt.Errorf("public plan sold out")
-		}
-		orderUpdates := map[string]interface{}{
-			"status":      model.OrderStatusApproved,
-			"approved_at": &now,
-		}
-		if approvedByID != nil {
-			orderUpdates["approved_by_id"] = *approvedByID
-		}
-		if err := tx.Model(order).Updates(orderUpdates).Error; err != nil {
-			return err
 		}
 		return tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
 			"status":     model.UserStatusApproved,
@@ -322,12 +350,78 @@ func completePaidOrder(db *gorm.DB, order *model.Order, approvedByID *uint) erro
 	return nil
 }
 
-func buildEpayURL(c *gin.Context, setting model.SystemSetting, order model.Order) (string, error) {
+func paymentOrderUpdates(status string, payment *epayPaymentResult, now time.Time) map[string]interface{} {
+	updates := map[string]interface{}{
+		"status":  status,
+		"paid_at": &now,
+	}
+	if status == model.OrderStatusApproved {
+		updates["approved_at"] = &now
+	}
+	if payment != nil {
+		updates["paid_amount_cents"] = payment.PaidAmountCents
+		updates["payment_channel"] = payment.PaymentChannel
+		updates["payment_raw"] = payment.RawSummary
+		if payment.PaidAt != nil {
+			updates["paid_at"] = payment.PaidAt
+		}
+		if payment.TradeNo != "" {
+			tradeNo := payment.TradeNo
+			updates["provider_trade_no"] = &tradeNo
+		}
+	}
+	return updates
+}
+
+func handlePaidOrderAlreadyProcessed(db *gorm.DB, order *model.Order, payment *epayPaymentResult) error {
+	var fresh model.Order
+	if err := db.First(&fresh, order.ID).Error; err != nil {
+		return err
+	}
+	switch fresh.Status {
+	case model.OrderStatusPendingReview, model.OrderStatusApproved, model.OrderStatusPaidLate, model.OrderStatusManualReview:
+		*order = fresh
+		return nil
+	case model.OrderStatusPaymentTimeout:
+		if err := markPaymentManualReview(db, &fresh, payment, "payment arrived after timeout"); err != nil {
+			return err
+		}
+		*order = fresh
+		return nil
+	default:
+		return fmt.Errorf("order not pending payment")
+	}
+}
+
+func markPaymentManualReview(db *gorm.DB, order *model.Order, payment *epayPaymentResult, reason string) error {
+	if order == nil || order.ID == 0 {
+		return nil
+	}
+	now := time.Now()
+	status := model.OrderStatusManualReview
+	if order.Status == model.OrderStatusPaymentTimeout {
+		status = model.OrderStatusPaidLate
+	}
+	updates := paymentOrderUpdates(status, payment, now)
+	updates["admin_note"] = strings.TrimSpace(reason)
+	result := db.Model(&model.Order{}).
+		Where("id = ? AND status IN ?", order.ID, []string{model.OrderStatusPendingPayment, model.OrderStatusPaymentTimeout}).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		order.Status = status
+	}
+	return nil
+}
+
+func buildEpayURL(c *gin.Context, cfg config.Config, setting model.SystemSetting, order model.Order) (string, error) {
 	if setting.EpaySubmitURL == "" || setting.EpayPID == "" || setting.EpayKey == "" {
 		return "", fmt.Errorf("payment config missing")
 	}
 	submitURL := normalizeEpaySubmitURL(setting.EpaySubmitURL)
-	baseURL := requestBaseURL(c)
+	baseURL := requestBaseURL(c, cfg)
 	notifyURL := setting.EpayNotifyURL
 	if notifyURL == "" {
 		notifyURL = baseURL + "/api/payment/epay/notify"
@@ -393,9 +487,9 @@ func epayQueryURL(rawURL string) string {
 	return cleanURL + "/api.php"
 }
 
-func queryEpayPaid(c *gin.Context, setting model.SystemSetting, order model.Order) (bool, error) {
+func queryEpayPaid(c *gin.Context, db *gorm.DB, setting model.SystemSetting, order model.Order) (*epayPaymentResult, bool, error) {
 	if setting.EpaySubmitURL == "" || setting.EpayPID == "" || setting.EpayKey == "" {
-		return false, fmt.Errorf("payment config missing")
+		return nil, false, fmt.Errorf("payment config missing")
 	}
 
 	values := url.Values{}
@@ -406,28 +500,118 @@ func queryEpayPaid(c *gin.Context, setting model.SystemSetting, order model.Orde
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, epayQueryURL(setting.EpaySubmitURL)+"?"+values.Encode(), nil)
 	if err != nil {
-		return false, fmt.Errorf("failed to verify payment")
+		return nil, false, fmt.Errorf("failed to verify payment")
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("failed to verify payment")
+		return nil, false, fmt.Errorf("failed to verify payment")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return false, fmt.Errorf("failed to verify payment")
+		return nil, false, fmt.Errorf("failed to verify payment")
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return false, fmt.Errorf("failed to verify payment")
+		return nil, false, fmt.Errorf("failed to verify payment")
 	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return false, fmt.Errorf("failed to verify payment")
+		return nil, false, fmt.Errorf("failed to verify payment")
 	}
 
-	return epayResultPaid(result), nil
+	if !epayResultPaid(result) {
+		return nil, false, nil
+	}
+	payment, err := validateEpayPayment(setting, order, epayPaymentResultFromQuery(result))
+	if err != nil {
+		markPaymentManualReview(db, &order, payment, err.Error())
+		return nil, false, err
+	}
+	return payment, true, nil
+}
+
+func validateEpayPayment(setting model.SystemSetting, order model.Order, payment *epayPaymentResult) (*epayPaymentResult, error) {
+	if payment == nil {
+		return nil, fmt.Errorf("payment result missing")
+	}
+	if strings.TrimSpace(payment.PID) != "" && strings.TrimSpace(payment.PID) != strings.TrimSpace(setting.EpayPID) {
+		return payment, fmt.Errorf("payment pid mismatch")
+	}
+	if payment.OutTradeNo != order.PaymentRef {
+		return payment, fmt.Errorf("payment order mismatch")
+	}
+	if strings.ToUpper(payment.TradeStatus) != "TRADE_SUCCESS" {
+		return payment, fmt.Errorf("payment not completed")
+	}
+	if payment.PaidAmountCents != order.AmountCents {
+		return payment, fmt.Errorf("payment amount mismatch")
+	}
+	return payment, nil
+}
+
+func epayPaymentResultFromParams(params map[string]string) *epayPaymentResult {
+	paidAt := time.Now()
+	amount := parseMoneyCents(params["money"])
+	raw, _ := json.Marshal(map[string]string{
+		"pid":          params["pid"],
+		"out_trade_no": params["out_trade_no"],
+		"trade_no":     params["trade_no"],
+		"trade_status": params["trade_status"],
+		"type":         params["type"],
+		"money":        params["money"],
+	})
+	return &epayPaymentResult{
+		PID:             strings.TrimSpace(params["pid"]),
+		OutTradeNo:      strings.TrimSpace(params["out_trade_no"]),
+		TradeNo:         strings.TrimSpace(params["trade_no"]),
+		TradeStatus:     strings.TrimSpace(params["trade_status"]),
+		Money:           strings.TrimSpace(params["money"]),
+		PaymentChannel:  strings.TrimSpace(params["type"]),
+		PaidAmountCents: amount,
+		PaidAt:          &paidAt,
+		RawSummary:      string(raw),
+	}
+}
+
+func epayPaymentResultFromQuery(result map[string]interface{}) *epayPaymentResult {
+	status := strings.TrimSpace(fmt.Sprint(result["trade_status"]))
+	if status == "" && epayResultPaid(result) {
+		status = "TRADE_SUCCESS"
+	}
+	paidAt := time.Now()
+	money := firstResultString(result, "money", "amount")
+	raw, _ := json.Marshal(result)
+	return &epayPaymentResult{
+		PID:             firstResultString(result, "pid"),
+		OutTradeNo:      firstResultString(result, "out_trade_no"),
+		TradeNo:         firstResultString(result, "trade_no"),
+		TradeStatus:     status,
+		Money:           money,
+		PaymentChannel:  firstResultString(result, "type", "payment_type"),
+		PaidAmountCents: parseMoneyCents(money),
+		PaidAt:          &paidAt,
+		RawSummary:      string(raw),
+	}
+}
+
+func firstResultString(result map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		value := strings.TrimSpace(fmt.Sprint(result[key]))
+		if value != "" && value != "<nil>" {
+			return value
+		}
+	}
+	return ""
+}
+
+func parseMoneyCents(value string) int64 {
+	amount, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil {
+		return 0
+	}
+	return int64(math.Round(amount * 100))
 }
 
 func epayResultPaid(result map[string]interface{}) bool {
@@ -445,7 +629,10 @@ func epayResultPaid(result map[string]interface{}) bool {
 	return code == "1" && strings.Contains(strings.ToLower(fmt.Sprint(result["msg"])), "success")
 }
 
-func requestBaseURL(c *gin.Context) string {
+func requestBaseURL(c *gin.Context, cfg config.Config) string {
+	if cfg.PublicBaseURL != "" {
+		return cfg.PublicBaseURL
+	}
 	proto := c.GetHeader("X-Forwarded-Proto")
 	if proto == "" {
 		if c.Request.TLS != nil {

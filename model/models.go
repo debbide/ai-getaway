@@ -19,6 +19,8 @@ const (
 	OrderStatusApproved       = "approved"
 	OrderStatusRejected       = "rejected"
 	OrderStatusPaymentTimeout = "payment_timeout"
+	OrderStatusPaidLate       = "paid_late"
+	OrderStatusManualReview   = "pending_manual_review"
 
 	APIKeyStatusActive   = "active"
 	APIKeyStatusDisabled = "disabled"
@@ -72,17 +74,23 @@ type Plan struct {
 
 type Order struct {
 	gorm.Model
-	UserID             uint `gorm:"index;not null"`
-	User               User
-	PlanID             uint `gorm:"index;not null"`
-	Plan               Plan
-	AmountCents        int64
-	SettlementUSDCents int64  `gorm:"default:0"`
-	Status             string `gorm:"size:32;default:pending_payment;index"`
-	PaymentRef         string `gorm:"size:128"`
-	AdminNote          string `gorm:"size:255"`
-	ApprovedAt         *time.Time
-	ApprovedByID       *uint
+	UserID                uint `gorm:"index;not null"`
+	User                  User
+	PlanID                uint `gorm:"index;not null"`
+	Plan                  Plan
+	AmountCents           int64
+	SettlementUSDCents    int64   `gorm:"default:0"`
+	Status                string  `gorm:"size:32;default:pending_payment;index"`
+	PaymentRef            string  `gorm:"size:128;uniqueIndex"`
+	ProviderTradeNo       *string `gorm:"size:128;uniqueIndex"`
+	PaymentChannel        string  `gorm:"size:32"`
+	PaidAmountCents       int64   `gorm:"default:0"`
+	PaidAt                *time.Time
+	PaymentURLGeneratedAt *time.Time
+	PaymentRaw            string `gorm:"type:text"`
+	AdminNote             string `gorm:"size:255"`
+	ApprovedAt            *time.Time
+	ApprovedByID          *uint
 }
 
 type UpstreamAccount struct {

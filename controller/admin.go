@@ -537,7 +537,7 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 		response.Error(c, 404, "order not found")
 		return
 	}
-	if order.Status != model.OrderStatusPendingReview {
+	if order.Status != model.OrderStatusPendingReview && order.Status != model.OrderStatusManualReview && order.Status != model.OrderStatusPaidLate {
 		response.Error(c, 409, "order already reviewed")
 		return
 	}
@@ -545,13 +545,19 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 	now := time.Now()
 	expiresAt := now.AddDate(0, 0, order.Plan.DurationDays)
 	err := a.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&order).Updates(map[string]interface{}{
-			"status":         model.OrderStatusApproved,
-			"admin_note":     req.AdminNote,
-			"approved_at":    &now,
-			"approved_by_id": admin.ID,
-		}).Error; err != nil {
-			return err
+		result := tx.Model(&model.Order{}).
+			Where("id = ? AND status IN ?", order.ID, []string{model.OrderStatusPendingReview, model.OrderStatusManualReview, model.OrderStatusPaidLate}).
+			Updates(map[string]interface{}{
+				"status":         model.OrderStatusApproved,
+				"admin_note":     req.AdminNote,
+				"approved_at":    &now,
+				"approved_by_id": admin.ID,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
 		}
 
 		if err := tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
@@ -597,7 +603,7 @@ func (a *AdminController) CompleteOrderPayment(c *gin.Context) {
 		response.Error(c, 409, "order not pending payment")
 		return
 	}
-	if err := completePaidOrder(a.db, &order, &admin.ID); err != nil {
+	if err := completePaidOrder(a.db, &order, nil, &admin.ID); err != nil {
 		if err.Error() == "public plan sold out" {
 			response.Error(c, 409, err.Error())
 			return
@@ -614,11 +620,18 @@ func (a *AdminController) RejectOrder(c *gin.Context) {
 	if req.AdminNote == "" {
 		req.AdminNote = c.Query("note")
 	}
-	if err := a.db.Model(&model.Order{}).Where("id = ?", c.Param("id")).Updates(map[string]interface{}{
-		"status":     model.OrderStatusRejected,
-		"admin_note": req.AdminNote,
-	}).Error; err != nil {
+	result := a.db.Model(&model.Order{}).
+		Where("id = ? AND status IN ?", c.Param("id"), []string{model.OrderStatusPendingReview, model.OrderStatusManualReview, model.OrderStatusPaidLate}).
+		Updates(map[string]interface{}{
+			"status":     model.OrderStatusRejected,
+			"admin_note": req.AdminNote,
+		})
+	if result.Error != nil {
 		response.Error(c, 500, "failed to reject order")
+		return
+	}
+	if result.RowsAffected == 0 {
+		response.Error(c, 409, "order not rejectable")
 		return
 	}
 	response.OK(c, nil)
@@ -642,13 +655,17 @@ func (a *AdminController) UpdateOrder(c *gin.Context) {
 		updates["admin_note"] = req.AdminNote
 	}
 	if req.PlanID != nil {
-		if order.Status == model.OrderStatusApproved {
-			response.Error(c, 409, "approved order plan cannot be changed")
+		if order.Status != model.OrderStatusPendingPayment || order.PaymentURLGeneratedAt != nil {
+			response.Error(c, 409, "paid or payment-started order plan cannot be changed")
 			return
 		}
 		updates["plan_id"] = *req.PlanID
 	}
 	if req.AmountCents != nil && *req.AmountCents > 0 {
+		if order.Status != model.OrderStatusPendingPayment || order.PaymentURLGeneratedAt != nil {
+			response.Error(c, 409, "paid or payment-started order amount cannot be changed")
+			return
+		}
 		updates["amount_cents"] = *req.AmountCents
 	}
 	if req.ChannelID > 0 {

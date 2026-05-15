@@ -40,8 +40,12 @@ const orderStatusMap = {
   pending_review: '待审核',
   approved: '已通过',
   rejected: '已拒绝',
-  payment_timeout: '支付超时'
+  payment_timeout: '支付超时',
+  paid_late: '超时已支付',
+  pending_manual_review: '待人工处理'
 }
+
+const reviewableOrderStatuses = ['pending_review', 'pending_manual_review', 'paid_late']
 
 const active = ref('overview')
 const settingsTab = ref('basic')
@@ -110,7 +114,7 @@ const settings = reactive({
   smtp_test_email: ''
 })
 
-const pendingOrders = computed(() => orders.value.filter((order) => order.Status === 'pending_review').length)
+const pendingOrders = computed(() => orders.value.filter((order) => reviewableOrderStatuses.includes(order.Status)).length)
 const enabledPlans = computed(() => plans.value.filter((plan) => plan.Enabled).length)
 const enabledModels = computed(() => models.value.filter((item) => item.Status === 'active').length)
 const approvedUsers = computed(() => users.value.filter((user) => user.Status === 'approved').length)
@@ -119,7 +123,7 @@ const enabledPublicChannels = computed(() => publicChannels.value.filter((channe
 const enabledDocs = computed(() => docs.value.filter((doc) => doc.Enabled).length)
 const enabledAnnouncements = computed(() => announcements.value.filter((item) => item.Enabled).length)
 const enabledEmailTemplates = computed(() => emailTemplates.value.filter((item) => item.Enabled).length)
-const pendingReviewOrders = computed(() => orders.value.filter((order) => order.Status === 'pending_review'))
+const pendingReviewOrders = computed(() => orders.value.filter((order) => reviewableOrderStatuses.includes(order.Status)))
 const overviewPlans = computed(() => plans.value.slice(0, 4))
 const hasMorePlans = computed(() => plans.value.length > 4)
 const filteredUsers = computed(() => {
@@ -1579,8 +1583,8 @@ function submitModal() {
                       <div class="table-actions">
                         <button class="ghost-button small" @click="openEditOrderModal(order)">编辑</button>
                         <button class="primary-button small" :disabled="order.Status !== 'pending_payment'" @click="completeOrderPayment(order)">完成支付</button>
-                        <button class="ghost-button small" :disabled="order.Status !== 'pending_review'" @click="openApproveModal(order)">审核</button>
-                        <button class="danger-button small" :disabled="order.Status !== 'pending_review'" @click="openRejectModal(order)">拒绝</button>
+                        <button class="ghost-button small" :disabled="!reviewableOrderStatuses.includes(order.Status)" @click="openApproveModal(order)">审核</button>
+                        <button class="danger-button small" :disabled="!reviewableOrderStatuses.includes(order.Status)" @click="openRejectModal(order)">拒绝</button>
                       </div>
                     </td>
                   </tr>

@@ -18,11 +18,11 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 	}
 
 	r := gin.Default()
-	r.Use(cors())
+	r.Use(cors(cfg))
 
 	authController := controller.NewAuthController(cfg, db, redisClient)
 	planController := controller.NewPlanController(db)
-	orderController := controller.NewOrderController(db)
+	orderController := controller.NewOrderController(cfg, db)
 	apiKeyController := controller.NewAPIKeyController(cfg, db)
 	adminController := controller.NewAdminController(db)
 	modelController := controller.NewModelController(db)
@@ -124,9 +124,25 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 	return r
 }
 
-func cors() gin.HandlerFunc {
+func cors(cfg config.Config) gin.HandlerFunc {
+	allowedOrigins := map[string]bool{}
+	allowWildcard := cfg.AppEnv != "production"
+	for _, origin := range cfg.AllowedOrigins {
+		if origin == "*" {
+			allowWildcard = true
+			continue
+		}
+		allowedOrigins[origin] = true
+	}
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		origin := c.GetHeader("Origin")
+		switch {
+		case allowWildcard:
+			c.Header("Access-Control-Allow-Origin", "*")
+		case origin != "" && allowedOrigins[origin]:
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+		}
 		c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Authorization,Content-Type,X-API-Key")
 		if c.Request.Method == "OPTIONS" {
