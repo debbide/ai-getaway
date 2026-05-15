@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
@@ -13,12 +13,14 @@ const form = reactive({ username: '', email: '', password: '', emailCode: '' })
 const captcha = reactive({ challengeId: '', image: '', trackWidth: 280, pieceWidth: 42, x: 0 })
 const loading = ref(false)
 const sendingCode = ref(false)
+const emailCodeCooldown = ref(0)
 const securityOpen = ref(false)
 const securityBusy = ref(false)
 const pendingAction = ref('')
 const error = ref('')
 const notice = ref('')
 let captchaTimer = null
+let emailCodeTimer = null
 
 const captchaPassed = computed(() => securityBusy.value)
 const sliderMax = computed(() => Math.max(0, captcha.trackWidth - captcha.pieceWidth))
@@ -41,6 +43,11 @@ watch([open, mode], () => {
   closeSecurity()
 })
 
+onBeforeUnmount(() => {
+  clearEmailCodeCooldown()
+  if (captchaTimer) clearTimeout(captchaTimer)
+})
+
 function switchMode(nextMode) {
   if (mode.value === nextMode) return
   if (nextMode === 'register' && !props.allowRegistration) {
@@ -53,6 +60,26 @@ function switchMode(nextMode) {
   error.value = ''
   notice.value = ''
   closeSecurity()
+}
+
+function clearEmailCodeCooldown() {
+  if (emailCodeTimer) {
+    clearInterval(emailCodeTimer)
+    emailCodeTimer = null
+  }
+}
+
+function startEmailCodeCooldown() {
+  clearEmailCodeCooldown()
+  emailCodeCooldown.value = 60
+  emailCodeTimer = setInterval(() => {
+    if (emailCodeCooldown.value <= 1) {
+      emailCodeCooldown.value = 0
+      clearEmailCodeCooldown()
+      return
+    }
+    emailCodeCooldown.value -= 1
+  }, 1000)
 }
 
 async function loadCaptcha() {
@@ -119,6 +146,7 @@ function sendEmailCode() {
     error.value = '请先填写邮箱'
     return
   }
+  if (sendingCode.value || emailCodeCooldown.value > 0) return
   requestSecurity('email')
 }
 
@@ -131,6 +159,7 @@ async function sendEmailCodeWithCaptcha() {
       captcha_x: Number(captcha.x)
     })
     notice.value = '验证码已发送，请查收邮箱'
+    startEmailCodeCooldown()
   } catch (err) {
     error.value = err.message
   } finally {
@@ -219,8 +248,8 @@ async function submitWithCaptcha() {
             <span>邮箱验证码</span>
             <div class="inline-field">
               <input v-model="form.emailCode" maxlength="6" required />
-              <button class="ghost-button" type="button" :disabled="sendingCode" @click="sendEmailCode">
-                {{ sendingCode ? '发送中' : '发送' }}
+              <button class="ghost-button" type="button" :disabled="sendingCode || emailCodeCooldown > 0" @click="sendEmailCode">
+                {{ sendingCode ? '发送中' : emailCodeCooldown > 0 ? `${emailCodeCooldown}秒后重试` : '发送' }}
               </button>
             </div>
           </label>
