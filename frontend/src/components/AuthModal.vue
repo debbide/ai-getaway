@@ -196,7 +196,7 @@ async function submitWithCaptcha() {
         challenge_id: captcha.challengeId,
         captcha_x: Number(captcha.x)
       })
-      notice.value = '注册成功，账号已进入待审核状态'
+      notice.value = '注册成功，邮箱已验证，请登录'
       mode.value = 'login'
     }
   } catch (err) {

@@ -135,7 +135,7 @@ func (a *AuthController) Register(c *gin.Context) {
 		Email:         req.Email,
 		PasswordHash:  passwordHash,
 		Role:          model.RoleUser,
-		Status:        model.UserStatusPending,
+		Status:        model.UserStatusApproved,
 		EmailVerified: true,
 	}
 	if err := a.db.Create(&user).Error; err != nil {
