@@ -27,6 +27,13 @@ const (
 
 	ModelPricingStatusActive   = "active"
 	ModelPricingStatusDisabled = "disabled"
+
+	PlanTypeSubscription = "subscription"
+	PlanTypePublic       = "public"
+
+	QuotaPeriodDaily  = "daily"
+	QuotaPeriodWeekly = "weekly"
+	QuotaPeriodPublic = "public"
 )
 
 type User struct {
@@ -49,6 +56,8 @@ type Plan struct {
 	BadgeText          string `gorm:"size:32"`
 	PlanType           string `gorm:"size:32;default:subscription;index"`
 	QuotaPeriod        string `gorm:"size:16;default:weekly;index"`
+	PublicChannelID    *uint  `gorm:"index"`
+	PublicChannel      *PublicChannel
 	PriceCents         int64  `gorm:"not null"`
 	SettlementUSDCents int64  `gorm:"default:0"`
 	DurationDays       int    `gorm:"not null"`
@@ -89,6 +98,17 @@ type UpstreamChannel struct {
 	Name    string `gorm:"size:64;uniqueIndex;not null"`
 	BaseURL string `gorm:"size:255;not null"`
 	Enabled bool   `gorm:"default:true;index"`
+}
+
+type PublicChannel struct {
+	gorm.Model
+	Name              string `gorm:"size:64;uniqueIndex;not null"`
+	BaseURL           string `gorm:"size:255;not null"`
+	APIKey            string `gorm:"size:512;not null" json:"-"`
+	TotalUSDCents     int64  `gorm:"default:0"`
+	RemainingUSDCents int64  `gorm:"default:0;index"`
+	Enabled           bool   `gorm:"default:true;index"`
+	LastUsedAt        *time.Time
 }
 
 type DocPage struct {

@@ -19,6 +19,8 @@ const messageMap = {
   'order not pending payment': '订单当前状态不允许继续支付，请刷新后查看',
   'payment config missing': '支付配置未完成，请联系管理员',
   'payment not completed': '支付结果尚未确认，请完成支付后再试',
+  'public channel sold out': '公共渠道额度已售罄，请选择其他套餐',
+  'public plan sold out': '该活动套餐已售罄，请选择其他套餐',
   'subscription expired': '订阅已到期，请续费后继续使用',
   'subscription quota exceeded': '本周美元额度已用完，请升级或续费后继续使用',
   'user disabled': '账号已被禁用，请联系管理员',

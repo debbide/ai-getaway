@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"ai-gateway/config"
@@ -25,6 +26,11 @@ func NewAPIKeyController(cfg config.Config, db *gorm.DB) *APIKeyController {
 
 type createAPIKeyRequest struct {
 	Name string `json:"name" binding:"required,min=2,max=64"`
+}
+
+type adminUpdateAPIKeyRequest struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 func maskDisplayAPIKey(plaintext, prefix string) string {
@@ -64,6 +70,30 @@ func (a *APIKeyController) loadUpstream(userID uint) (*model.UpstreamAccount, er
 	return &upstream, nil
 }
 
+func (a *APIKeyController) ensureCallablePlan(user model.User) error {
+	var fresh model.User
+	if err := a.db.Preload("Plan").First(&fresh, user.ID).Error; err != nil {
+		return err
+	}
+	if !service.HasActiveSubscription(fresh, time.Now()) || fresh.Plan == nil {
+		return errors.New("subscription expired")
+	}
+	if fresh.Plan.PlanType == model.PlanTypePublic {
+		if fresh.Plan.PublicChannelID == nil {
+			return errors.New("public channel sold out")
+		}
+		var publicChannel model.PublicChannel
+		if err := a.db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *fresh.Plan.PublicChannelID, true).First(&publicChannel).Error; err != nil {
+			return errors.New("public channel sold out")
+		}
+		return nil
+	}
+	if _, err := a.loadUpstream(user.ID); err != nil {
+		return errors.New("no active upstream account bound")
+	}
+	return nil
+}
+
 // Create 仅当用户尚无任何密钥时创建第一条（全站每用户仅保留一条记录）。
 func (a *APIKeyController) Create(c *gin.Context) {
 	user := c.MustGet("user").(model.User)
@@ -71,12 +101,8 @@ func (a *APIKeyController) Create(c *gin.Context) {
 		response.Error(c, 403, "account pending approval")
 		return
 	}
-	if !service.HasActiveSubscription(user, time.Now()) {
-		response.Error(c, 403, "subscription expired")
-		return
-	}
-	if _, err := a.loadUpstream(user.ID); err != nil {
-		response.Error(c, 403, "no active upstream account bound")
+	if err := a.ensureCallablePlan(user); err != nil {
+		response.Error(c, 403, err.Error())
 		return
 	}
 
@@ -135,12 +161,8 @@ func (a *APIKeyController) Rotate(c *gin.Context) {
 		response.Error(c, 403, "account pending approval")
 		return
 	}
-	if !service.HasActiveSubscription(user, time.Now()) {
-		response.Error(c, 403, "subscription expired")
-		return
-	}
-	if _, err := a.loadUpstream(user.ID); err != nil {
-		response.Error(c, 403, "no active upstream account bound")
+	if err := a.ensureCallablePlan(user); err != nil {
+		response.Error(c, 403, err.Error())
 		return
 	}
 
@@ -271,6 +293,56 @@ func (a *APIKeyController) Enable(c *gin.Context) {
 		Where("id = ? AND user_id = ?", c.Param("id"), user.ID).
 		Update("status", model.APIKeyStatusActive).Error; err != nil {
 		response.Error(c, 500, "failed to enable api key")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *APIKeyController) AdminList(c *gin.Context) {
+	var keys []model.APIKey
+	a.db.Preload("User").Order("id desc").Find(&keys)
+	response.OK(c, keys)
+}
+
+func (a *APIKeyController) AdminUpdate(c *gin.Context) {
+	var req adminUpdateAPIKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if name := strings.TrimSpace(req.Name); name != "" {
+		updates["name"] = name
+	}
+	if req.Status == model.APIKeyStatusActive || req.Status == model.APIKeyStatusDisabled {
+		updates["status"] = req.Status
+	}
+	if len(updates) == 0 {
+		response.OK(c, nil)
+		return
+	}
+
+	result := a.db.Model(&model.APIKey{}).Where("id = ?", c.Param("id")).Updates(updates)
+	if result.Error != nil {
+		response.Error(c, 500, "failed to update api key")
+		return
+	}
+	if result.RowsAffected == 0 {
+		response.Error(c, 404, "api key not found")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *APIKeyController) AdminDelete(c *gin.Context) {
+	result := a.db.Delete(&model.APIKey{}, c.Param("id"))
+	if result.Error != nil {
+		response.Error(c, 500, "failed to delete api key")
+		return
+	}
+	if result.RowsAffected == 0 {
+		response.Error(c, 404, "api key not found")
 		return
 	}
 	response.OK(c, nil)

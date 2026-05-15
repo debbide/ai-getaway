@@ -16,6 +16,7 @@ const announcements = ref([])
 const announcementExpanded = ref(localStorage.getItem('announcementExpanded') !== 'false')
 const historyModalOpen = ref(false)
 const selectedPlan = ref('')
+const planTab = ref('subscription')
 const pendingPlainKey = ref('')
 const lastKeyMasked = ref('')
 const error = ref('')
@@ -79,6 +80,9 @@ const displayApiEndpoints = computed(() => parseApiEndpoints(props.apiEndpoints)
 const soloKey = computed(() => (keys.value.length ? keys.value[0] : null))
 const hasApiKey = computed(() => Boolean(soloKey.value))
 const currentAnnouncement = computed(() => announcements.value[0] || null)
+const subscriptionPlans = computed(() => props.plans.filter((plan) => plan.QuotaPeriod !== 'public' && plan.PlanType !== 'public'))
+const publicPlans = computed(() => props.plans.filter((plan) => plan.QuotaPeriod === 'public' || plan.PlanType === 'public'))
+const visiblePlans = computed(() => (planTab.value === 'public' ? publicPlans.value : subscriptionPlans.value))
 const historyAnnouncements = computed(() => announcements.value.slice(1))
 const announcementSummary = computed(() => {
   const item = currentAnnouncement.value
@@ -122,6 +126,11 @@ function setOrderPage(page) {
 function openOrderModal(planId = selectedPlan.value) {
   if (hasActiveSubscription.value) {
     notice.value = '当前套餐仍在有效期内，请待到期后再购买'
+    return
+  }
+  const targetPlan = props.plans.find((plan) => String(plan.ID) === String(planId || ''))
+  if (targetPlan && planSoldOut(targetPlan)) {
+    notice.value = '该活动套餐已售罄'
     return
   }
   orderForm.planId = planId || ''
@@ -326,12 +335,32 @@ function usd(cents) {
 
 function quotaPeriodText(plan) {
   const period = plan?.QuotaPeriod || plan?.quota_period
+  if (period === 'public' || plan?.PlanType === 'public' || plan?.plan_type === 'public') return '公共套餐'
   return period === 'daily' ? '日限额度' : '周限额度'
 }
 
 function quotaPeriodUnit(plan) {
   const period = plan?.QuotaPeriod || plan?.quota_period
+  if (period === 'public' || plan?.PlanType === 'public' || plan?.plan_type === 'public') return '总'
   return period === 'daily' ? '日' : '周'
+}
+
+function isPublicPlan(plan) {
+  return plan?.QuotaPeriod === 'public' || plan?.PlanType === 'public' || plan?.quota_period === 'public' || plan?.plan_type === 'public'
+}
+
+function planSoldOut(plan) {
+  return isPublicPlan(plan) && Number(plan.PublicChannel?.RemainingUSDCents || 0) < Number(plan.SettlementUSDCents || 0)
+}
+
+function totalPlanUsd(plan) {
+  if (isPublicPlan(plan)) return usd(plan.SettlementUSDCents)
+  const units = plan?.QuotaPeriod === 'daily' ? Number(plan.DurationDays || 1) : Math.max(1, Math.round(Number(plan.DurationDays || 30) / 7))
+  return usd(Number(plan?.SettlementUSDCents || 0) * units)
+}
+
+function publicRemainingUsd(plan) {
+  return usd(plan.PublicChannel?.RemainingUSDCents || 0)
 }
 
 function pad2(n) {
@@ -562,25 +591,31 @@ function statusLabel(value) {
             </div>
 
             <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div class="settings-tabs plan-tabs sm:col-span-2 xl:col-span-3">
+                <button :class="{ active: planTab === 'subscription' }" @click="planTab = 'subscription'">订阅套餐</button>
+                <button :class="{ active: planTab === 'public' }" @click="planTab = 'public'">活动套餐</button>
+              </div>
               <article
-                v-for="plan in props.plans"
+                v-for="plan in visiblePlans"
                 :key="plan.ID"
                 class="select-plan-card"
-                :class="{ active: selectedPlan === String(plan.ID), disabled: hasActiveSubscription }"
-                @click="!hasActiveSubscription && (selectedPlan = String(plan.ID))"
+                :class="{ active: selectedPlan === String(plan.ID), disabled: hasActiveSubscription || planSoldOut(plan) }"
+                @click="!hasActiveSubscription && !planSoldOut(plan) && (selectedPlan = String(plan.ID))"
               >
+                <div v-if="plan.BadgeText" class="plan-ribbon-inline">{{ plan.BadgeText }}</div>
                 <h4>{{ plan.Name }}</h4>
                 <p>{{ plan.Description || '暂无说明' }}</p>
                 <div>
                   <strong>{{ money(plan.PriceCents) }}</strong>
-                  <span>{{ plan.DurationDays }} 天 · {{ quotaPeriodText(plan) }} {{ usd(plan.SettlementUSDCents) }}</span>
+                  <span v-if="isPublicPlan(plan)">总额度 {{ totalPlanUsd(plan) }} · 公共剩余 {{ publicRemainingUsd(plan) }}</span>
+                  <span v-else>{{ plan.DurationDays }} 天 · {{ quotaPeriodText(plan) }} {{ usd(plan.SettlementUSDCents) }}</span>
                 </div>
                 <button
                   class="ghost-button small"
-                  :disabled="hasActiveSubscription"
+                  :disabled="hasActiveSubscription || planSoldOut(plan)"
                   @click.stop="openOrderModal(String(plan.ID))"
                 >
-                  {{ hasActiveSubscription ? '等待当前套餐过期后购买' : '选择并下单' }}
+                  {{ planSoldOut(plan) ? '售罄' : (hasActiveSubscription ? '等待当前套餐过期后购买' : '选择并下单') }}
                 </button>
               </article>
             </div>
@@ -772,8 +807,8 @@ function statusLabel(value) {
             <span>选择套餐</span>
             <select v-model="orderForm.planId" required>
               <option value="">请选择套餐</option>
-              <option v-for="plan in props.plans" :key="plan.ID" :value="plan.ID">
-                {{ plan.Name }} / {{ money(plan.PriceCents) }} / {{ plan.DurationDays }} 天
+              <option v-for="plan in visiblePlans" :key="plan.ID" :value="plan.ID" :disabled="planSoldOut(plan)">
+                {{ plan.Name }} / {{ money(plan.PriceCents) }} / {{ isPublicPlan(plan) ? `总额度 ${totalPlanUsd(plan)}` : `${plan.DurationDays} 天` }}{{ planSoldOut(plan) ? ' / 售罄' : '' }}
               </option>
             </select>
           </label>

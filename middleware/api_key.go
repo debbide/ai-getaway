@@ -61,19 +61,30 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 			return
 		}
 
-		var upstream model.UpstreamAccount
-		if err := db.Where("user_id = ? AND status = ?", apiKey.UserID, model.UpstreamStatusActive).First(&upstream).Error; err != nil {
-			response.Error(c, 403, "no active upstream account bound")
-			c.Abort()
-			return
-		}
-
 		now := time.Now()
 		db.Model(&apiKey).Updates(map[string]interface{}{"last_used_at": &now})
-		db.Model(&upstream).Updates(map[string]interface{}{"last_used_at": &now})
 
 		c.Set("api_key", apiKey)
-		c.Set("upstream", upstream)
+		if apiKey.User.Plan != nil && apiKey.User.Plan.PlanType == model.PlanTypePublic {
+			var publicChannel model.PublicChannel
+			if apiKey.User.Plan.PublicChannelID == nil ||
+				db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *apiKey.User.Plan.PublicChannelID, true).First(&publicChannel).Error != nil {
+				response.Error(c, 403, "public channel sold out")
+				c.Abort()
+				return
+			}
+			db.Model(&publicChannel).Updates(map[string]interface{}{"last_used_at": &now})
+			c.Set("public_channel", publicChannel)
+		} else {
+			var upstream model.UpstreamAccount
+			if err := db.Where("user_id = ? AND status = ?", apiKey.UserID, model.UpstreamStatusActive).First(&upstream).Error; err != nil {
+				response.Error(c, 403, "no active upstream account bound")
+				c.Abort()
+				return
+			}
+			db.Model(&upstream).Updates(map[string]interface{}{"last_used_at": &now})
+			c.Set("upstream", upstream)
+		}
 		c.Next()
 	}
 }

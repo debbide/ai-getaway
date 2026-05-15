@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api/client'
 
 const menu = [
@@ -43,13 +43,17 @@ const orderStatusMap = {
 
 const active = ref('overview')
 const settingsTab = ref('basic')
+const usersTab = ref('users')
+const channelsTab = ref('upstream')
 const stats = ref({})
 const orders = ref([])
 const users = ref([])
+const apiKeys = ref([])
 const plans = ref([])
 const models = ref([])
 const modelSource = ref('')
 const channels = ref([])
+const publicChannels = ref([])
 const docs = ref([])
 const announcements = ref([])
 const error = ref('')
@@ -58,15 +62,20 @@ const navDraft = ref([])
 const apiEndpointDraft = ref([])
 const loading = ref(false)
 const smtpTesting = ref(false)
+let userSearchTimer = null
+let overviewMetricsTimer = null
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null })
 const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountCents: 0, status: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
 const planForm = reactive(emptyPlan())
 const modelForm = reactive(emptyModel())
 const channelForm = reactive(emptyChannel())
+const publicChannelForm = reactive(emptyPublicChannel())
 const userForm = reactive(emptyUser())
+const apiKeyForm = reactive(emptyApiKey())
 const docForm = reactive(emptyDoc())
 const announcementForm = reactive(emptyAnnouncement())
+const userSearch = reactive({ keyword: '', role: '', status: '', plan: '' })
 const settings = reactive({
   site_title: '',
   contact_email: '',
@@ -97,10 +106,56 @@ const enabledPlans = computed(() => plans.value.filter((plan) => plan.Enabled).l
 const enabledModels = computed(() => models.value.filter((item) => item.Status === 'active').length)
 const approvedUsers = computed(() => users.value.filter((user) => user.Status === 'approved').length)
 const enabledChannels = computed(() => channels.value.filter((channel) => channel.Enabled).length)
+const enabledPublicChannels = computed(() => publicChannels.value.filter((channel) => channel.Enabled).length)
 const enabledDocs = computed(() => docs.value.filter((doc) => doc.Enabled).length)
 const enabledAnnouncements = computed(() => announcements.value.filter((item) => item.Enabled).length)
+const pendingReviewOrders = computed(() => orders.value.filter((order) => order.Status === 'pending_review'))
+const overviewPlans = computed(() => plans.value.slice(0, 4))
+const hasMorePlans = computed(() => plans.value.length > 4)
+const filteredUsers = computed(() => {
+  const keyword = String(userSearch.keyword || '').trim().toLowerCase()
+  const role = String(userSearch.role || '')
+  const status = String(userSearch.status || '')
+  const plan = String(userSearch.plan || '')
+  return users.value.filter((user) => {
+    const matchesKeyword = !keyword || [user.Username, user.Email, user.ID].some((value) => String(value || '').toLowerCase().includes(keyword))
+    const matchesRole = !role || user.Role === role
+    const matchesStatus = !status || user.Status === status
+    const matchesPlan = !plan || String(user.PlanID || '') === plan || String(user.Plan?.ID || '') === plan || String(user.Plan?.Name || '').toLowerCase().includes(plan.toLowerCase())
+    return matchesKeyword && matchesRole && matchesStatus && matchesPlan
+  })
+})
+const filteredApiKeys = computed(() => apiKeys.value)
 
-onMounted(loadAll)
+onMounted(async () => {
+  await loadAll()
+  startOverviewMetricsPolling()
+})
+
+watch(
+  () => [userSearch.keyword, userSearch.role, userSearch.status, userSearch.plan],
+  () => {
+    if (active.value !== 'users') return
+    if (userSearchTimer) clearTimeout(userSearchTimer)
+    userSearchTimer = setTimeout(() => {
+      loadAll()
+    }, 250)
+  }
+)
+
+onBeforeUnmount(() => {
+  if (userSearchTimer) clearTimeout(userSearchTimer)
+  stopOverviewMetricsPolling()
+})
+
+watch(active, (value) => {
+  if (value === 'overview') {
+    refreshOverviewMetrics()
+    startOverviewMetricsPolling()
+    return
+  }
+  stopOverviewMetricsPolling()
+})
 
 function emptyPlan() {
   return {
@@ -110,6 +165,7 @@ function emptyPlan() {
     badge_text: '',
     plan_type: 'subscription',
     quota_period: 'weekly',
+    public_channel_id: '',
     price_rmb: 9.9,
     period_usd_quota: 20,
     price_cents: 990,
@@ -138,11 +194,31 @@ function emptyUser() {
   }
 }
 
+function emptyApiKey() {
+  return {
+    id: null,
+    name: '',
+    status: 'active'
+  }
+}
+
 function emptyChannel() {
   return {
     id: null,
     name: '',
     base_url: '',
+    enabled: true
+  }
+}
+
+function emptyPublicChannel() {
+  return {
+    id: null,
+    name: '',
+    base_url: '',
+    api_key: '',
+    total_usd_quota: 400,
+    remaining_usd_quota: 400,
     enabled: true
   }
 }
@@ -195,13 +271,23 @@ async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, docsRes, announcementsRes, settingsRes] = await Promise.all([
+    const userParams = {
+      params: {
+        q: userSearch.keyword || undefined,
+        role: userSearch.role || undefined,
+        status: userSearch.status || undefined,
+        plan: userSearch.plan || undefined
+      }
+    }
+    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, publicChannelsRes, keysRes, docsRes, announcementsRes, settingsRes] = await Promise.all([
       api.get('/admin/stats'),
       api.get('/admin/orders'),
-      api.get('/admin/users'),
+      api.get('/admin/users', userParams),
       api.get('/admin/plans'),
       api.get('/admin/models'),
       api.get('/admin/upstream-channels'),
+      api.get('/admin/public-channels'),
+      api.get('/admin/keys'),
       api.get('/admin/docs'),
       api.get('/admin/announcements'),
       api.get('/admin/settings')
@@ -213,6 +299,8 @@ async function loadAll() {
     models.value = modelsRes.data?.items || []
     modelSource.value = modelsRes.data?.official_source || ''
     channels.value = channelsRes.data || []
+    publicChannels.value = publicChannelsRes.data || []
+    apiKeys.value = keysRes.data || []
     docs.value = docsRes.data || []
     announcements.value = announcementsRes.data || []
     Object.assign(settings, settingsRes.data, { smtp_password: '', epay_key: '' })
@@ -230,6 +318,27 @@ async function refreshAdminData() {
   await loadAll()
 }
 
+async function refreshOverviewMetrics() {
+  if (active.value !== 'overview') return
+  try {
+    const res = await api.get('/admin/stats')
+    stats.value = res.data || {}
+  } catch (err) {
+    if (!error.value) error.value = err.message
+  }
+}
+
+function startOverviewMetricsPolling() {
+  if (overviewMetricsTimer || active.value !== 'overview') return
+  overviewMetricsTimer = setInterval(refreshOverviewMetrics, 3000)
+}
+
+function stopOverviewMetricsPolling() {
+  if (!overviewMetricsTimer) return
+  clearInterval(overviewMetricsTimer)
+  overviewMetricsTimer = null
+}
+
 function openPlanModal(plan = null) {
   Object.assign(planForm, emptyPlan())
   if (plan) {
@@ -240,6 +349,7 @@ function openPlanModal(plan = null) {
       badge_text: plan.BadgeText || '',
       plan_type: plan.PlanType || 'subscription',
       quota_period: plan.QuotaPeriod || 'weekly',
+      public_channel_id: plan.PublicChannelID || plan.PublicChannel?.ID || '',
       price_rmb: centsToAmount(plan.PriceCents),
       period_usd_quota: centsToAmount(plan.SettlementUSDCents),
       price_cents: plan.PriceCents,
@@ -340,6 +450,22 @@ function openChannelModal(channel = null) {
   showModal(channel ? 'edit-channel' : 'create-channel', channel ? '编辑渠道' : '新增渠道', channel ? '保存修改' : '创建渠道')
 }
 
+function openPublicChannelModal(channel = null) {
+  Object.assign(publicChannelForm, emptyPublicChannel())
+  if (channel) {
+    Object.assign(publicChannelForm, {
+      id: channel.ID,
+      name: channel.Name,
+      base_url: channel.BaseURL,
+      api_key: channel.APIKey || '',
+      total_usd_quota: centsToAmount(channel.TotalUSDCents),
+      remaining_usd_quota: centsToAmount(channel.RemainingUSDCents),
+      enabled: channel.Enabled
+    })
+  }
+  showModal(channel ? 'edit-public-channel' : 'create-public-channel', channel ? '编辑公共渠道' : '新增公共渠道', channel ? '保存修改' : '创建公共渠道')
+}
+
 function openDocModal(doc = null) {
   Object.assign(docForm, emptyDoc())
   if (doc) {
@@ -437,6 +563,19 @@ async function submitChannel() {
   })
 }
 
+async function submitPublicChannel() {
+  const payload = normalizePublicChannel(publicChannelForm)
+  await runAction(async () => {
+    if (publicChannelForm.id) {
+      await api.put(`/admin/public-channels/${publicChannelForm.id}`, payload)
+      notice.value = '公共渠道已更新'
+    } else {
+      await api.post('/admin/public-channels', payload)
+      notice.value = '公共渠道已创建'
+    }
+  })
+}
+
 function confirmDeleteChannel(channel) {
   showModal('delete-channel', '删除渠道', '确认删除', { channel }, true)
 }
@@ -445,6 +584,17 @@ async function deleteChannel() {
   await runAction(async () => {
     await api.delete(`/admin/upstream-channels/${modal.payload.channel.ID}`)
     notice.value = '渠道已删除'
+  })
+}
+
+function confirmDeletePublicChannel(channel) {
+  showModal('delete-public-channel', '删除公共渠道', '确认删除', { channel }, true)
+}
+
+async function deletePublicChannel() {
+  await runAction(async () => {
+    await api.delete(`/admin/public-channels/${modal.payload.channel.ID}`)
+    notice.value = '公共渠道已删除'
   })
 }
 
@@ -512,6 +662,48 @@ async function deleteUser() {
   await runAction(async () => {
     await api.delete(`/admin/users/${modal.payload.user.ID}`)
     notice.value = '用户已删除'
+  })
+}
+
+function openApiKeyModal(key = null) {
+  Object.assign(apiKeyForm, emptyApiKey())
+  if (key) {
+    Object.assign(apiKeyForm, {
+      id: key.ID,
+      name: key.Name || '',
+      status: key.Status || 'active'
+    })
+  }
+  showModal('edit-api-key', '编辑 API Key', '保存修改', { key }, false)
+}
+
+async function submitApiKey() {
+  await runAction(async () => {
+    await api.patch(`/admin/keys/${modal.payload.key.ID}`, {
+      name: apiKeyForm.name.trim(),
+      status: apiKeyForm.status
+    })
+    notice.value = 'API Key 已更新'
+  })
+}
+
+async function toggleApiKeyStatus(key) {
+  await runAction(async () => {
+    await api.patch(`/admin/keys/${key.ID}`, {
+      status: key.Status === 'active' ? 'disabled' : 'active'
+    })
+    notice.value = key.Status === 'active' ? 'API Key 已停用' : 'API Key 已启用'
+  })
+}
+
+function confirmDeleteApiKey(key) {
+  showModal('delete-api-key', '删除 API Key', '确认删除', { key }, true)
+}
+
+async function deleteApiKey() {
+  await runAction(async () => {
+    await api.delete(`/admin/keys/${modal.payload.key.ID}`)
+    notice.value = 'API Key 已删除'
   })
 }
 
@@ -822,17 +1014,30 @@ function closeModal() {
 }
 
 function normalizePlan(plan) {
+  const isPublic = plan.quota_period === 'public'
   return {
     name: plan.name.trim(),
     code: plan.code.trim(),
     badge_text: plan.badge_text.trim(),
-    plan_type: plan.plan_type,
-    quota_period: plan.quota_period,
+    plan_type: isPublic ? 'public' : 'subscription',
+    quota_period: isPublic ? 'public' : plan.quota_period,
+    public_channel_id: isPublic ? Number(plan.public_channel_id || 0) : null,
     price_cents: amountToCents(plan.price_rmb),
     settlement_usd_cents: amountToCents(plan.period_usd_quota),
-    duration_days: Number(plan.duration_days || 1),
+    duration_days: isPublic ? 1 : Number(plan.duration_days || 1),
     description: plan.description.trim(),
     enabled: Boolean(plan.enabled)
+  }
+}
+
+function normalizePublicChannel(channel) {
+  return {
+    name: channel.name.trim(),
+    base_url: channel.base_url.trim(),
+    api_key: channel.api_key.trim(),
+    total_usd_cents: amountToCents(channel.total_usd_quota),
+    remaining_usd_cents: amountToCents(channel.remaining_usd_quota),
+    enabled: Boolean(channel.enabled)
   }
 }
 
@@ -961,6 +1166,7 @@ function usd(value) {
 }
 
 function quotaPeriodLabel(period) {
+  if (period === 'public') return '公共'
   return period === 'daily' ? '每日' : '每周'
 }
 
@@ -969,16 +1175,76 @@ function planWeeks(plan) {
 }
 
 function totalUsd(plan) {
+  if (plan.QuotaPeriod === 'public') return usd(plan.SettlementUSDCents)
   const units = plan.QuotaPeriod === 'daily' ? (plan.DurationDays || 1) : planWeeks(plan)
   return `$${(((plan.SettlementUSDCents || 0) / 100) * units).toFixed(0)}`
+}
+
+function channelQuotaText(channel) {
+  const remaining = channel?.RemainingUSDCents || 0
+  const total = channel?.TotalUSDCents || 0
+  return `${usd(remaining)} / ${usd(total)}`
+}
+
+function publicChannelName(plan) {
+  return plan.PublicChannel?.Name || publicChannels.value.find((channel) => channel.ID === plan.PublicChannelID)?.Name || '未绑定公共渠道'
 }
 
 function compactNumber(value) {
   return Number(value || 0).toLocaleString()
 }
 
+function percent(value) {
+  return `${Number(value || 0).toFixed(1)}%`
+}
+
+function bytes(value) {
+  const size = Number(value || 0)
+  if (size <= 0) return '-'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let current = size
+  let unit = 0
+  while (current >= 1024 && unit < units.length - 1) {
+    current /= 1024
+    unit += 1
+  }
+  return `${current >= 10 || unit === 0 ? current.toFixed(0) : current.toFixed(1)} ${units[unit]}`
+}
+
+function systemLoad() {
+  return stats.value.system_load || {}
+}
+
+function systemLoadText() {
+  const load = systemLoad()
+  if (!load.load_average_1) return `${load.go_routines || load.goroutines || 0} goroutines`
+  return `Load ${Number(load.load_average_1 || 0).toFixed(2)} / ${Number(load.load_average_5 || 0).toFixed(2)}`
+}
+
+function memoryText() {
+  const load = systemLoad()
+  if (!load.memory_total_bytes) return `进程 ${bytes(load.process_memory_bytes)}`
+  return `${bytes(load.memory_used_bytes)} / ${bytes(load.memory_total_bytes)}`
+}
+
 function roleLabel(value) {
   return roleOptions.find((item) => item.value === value)?.label || value
+}
+
+function planLabel(user) {
+  return user.Plan?.Name || '未分配'
+}
+
+function planSearchValue(plan) {
+  return String(plan || '').toLowerCase()
+}
+
+function apiKeyStatusLabel(value) {
+  return value === 'disabled' ? '已停用' : '已启用'
+}
+
+function apiKeyPrefix(value) {
+  return value || '-'
 }
 
 function statusLabel(value) {
@@ -996,6 +1262,9 @@ function submitModal() {
     'create-channel': submitChannel,
     'edit-channel': submitChannel,
     'delete-channel': deleteChannel,
+    'create-public-channel': submitPublicChannel,
+    'edit-public-channel': submitPublicChannel,
+    'delete-public-channel': deletePublicChannel,
     'create-doc': submitDoc,
     'edit-doc': submitDoc,
     'delete-doc': deleteDoc,
@@ -1004,8 +1273,10 @@ function submitModal() {
     'delete-announcement': deleteAnnouncement,
     'create-user': submitUser,
     'edit-user': submitUser,
+    'edit-api-key': submitApiKey,
     'user-upstream': closeModal,
     'delete-user': deleteUser,
+    'delete-api-key': deleteApiKey,
     'approve-order': approveOrder,
     'reject-order': rejectOrder,
     'edit-order': editOrder
@@ -1075,6 +1346,26 @@ function submitModal() {
               <strong>{{ stats.calls || 0 }}</strong>
               <small>网关请求日志</small>
             </article>
+            <article class="stat-card">
+              <span>活动 API 连接</span>
+              <strong>{{ stats.active_api_connections || 0 }}</strong>
+              <small>实时接入中，请求结束自动 -1</small>
+            </article>
+            <article class="stat-card">
+              <span>CPU 负载</span>
+              <strong>{{ percent(systemLoad().cpu_percent) }}</strong>
+              <small>{{ systemLoadText() }}</small>
+            </article>
+            <article class="stat-card">
+              <span>内存占用</span>
+              <strong>{{ percent(systemLoad().memory_used_percent) }}</strong>
+              <small>{{ memoryText() }}</small>
+            </article>
+            <article class="stat-card">
+              <span>运行状态</span>
+              <strong>{{ systemLoad().cpu_count || 0 }} 核</strong>
+              <small>{{ systemLoad().system_metrics_provider || 'runtime' }} · {{ formatDate(systemLoad().sampled_at) }}</small>
+            </article>
           </div>
 
           <div class="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
@@ -1087,13 +1378,12 @@ function submitModal() {
                 <button class="ghost-button" @click="active = 'orders'">查看全部</button>
               </div>
               <div class="mt-4 grid gap-3">
-                <article v-for="order in orders.slice(0, 4)" :key="order.ID" class="list-row">
+                <article v-for="order in pendingReviewOrders.slice(0, 4)" :key="order.ID" class="list-row">
                   <div>
                     <strong>#{{ order.ID }} · {{ order.User?.Email || '未知用户' }}</strong>
                     <span>{{ order.Plan?.Name || '未关联套餐' }} · {{ money(order.AmountCents) }}</span>
                   </div>
-                  <button v-if="order.Status === 'pending_review'" class="primary-button small" @click="openApproveModal(order)">审核</button>
-                  <span v-else class="status-badge">{{ statusLabel(order.Status) }}</span>
+                  <button class="primary-button small" @click="openApproveModal(order)">审核</button>
                 </article>
               </div>
             </section>
@@ -1107,13 +1397,16 @@ function submitModal() {
                 <button class="ghost-button" @click="openPlanModal()">新增</button>
               </div>
               <div class="mt-4 grid gap-3">
-                <article v-for="plan in plans.slice(0, 4)" :key="plan.ID" class="plan-mini">
+                <article v-for="plan in overviewPlans" :key="plan.ID" class="plan-mini">
                   <span :class="{ off: !plan.Enabled }"></span>
                   <div>
                     <strong>{{ plan.Name }}</strong>
                     <small>{{ rmb(plan.PriceCents) }} · {{ quotaPeriodLabel(plan.QuotaPeriod) }}额度 {{ usd(plan.SettlementUSDCents) }}</small>
                   </div>
                 </article>
+              </div>
+              <div v-if="hasMorePlans" class="mt-4 flex justify-end">
+                <button class="ghost-button" @click="active = 'plans'">更多</button>
               </div>
             </section>
           </div>
@@ -1149,7 +1442,8 @@ function submitModal() {
               <div class="quota-grid">
                 <span><b>{{ usd(plan.SettlementUSDCents) }}</b>{{ quotaPeriodLabel(plan.QuotaPeriod) }}美元额度</span>
                 <span><b>{{ totalUsd(plan) }}</b>预计总额度</span>
-                <span><b>{{ plan.DurationDays }} 天</b>订阅周期</span>
+                <span v-if="plan.QuotaPeriod === 'public'"><b>{{ publicChannelName(plan) }}</b>公共渠道</span>
+                <span v-else><b>{{ plan.DurationDays }} 天</b>订阅周期</span>
               </div>
               <div class="card-actions">
                 <button class="ghost-button" @click="openPlanModal(plan)">编辑</button>
@@ -1286,15 +1580,21 @@ function submitModal() {
             <div>
               <p class="section-kicker">Channels</p>
               <h2>渠道管理</h2>
-              <span>{{ enabledChannels }} 个启用渠道，{{ channels.length }} 个总渠道</span>
+              <span>普通渠道 {{ enabledChannels }}/{{ channels.length }}，公共渠道 {{ enabledPublicChannels }}/{{ publicChannels.length }}</span>
             </div>
             <div class="toolbar-actions">
               <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
-              <button class="primary-button" @click="openChannelModal()">新增渠道</button>
+              <button v-if="channelsTab === 'upstream'" class="primary-button" @click="openChannelModal()">新增渠道</button>
+              <button v-else class="primary-button" @click="openPublicChannelModal()">新增公共渠道</button>
             </div>
           </div>
 
-          <section class="panel-surface overflow-hidden">
+          <div class="settings-tabs">
+            <button :class="{ active: channelsTab === 'upstream' }" @click="channelsTab = 'upstream'">上游渠道</button>
+            <button :class="{ active: channelsTab === 'public' }" @click="channelsTab = 'public'">公共渠道</button>
+          </div>
+
+          <section v-if="channelsTab === 'upstream'" class="panel-surface overflow-hidden">
             <div class="table-wrap">
               <table class="data-table">
                 <thead>
@@ -1321,6 +1621,36 @@ function submitModal() {
               </table>
             </div>
           </section>
+
+          <section v-else class="panel-surface overflow-hidden">
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>渠道名称</th>
+                    <th>API 地址</th>
+                    <th>剩余额度 / 总额度</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="channel in publicChannels" :key="channel.ID">
+                    <td>{{ channel.Name }}</td>
+                    <td>{{ channel.BaseURL }}</td>
+                    <td>{{ channelQuotaText(channel) }}</td>
+                    <td><span class="status-badge" :class="{ muted: !channel.Enabled || channel.RemainingUSDCents <= 0 }">{{ channel.RemainingUSDCents <= 0 ? '售罄' : (channel.Enabled ? '已启用' : '已停用') }}</span></td>
+                    <td>
+                      <div class="table-actions">
+                        <button class="ghost-button small" @click="openPublicChannelModal(channel)">编辑</button>
+                        <button class="danger-button small" @click="confirmDeletePublicChannel(channel)">删除</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
 
         <div v-if="active === 'users'" class="space-y-5">
@@ -1336,7 +1666,42 @@ function submitModal() {
             </div>
           </div>
 
-          <section class="panel-surface overflow-hidden">
+          <div class="settings-tabs">
+            <button type="button" :class="{ active: usersTab === 'users' }" @click="usersTab = 'users'">用户列表</button>
+            <button type="button" :class="{ active: usersTab === 'api-keys' }" @click="usersTab = 'api-keys'">API Key</button>
+          </div>
+
+          <section v-if="usersTab === 'users'" class="panel-surface p-4">
+            <div class="form-grid user-filter-grid">
+              <label class="field">
+                <span>搜索</span>
+                <input v-model="userSearch.keyword" placeholder="用户名 / 邮箱 / ID" />
+              </label>
+              <label class="field">
+                <span>角色</span>
+                <select v-model="userSearch.role">
+                  <option value="">全部</option>
+                  <option v-for="option in roleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>状态</span>
+                <select v-model="userSearch.status">
+                  <option value="">全部</option>
+                  <option v-for="option in statusOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>套餐</span>
+                <select v-model="userSearch.plan">
+                  <option value="">全部</option>
+                  <option v-for="plan in plans" :key="plan.ID" :value="String(plan.ID)">{{ plan.Name }}</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section v-if="usersTab === 'users'" class="panel-surface overflow-hidden">
             <div class="table-wrap">
               <table class="data-table">
                 <thead>
@@ -1350,20 +1715,53 @@ function submitModal() {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="user in users" :key="user.ID">
+                  <tr v-for="user in filteredUsers" :key="user.ID">
                     <td>
                       <strong>{{ user.Email }}</strong>
                       <small>{{ user.Username }}</small>
                     </td>
                     <td>{{ roleLabel(user.Role) }}</td>
                     <td><span class="status-badge">{{ statusLabel(user.Status) }}</span></td>
-                    <td>{{ user.Plan?.Name || '未分配' }}</td>
+                    <td>{{ planLabel(user) }}</td>
                     <td>{{ user.Plan ? `${usd(user.Plan.SettlementUSDCents)} / ${user.Plan.QuotaPeriod === 'daily' ? '日' : '周'}` : '未分配' }}</td>
                     <td>
                       <div class="table-actions">
                         <button class="ghost-button small" @click="openUserModal(user)">编辑</button>
                         <button class="ghost-button small" @click="openUserUpstreamModal(user)">渠道</button>
                         <button class="danger-button small" @click="confirmDeleteUser(user)">删除</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section v-if="usersTab === 'api-keys'" class="panel-surface overflow-hidden">
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>用户</th>
+                    <th>名称</th>
+                    <th>前缀</th>
+                    <th>状态</th>
+                    <th>更新时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="key in filteredApiKeys" :key="key.ID">
+                    <td>{{ key.User?.Email || key.User?.Username || '-' }}</td>
+                    <td>{{ key.Name }}</td>
+                    <td>{{ apiKeyPrefix(key.KeyPrefix) }}</td>
+                    <td><span class="status-badge">{{ apiKeyStatusLabel(key.Status) }}</span></td>
+                    <td>{{ formatDate(key.UpdatedAt || key.CreatedAt) }}</td>
+                    <td>
+                      <div class="table-actions">
+                        <button class="ghost-button small" @click="openApiKeyModal(key)">编辑</button>
+                        <button class="ghost-button small" @click="toggleApiKeyStatus(key)">{{ key.Status === 'active' ? '停用' : '启用' }}</button>
+                        <button class="danger-button small" @click="confirmDeleteApiKey(key)">删除</button>
                       </div>
                     </td>
                   </tr>
@@ -1683,12 +2081,20 @@ function submitModal() {
             <select v-model="planForm.quota_period">
               <option value="daily">日限额套餐</option>
               <option value="weekly">周限额套餐</option>
+              <option value="public">公共渠道</option>
+            </select>
+          </label>
+          <label v-if="planForm.quota_period === 'public'" class="field">
+            <span>绑定公共渠道</span>
+            <select v-model="planForm.public_channel_id" required>
+              <option value="">请选择公共渠道</option>
+              <option v-for="channel in publicChannels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}（剩余 {{ usd(channel.RemainingUSDCents) }}）</option>
             </select>
           </label>
           <label class="field"><span>售价（RMB）</span><input v-model.number="planForm.price_rmb" type="number" min="0.01" step="0.01" required /></label>
-          <label class="field"><span>{{ planForm.quota_period === 'daily' ? '每日美元额度' : '每周美元额度' }}</span><input v-model.number="planForm.period_usd_quota" type="number" min="0" step="0.01" /></label>
-          <label class="field"><span>有效期（天）</span><input v-model.number="planForm.duration_days" type="number" min="1" required /></label>
-          <label class="field"><span>预计总美元额度</span><input :value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></label>
+          <label class="field"><span>{{ planForm.quota_period === 'public' ? '预计总美元额度' : (planForm.quota_period === 'daily' ? '每日美元额度' : '每周美元额度') }}</span><input v-model.number="planForm.period_usd_quota" type="number" min="0" step="0.01" /></label>
+          <label v-if="planForm.quota_period !== 'public'" class="field"><span>有效期（天）</span><input v-model.number="planForm.duration_days" type="number" min="1" required /></label>
+          <label v-if="planForm.quota_period !== 'public'" class="field"><span>预计总美元额度</span><input :value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></label>
           <label class="field md:col-span-2"><span>套餐说明</span><textarea v-model="planForm.description" rows="3"></textarea></label>
           <label class="toggle-line md:col-span-2"><input v-model="planForm.enabled" type="checkbox" />启用套餐</label>
         </div>
@@ -1697,6 +2103,18 @@ function submitModal() {
           <label class="field"><span>渠道名称</span><input v-model="channelForm.name" required placeholder="OpenAI" /></label>
           <label class="field md:col-span-2"><span>API 地址</span><input v-model="channelForm.base_url" required placeholder="https://api.openai.com" /></label>
           <label class="toggle-line md:col-span-2"><input v-model="channelForm.enabled" type="checkbox" />启用渠道</label>
+        </div>
+
+        <div v-if="modal.type === 'create-public-channel' || modal.type === 'edit-public-channel'" class="modal-body form-grid">
+          <label class="field"><span>渠道名称</span><input v-model="publicChannelForm.name" required placeholder="公共 OpenAI" /></label>
+          <label class="field md:col-span-2"><span>API 地址</span><input v-model="publicChannelForm.base_url" required placeholder="https://api.openai.com" /></label>
+          <label class="field md:col-span-2">
+            <span>API Key</span>
+            <input v-model="publicChannelForm.api_key" type="text" :required="!publicChannelForm.id" :placeholder="publicChannelForm.id ? '留空则不修改' : '请输入公共渠道 API Key'" />
+          </label>
+          <label class="field"><span>渠道总额度（美元）</span><input v-model.number="publicChannelForm.total_usd_quota" type="number" min="0" step="0.01" required /></label>
+          <label class="field"><span>剩余美元额度</span><input v-model.number="publicChannelForm.remaining_usd_quota" type="number" min="0" step="0.01" required /></label>
+          <label class="toggle-line md:col-span-2"><input v-model="publicChannelForm.enabled" type="checkbox" />启用公共渠道</label>
         </div>
 
         <div v-if="modal.type === 'create-model' || modal.type === 'edit-model'" class="modal-body form-grid">
@@ -1826,6 +2244,20 @@ function submitModal() {
           <label class="toggle-line md:col-span-2"><input v-model="userForm.email_verified" type="checkbox" />邮箱已验证</label>
         </div>
 
+        <div v-if="modal.type === 'edit-api-key'" class="modal-body form-grid">
+          <label class="field md:col-span-2">
+            <span>名称</span>
+            <input v-model="apiKeyForm.name" required placeholder="默认名称" />
+          </label>
+          <label class="field">
+            <span>状态</span>
+            <select v-model="apiKeyForm.status">
+              <option value="active">启用</option>
+              <option value="disabled">停用</option>
+            </select>
+          </label>
+        </div>
+
         <div v-if="modal.type === 'user-upstream'" class="modal-body form-grid">
           <label class="field"><span>用户</span><input :value="modal.payload?.user?.Email || '-'" readonly /></label>
           <label class="field"><span>状态</span><input :value="statusLabel(modal.payload?.upstream?.Status || '-')" readonly /></label>
@@ -1887,6 +2319,11 @@ function submitModal() {
           <p>删除后审核弹窗不再提供该渠道，请确认没有新的开通流程依赖它。</p>
         </div>
 
+        <div v-if="modal.type === 'delete-public-channel'" class="modal-body confirm-copy">
+          <strong>确定删除「{{ modal.payload?.channel?.Name }}」吗？</strong>
+          <p>删除后绑定到该公共渠道的套餐将无法继续售卖，请先确认没有启用中的公共套餐依赖它。</p>
+        </div>
+
         <div v-if="modal.type === 'delete-model'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.model?.ModelName }}」吗？</strong>
           <p>删除后该模型会使用系统兜底价格计费，建议仅在确认不再使用该模型时删除。</p>
@@ -1905,6 +2342,11 @@ function submitModal() {
         <div v-if="modal.type === 'delete-user'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.user?.Email }}」吗？</strong>
           <p>删除用户会移除账号本身，相关订单和密钥关系请在操作前确认。</p>
+        </div>
+
+        <div v-if="modal.type === 'delete-api-key'" class="modal-body confirm-copy">
+          <strong>确定删除这个 API Key 吗？</strong>
+          <p>{{ modal.payload?.key?.Name || '-' }}，删除后将立即失效。</p>
         </div>
 
         <div class="modal-actions">

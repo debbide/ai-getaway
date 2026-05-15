@@ -104,7 +104,13 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			admin.POST("/upstream-channels", adminController.CreateUpstreamChannel)
 			admin.PUT("/upstream-channels/:id", adminController.UpdateUpstreamChannel)
 			admin.DELETE("/upstream-channels/:id", adminController.DeleteUpstreamChannel)
+			admin.GET("/public-channels", adminController.PublicChannels)
+			admin.POST("/public-channels", adminController.CreatePublicChannel)
+			admin.PUT("/public-channels/:id", adminController.UpdatePublicChannel)
+			admin.DELETE("/public-channels/:id", adminController.DeletePublicChannel)
 			admin.GET("/keys", adminController.APIKeys)
+			admin.PATCH("/keys/:id", apiKeyController.AdminUpdate)
+			admin.DELETE("/keys/:id", apiKeyController.AdminDelete)
 			admin.GET("/stats", adminController.Stats)
 			admin.GET("/logs/ws", logHub.Serve)
 		}

@@ -21,7 +21,9 @@ type QuotaUsage struct {
 
 func PlanQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, now time.Time) QuotaUsage {
 	period := "weekly"
-	if plan != nil && plan.QuotaPeriod == "daily" {
+	if plan != nil && plan.QuotaPeriod == model.QuotaPeriodPublic {
+		period = model.QuotaPeriodPublic
+	} else if plan != nil && plan.QuotaPeriod == "daily" {
 		period = "daily"
 	}
 
@@ -57,7 +59,9 @@ func PlanQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, now time.Time) Q
 
 func PlanTotalQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, start time.Time, end time.Time) QuotaUsage {
 	period := "weekly"
-	if plan != nil && plan.QuotaPeriod == "daily" {
+	if plan != nil && plan.QuotaPeriod == model.QuotaPeriodPublic {
+		period = model.QuotaPeriodPublic
+	} else if plan != nil && plan.QuotaPeriod == "daily" {
 		period = "daily"
 	}
 
@@ -91,6 +95,9 @@ func PlanTotalLimitUSDCents(plan *model.Plan) int64 {
 	if plan == nil {
 		return 0
 	}
+	if plan.QuotaPeriod == model.QuotaPeriodPublic {
+		return plan.SettlementUSDCents
+	}
 	units := plan.DurationDays
 	if units < 1 {
 		units = 1
@@ -105,6 +112,9 @@ func PlanTotalLimitUSDCents(plan *model.Plan) int64 {
 }
 
 func QuotaWindow(period string, now time.Time) (time.Time, time.Time) {
+	if period == model.QuotaPeriodPublic {
+		return time.Time{}, now.AddDate(100, 0, 0)
+	}
 	location := now.Location()
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
 	if period == "daily" {

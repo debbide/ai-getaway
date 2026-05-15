@@ -3,6 +3,7 @@ package controller
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"ai-gateway/model"
@@ -38,9 +39,10 @@ type planRequest struct {
 	BadgeText          string `json:"badge_text"`
 	PlanType           string `json:"plan_type"`
 	QuotaPeriod        string `json:"quota_period"`
+	PublicChannelID    *uint  `json:"public_channel_id"`
 	PriceCents         int64  `json:"price_cents" binding:"required,min=1"`
 	SettlementUSDCents int64  `json:"settlement_usd_cents"`
-	DurationDays       int    `json:"duration_days" binding:"required,min=1"`
+	DurationDays       int    `json:"duration_days"`
 	Description        string `json:"description"`
 	Enabled            bool   `json:"enabled"`
 }
@@ -121,6 +123,15 @@ type upstreamChannelRequest struct {
 	Enabled bool   `json:"enabled"`
 }
 
+type publicChannelRequest struct {
+	Name              string `json:"name" binding:"required,min=2,max=64"`
+	BaseURL           string `json:"base_url" binding:"required,url"`
+	APIKey            string `json:"api_key"`
+	TotalUSDCents     int64  `json:"total_usd_cents" binding:"min=0"`
+	RemainingUSDCents int64  `json:"remaining_usd_cents" binding:"min=0"`
+	Enabled           bool   `json:"enabled"`
+}
+
 type modelPricingRequest struct {
 	ModelName                string  `json:"model" binding:"required,min=1,max=128"`
 	DisplayName              string  `json:"display_name"`
@@ -158,9 +169,41 @@ type adminUpstreamResponse struct {
 	UpdatedAt  time.Time  `json:"UpdatedAt"`
 }
 
+type adminPublicChannelResponse struct {
+	ID                uint       `json:"ID"`
+	Name              string     `json:"Name"`
+	BaseURL           string     `json:"BaseURL"`
+	APIKey            string     `json:"APIKey"`
+	TotalUSDCents     int64      `json:"TotalUSDCents"`
+	RemainingUSDCents int64      `json:"RemainingUSDCents"`
+	Enabled           bool       `json:"Enabled"`
+	LastUsedAt        *time.Time `json:"LastUsedAt"`
+	CreatedAt         time.Time  `json:"CreatedAt"`
+	UpdatedAt         time.Time  `json:"UpdatedAt"`
+}
+
 func (a *AdminController) Users(c *gin.Context) {
+	query := a.db.Preload("Plan")
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("username LIKE ? OR email LIKE ? OR CAST(id AS CHAR) LIKE ?", like, like, like)
+	}
+	if role := strings.TrimSpace(c.Query("role")); role == model.RoleUser || role == model.RoleAdmin {
+		query = query.Where("role = ?", role)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status == model.UserStatusPending || status == model.UserStatusApproved || status == model.UserStatusDisabled {
+		query = query.Where("status = ?", status)
+	}
+	if plan := strings.TrimSpace(c.Query("plan")); plan != "" {
+		if strings.ContainsAny(plan, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+			query = query.Joins("LEFT JOIN plans ON plans.id = users.plan_id").Where("plans.name LIKE ?", "%"+plan+"%")
+		} else {
+			query = query.Where("plan_id = ?", plan)
+		}
+	}
+
 	var users []model.User
-	a.db.Preload("Plan").Order("id desc").Find(&users)
+	query.Order("id desc").Find(&users)
 
 	userIDs := make([]uint, 0, len(users))
 	for _, user := range users {
@@ -393,13 +436,17 @@ func (a *AdminController) Orders(c *gin.Context) {
 
 func (a *AdminController) Plans(c *gin.Context) {
 	var plans []model.Plan
-	a.db.Order("price_cents asc").Find(&plans)
+	a.db.Preload("PublicChannel").Order("price_cents asc").Find(&plans)
 	response.OK(c, plans)
 }
 
 func (a *AdminController) CreatePlan(c *gin.Context) {
 	var req planRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	if err := a.validatePlanRequest(req); err != nil {
 		response.Error(c, 400, err.Error())
 		return
 	}
@@ -410,9 +457,10 @@ func (a *AdminController) CreatePlan(c *gin.Context) {
 		BadgeText:          req.BadgeText,
 		PlanType:           fallbackPlanType(req.PlanType),
 		QuotaPeriod:        fallbackQuotaPeriod(req.QuotaPeriod),
+		PublicChannelID:    normalizedPublicChannelID(req),
 		PriceCents:         req.PriceCents,
 		SettlementUSDCents: req.SettlementUSDCents,
-		DurationDays:       req.DurationDays,
+		DurationDays:       fallbackDurationDays(req),
 		Description:        req.Description,
 		Enabled:            req.Enabled,
 	}
@@ -429,15 +477,20 @@ func (a *AdminController) UpdatePlan(c *gin.Context) {
 		response.Error(c, 400, err.Error())
 		return
 	}
+	if err := a.validatePlanRequest(req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
 	updates := map[string]interface{}{
 		"name":                 req.Name,
 		"code":                 req.Code,
 		"badge_text":           req.BadgeText,
 		"plan_type":            fallbackPlanType(req.PlanType),
 		"quota_period":         fallbackQuotaPeriod(req.QuotaPeriod),
+		"public_channel_id":    normalizedPublicChannelID(req),
 		"price_cents":          req.PriceCents,
 		"settlement_usd_cents": req.SettlementUSDCents,
-		"duration_days":        req.DurationDays,
+		"duration_days":        fallbackDurationDays(req),
 		"description":          req.Description,
 		"enabled":              req.Enabled,
 	}
@@ -704,17 +757,65 @@ func sameUintPointer(left, right *uint) bool {
 }
 
 func fallbackPlanType(value string) string {
-	if value == "" {
-		return "subscription"
+	if value == model.PlanTypePublic {
+		return model.PlanTypePublic
 	}
-	return value
+	return model.PlanTypeSubscription
 }
 
 func fallbackQuotaPeriod(value string) string {
-	if value == "daily" {
-		return "daily"
+	switch value {
+	case model.QuotaPeriodDaily:
+		return model.QuotaPeriodDaily
+	case model.QuotaPeriodPublic:
+		return model.QuotaPeriodPublic
+	default:
+		return model.QuotaPeriodWeekly
 	}
-	return "weekly"
+}
+
+func fallbackDurationDays(req planRequest) int {
+	if fallbackPlanType(req.PlanType) == model.PlanTypePublic {
+		return 1
+	}
+	if req.DurationDays < 1 {
+		return 1
+	}
+	return req.DurationDays
+}
+
+func normalizedPublicChannelID(req planRequest) *uint {
+	if fallbackPlanType(req.PlanType) != model.PlanTypePublic || req.PublicChannelID == nil || *req.PublicChannelID == 0 {
+		return nil
+	}
+	return req.PublicChannelID
+}
+
+func (a *AdminController) validatePlanRequest(req planRequest) error {
+	planType := fallbackPlanType(req.PlanType)
+	if req.SettlementUSDCents <= 0 {
+		return errors.New("settlement usd quota required")
+	}
+	if planType == model.PlanTypePublic {
+		if fallbackQuotaPeriod(req.QuotaPeriod) != model.QuotaPeriodPublic {
+			return errors.New("public plan quota period required")
+		}
+		if req.PublicChannelID == nil || *req.PublicChannelID == 0 {
+			return errors.New("public channel required")
+		}
+		var channel model.PublicChannel
+		if err := a.db.Where("id = ? AND enabled = ?", *req.PublicChannelID, true).First(&channel).Error; err != nil {
+			return errors.New("public channel not found")
+		}
+		return nil
+	}
+	if fallbackQuotaPeriod(req.QuotaPeriod) == model.QuotaPeriodPublic {
+		return errors.New("public quota period only supports public plan")
+	}
+	if req.DurationDays < 1 {
+		return errors.New("duration days required")
+	}
+	return nil
 }
 
 func fallbackProvider(value string) string {
@@ -760,10 +861,35 @@ func mapAdminUpstream(upstream model.UpstreamAccount) *adminUpstreamResponse {
 	}
 }
 
+func mapAdminPublicChannel(channel model.PublicChannel) adminPublicChannelResponse {
+	return adminPublicChannelResponse{
+		ID:                channel.ID,
+		Name:              channel.Name,
+		BaseURL:           channel.BaseURL,
+		APIKey:            channel.APIKey,
+		TotalUSDCents:     channel.TotalUSDCents,
+		RemainingUSDCents: channel.RemainingUSDCents,
+		Enabled:           channel.Enabled,
+		LastUsedAt:        channel.LastUsedAt,
+		CreatedAt:         channel.CreatedAt,
+		UpdatedAt:         channel.UpdatedAt,
+	}
+}
+
 func (a *AdminController) UpstreamChannels(c *gin.Context) {
 	var channels []model.UpstreamChannel
 	a.db.Order("id desc").Find(&channels)
 	response.OK(c, channels)
+}
+
+func (a *AdminController) PublicChannels(c *gin.Context) {
+	var channels []model.PublicChannel
+	a.db.Order("id desc").Find(&channels)
+	items := make([]adminPublicChannelResponse, 0, len(channels))
+	for _, channel := range channels {
+		items = append(items, mapAdminPublicChannel(channel))
+	}
+	response.OK(c, items)
 }
 
 func (a *AdminController) ModelPricings(c *gin.Context) {
@@ -892,6 +1018,75 @@ func (a *AdminController) DeleteUpstreamChannel(c *gin.Context) {
 	response.OK(c, nil)
 }
 
+func (a *AdminController) CreatePublicChannel(c *gin.Context) {
+	var req publicChannelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	if req.APIKey == "" {
+		response.Error(c, 400, "api key required")
+		return
+	}
+	if req.RemainingUSDCents <= 0 {
+		req.RemainingUSDCents = req.TotalUSDCents
+	}
+	if req.RemainingUSDCents > req.TotalUSDCents {
+		response.Error(c, 400, "remaining quota cannot exceed total quota")
+		return
+	}
+
+	channel := model.PublicChannel{
+		Name:              req.Name,
+		BaseURL:           req.BaseURL,
+		APIKey:            req.APIKey,
+		TotalUSDCents:     req.TotalUSDCents,
+		RemainingUSDCents: req.RemainingUSDCents,
+		Enabled:           req.Enabled,
+	}
+	if err := a.db.Create(&channel).Error; err != nil {
+		response.Error(c, 500, "failed to create public channel")
+		return
+	}
+	response.Created(c, mapAdminPublicChannel(channel))
+}
+
+func (a *AdminController) UpdatePublicChannel(c *gin.Context) {
+	var req publicChannelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	if req.RemainingUSDCents > req.TotalUSDCents {
+		response.Error(c, 400, "remaining quota cannot exceed total quota")
+		return
+	}
+
+	updates := map[string]interface{}{
+		"name":                req.Name,
+		"base_url":            req.BaseURL,
+		"total_usd_cents":     req.TotalUSDCents,
+		"remaining_usd_cents": req.RemainingUSDCents,
+		"enabled":             req.Enabled,
+	}
+	if req.APIKey != "" {
+		updates["api_key"] = req.APIKey
+	}
+	if err := a.db.Model(&model.PublicChannel{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
+		response.Error(c, 500, "failed to update public channel")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) DeletePublicChannel(c *gin.Context) {
+	if err := a.db.Delete(&model.PublicChannel{}, c.Param("id")).Error; err != nil {
+		response.Error(c, 500, "failed to delete public channel")
+		return
+	}
+	response.OK(c, nil)
+}
+
 func (a *AdminController) APIKeys(c *gin.Context) {
 	var keys []model.APIKey
 	a.db.Preload("User").Order("id desc").Find(&keys)
@@ -905,9 +1100,11 @@ func (a *AdminController) Stats(c *gin.Context) {
 	a.db.Model(&model.APIKey{}).Count(&apiKeys)
 	a.db.Model(&model.APILog{}).Count(&calls)
 	response.OK(c, gin.H{
-		"users":    users,
-		"orders":   orders,
-		"api_keys": apiKeys,
-		"calls":    calls,
+		"users":                  users,
+		"orders":                 orders,
+		"api_keys":               apiKeys,
+		"calls":                  calls,
+		"active_api_connections": service.ActiveAPIConnections(),
+		"system_load":            service.CurrentSystemLoad(),
 	})
 }

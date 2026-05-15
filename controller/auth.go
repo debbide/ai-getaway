@@ -255,6 +255,8 @@ func publicUser(user model.User) gin.H {
 		body["plan"] = gin.H{
 			"id":                   user.Plan.ID,
 			"name":                 user.Plan.Name,
+			"badge_text":           user.Plan.BadgeText,
+			"plan_type":            user.Plan.PlanType,
 			"settlement_usd_cents": user.Plan.SettlementUSDCents,
 			"quota_period":         user.Plan.QuotaPeriod,
 			"duration_days":        user.Plan.DurationDays,

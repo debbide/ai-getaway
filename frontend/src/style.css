@@ -847,6 +847,28 @@ button:disabled {
   background: #a96347;
 }
 
+.pricing-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin: -24px auto 38px;
+}
+
+.pricing-tabs button {
+  border: 1px solid rgba(213, 121, 82, 0.38);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(247, 248, 251, 0.76);
+  padding: 11px 18px;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.pricing-tabs button.active {
+  background: #d57952;
+  color: white;
+}
+
 .subscription-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -877,6 +899,10 @@ button:disabled {
   box-shadow:
     0 34px 96px rgba(0, 0, 0, 0.44),
     0 0 0 6px rgba(15, 22, 38, 0.7);
+}
+
+.subscription-grid .subscription-card.soldout {
+  opacity: 0.62;
 }
 
 .plan-ribbon {
@@ -971,6 +997,11 @@ button:disabled {
   font-size: 24px;
   font-weight: 950;
   box-shadow: 0 18px 42px rgba(206, 111, 74, 0.28);
+}
+
+.subscription-action:disabled {
+  background: #586174;
+  box-shadow: none;
 }
 
 .subscription-grid .subscription-card small {
@@ -3380,10 +3411,27 @@ button:disabled {
 }
 
 .select-plan-card {
+  position: relative;
   display: grid;
   gap: 12px;
   cursor: pointer;
   padding: 16px;
+}
+
+.plan-tabs {
+  width: fit-content;
+}
+
+.plan-ribbon-inline {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border-radius: 999px;
+  background: rgba(215, 126, 88, 0.16);
+  color: #c56543;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 950;
 }
 
 .select-plan-card.active {

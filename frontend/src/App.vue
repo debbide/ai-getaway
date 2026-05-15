@@ -41,6 +41,7 @@ const passwordModalOpen = ref(false)
 const passwordSaving = ref(false)
 const passwordError = ref('')
 const passwordNotice = ref('')
+const pricingTab = ref('subscription')
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
 
 const isConsolePage = computed(() => currentPath.value === '/console')
@@ -53,6 +54,9 @@ const navItems = computed(() => parseNavigation(publicSettings.value.navigation_
 const activeThemeLabel = computed(() => ({ light: '浅色', dark: '深色', system: '系统' })[themeMode.value] || '深色')
 const accountEmail = computed(() => auth.user?.email || '')
 const accountName = computed(() => auth.user?.username || accountEmail.value.split('@')[0] || '用户')
+const subscriptionPlans = computed(() => plans.value.filter((plan) => plan.QuotaPeriod !== 'public' && plan.PlanType !== 'public'))
+const publicPlans = computed(() => plans.value.filter((plan) => plan.QuotaPeriod === 'public' || plan.PlanType === 'public'))
+const visiblePricingPlans = computed(() => (pricingTab.value === 'public' ? publicPlans.value : subscriptionPlans.value))
 const avatarText = computed(() => {
   const source = accountEmail.value || accountName.value || 'U'
   return source.slice(0, 2).toUpperCase()
@@ -255,18 +259,29 @@ function periodUsd(plan) {
 }
 
 function quotaPeriodLabel(plan) {
+  if (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') return '公共套餐'
   return plan.QuotaPeriod === 'daily' ? '日限额度' : '周限额度'
 }
 
 function totalUsd(plan) {
+  if (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') return ((plan.SettlementUSDCents || 0) / 100).toFixed(0)
   const units = plan.QuotaPeriod === 'daily' ? (plan.DurationDays || 1) : Math.max(1, Math.round((plan.DurationDays || 30) / 7))
   return (((plan.SettlementUSDCents || 0) / 100) * units).toFixed(0)
 }
 
 function planPeriod(plan) {
+  if (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') return '次'
   if ((plan.DurationDays || 0) <= 1) return '天'
   if ((plan.DurationDays || 0) >= 28) return '月'
   return `${plan.DurationDays} 天`
+}
+
+function planSoldOut(plan) {
+  return (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') && Number(plan.PublicChannel?.RemainingUSDCents || 0) < Number(plan.SettlementUSDCents || 0)
+}
+
+function publicRemainingUsd(plan) {
+  return ((plan.PublicChannel?.RemainingUSDCents || 0) / 100).toFixed(0)
 }
 
 function planBadge(index) {
@@ -416,12 +431,16 @@ function planSubtitle(index) {
         </div>
 
         <p v-if="error" class="alert alert-danger mt-5">{{ error }}</p>
+        <div class="pricing-tabs">
+          <button :class="{ active: pricingTab === 'subscription' }" @click="pricingTab = 'subscription'">订阅套餐</button>
+          <button :class="{ active: pricingTab === 'public' }" @click="pricingTab = 'public'">活动套餐</button>
+        </div>
         <div class="subscription-grid">
           <article
-            v-for="(plan, index) in plans"
+            v-for="(plan, index) in visiblePricingPlans"
             :key="plan.ID"
             class="subscription-card"
-            :class="{ featured: index === 1 }"
+            :class="{ featured: index === 1, soldout: planSoldOut(plan) }"
           >
             <div class="plan-ribbon">{{ plan.BadgeText || planBadge(index) }}</div>
             <h2>{{ plan.Name }}</h2>
@@ -431,12 +450,13 @@ function planSubtitle(index) {
               <span>/{{ planPeriod(plan) }}</span>
             </div>
             <div class="subscription-facts">
-              <div><span class="fact-icon">▣</span><span>{{ quotaPeriodLabel(plan) }}：${{ periodUsd(plan) }}</span></div>
-              <div><span class="fact-icon">□</span><span>套餐时长：{{ plan.DurationDays }} 天</span></div>
+              <div><span class="fact-icon">▣</span><span>{{ quotaPeriodLabel(plan) }}：${{ plan.QuotaPeriod === 'public' ? totalUsd(plan) : periodUsd(plan) }}</span></div>
+              <div v-if="plan.QuotaPeriod === 'public'"><span class="fact-icon">□</span><span>公共渠道剩余：${{ publicRemainingUsd(plan) }}</span></div>
+              <div v-else><span class="fact-icon">□</span><span>套餐时长：{{ plan.DurationDays }} 天</span></div>
               <div><span class="fact-icon">↗</span><span>总额度：约${{ totalUsd(plan) }}</span></div>
             </div>
-            <button class="subscription-action" @click="afterPrimaryAction">
-              {{ auth.loggedIn ? '立即续费' : '立即订阅' }}
+            <button class="subscription-action" :disabled="planSoldOut(plan)" @click="afterPrimaryAction">
+              {{ planSoldOut(plan) ? '售罄' : (auth.loggedIn ? '立即续费' : '立即订阅') }}
             </button>
             <small>安全支付 · 透明价格</small>
           </article>

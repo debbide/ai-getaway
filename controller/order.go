@@ -35,7 +35,7 @@ type createOrderRequest struct {
 func (o *OrderController) Create(c *gin.Context) {
 	ctxUser := c.MustGet("user").(model.User)
 	var user model.User
-	if err := o.db.First(&user, ctxUser.ID).Error; err != nil {
+	if err := o.db.Preload("Plan").First(&user, ctxUser.ID).Error; err != nil {
 		response.Error(c, 401, "user not found")
 		return
 	}
@@ -51,8 +51,12 @@ func (o *OrderController) Create(c *gin.Context) {
 	}
 
 	var plan model.Plan
-	if err := o.db.Where("id = ? AND enabled = ?", req.PlanID, true).First(&plan).Error; err != nil {
+	if err := o.db.Preload("PublicChannel").Where("id = ? AND enabled = ?", req.PlanID, true).First(&plan).Error; err != nil {
 		response.Error(c, 404, "plan not found")
+		return
+	}
+	if plan.PlanType == model.PlanTypePublic && (plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents) {
+		response.Error(c, 409, "public plan sold out")
 		return
 	}
 
@@ -125,11 +129,11 @@ func (o *OrderController) Pay(c *gin.Context) {
 func (o *OrderController) MarkPaid(c *gin.Context) {
 	user := c.MustGet("user").(model.User)
 	var order model.Order
-	if err := o.db.Where("id = ? AND user_id = ?", c.Param("id"), user.ID).First(&order).Error; err != nil {
+	if err := o.db.Preload("Plan").Where("id = ? AND user_id = ?", c.Param("id"), user.ID).First(&order).Error; err != nil {
 		response.Error(c, 404, "order not found")
 		return
 	}
-	if order.Status == model.OrderStatusPendingReview {
+	if order.Status == model.OrderStatusPendingReview || order.Status == model.OrderStatusApproved {
 		response.OK(c, gin.H{"order": order})
 		return
 	}
@@ -153,11 +157,10 @@ func (o *OrderController) MarkPaid(c *gin.Context) {
 		return
 	}
 
-	if err := o.db.Model(&order).Update("status", model.OrderStatusPendingReview).Error; err != nil {
+	if err := o.completePaidOrder(&order); err != nil {
 		response.Error(c, 500, "failed to update order")
 		return
 	}
-	order.Status = model.OrderStatusPendingReview
 	response.OK(c, gin.H{"order": order})
 }
 
@@ -191,14 +194,70 @@ func (o *OrderController) EpayNotify(c *gin.Context) {
 	}
 
 	var order model.Order
-	if err := o.db.Where("payment_ref = ?", params["out_trade_no"]).First(&order).Error; err != nil {
+	if err := o.db.Preload("Plan").Where("payment_ref = ?", params["out_trade_no"]).First(&order).Error; err != nil {
 		c.String(404, "fail")
 		return
 	}
 	if order.Status == model.OrderStatusPendingPayment {
-		o.db.Model(&order).Update("status", model.OrderStatusPendingReview)
+		if err := o.completePaidOrder(&order); err != nil {
+			c.String(500, "fail")
+			return
+		}
 	}
 	c.String(200, "success")
+}
+
+func (o *OrderController) completePaidOrder(order *model.Order) error {
+	if order.Plan.ID == 0 {
+		if err := o.db.Preload("Plan").First(order, order.ID).Error; err != nil {
+			return err
+		}
+	}
+	if order.Plan.PlanType != model.PlanTypePublic {
+		if err := o.db.Model(order).Update("status", model.OrderStatusPendingReview).Error; err != nil {
+			return err
+		}
+		order.Status = model.OrderStatusPendingReview
+		return nil
+	}
+
+	now := time.Now()
+	expiresAt := now.AddDate(100, 0, 0)
+	err := o.db.Transaction(func(tx *gorm.DB) error {
+		var plan model.Plan
+		if err := tx.Preload("PublicChannel").First(&plan, order.PlanID).Error; err != nil {
+			return err
+		}
+		if plan.PublicChannelID == nil || plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents {
+			return fmt.Errorf("public plan sold out")
+		}
+		result := tx.Model(&model.PublicChannel{}).
+			Where("id = ? AND remaining_usd_cents >= ?", *plan.PublicChannelID, plan.SettlementUSDCents).
+			Update("remaining_usd_cents", gorm.Expr("remaining_usd_cents - ?", plan.SettlementUSDCents))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("public plan sold out")
+		}
+		if err := tx.Model(order).Updates(map[string]interface{}{
+			"status":      model.OrderStatusApproved,
+			"approved_at": &now,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
+			"status":     model.UserStatusApproved,
+			"plan_id":    plan.ID,
+			"expires_at": &expiresAt,
+		}).Error
+	})
+	if err != nil {
+		return err
+	}
+	order.Status = model.OrderStatusApproved
+	order.ApprovedAt = &now
+	return nil
 }
 
 func buildEpayURL(c *gin.Context, setting model.SystemSetting, order model.Order) (string, error) {

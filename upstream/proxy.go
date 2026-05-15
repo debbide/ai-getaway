@@ -21,10 +21,23 @@ import (
 
 func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		apiKey := c.MustGet("api_key").(model.APIKey)
-		upstreamAccount := c.MustGet("upstream").(model.UpstreamAccount)
+		service.AddActiveAPIConnection(1)
+		defer service.AddActiveAPIConnection(-1)
 
-		target, err := url.Parse(strings.TrimRight(upstreamAccount.BaseURL, "/"))
+		apiKey := c.MustGet("api_key").(model.APIKey)
+		upstreamBaseURL := ""
+		upstreamAPIKey := ""
+		if publicChannelValue, ok := c.Get("public_channel"); ok {
+			publicChannel := publicChannelValue.(model.PublicChannel)
+			upstreamBaseURL = publicChannel.BaseURL
+			upstreamAPIKey = publicChannel.APIKey
+		} else {
+			upstreamAccount := c.MustGet("upstream").(model.UpstreamAccount)
+			upstreamBaseURL = upstreamAccount.BaseURL
+			upstreamAPIKey = upstreamAccount.APIKey
+		}
+
+		target, err := url.Parse(strings.TrimRight(upstreamBaseURL, "/"))
 		if err != nil {
 			c.JSON(500, gin.H{"error": "invalid upstream base url"})
 			return
@@ -39,7 +52,7 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 			req.URL.Path = c.Request.URL.Path
 			req.URL.RawQuery = c.Request.URL.RawQuery
 			req.Host = target.Host
-			req.Header.Set("Authorization", "Bearer "+upstreamAccount.APIKey)
+			req.Header.Set("Authorization", "Bearer "+upstreamAPIKey)
 			req.Header.Set("X-Forwarded-User-ID", intToString(apiKey.UserID))
 			req.Header.Del("Accept-Encoding")
 		}
