@@ -406,6 +406,7 @@ func (a *AdminController) DeleteUser(c *gin.Context) {
 }
 
 func (a *AdminController) Orders(c *gin.Context) {
+	expirePendingPaymentOrders(a.db)
 	var orders []model.Order
 	a.db.Preload("User").Preload("Plan").Order("id desc").Find(&orders)
 
@@ -577,7 +578,34 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 		return
 	}
 
+	go service.SendOrderApprovedUserNotification(a.db, order.ID, req.AdminNote)
 	response.OK(c, gin.H{"status": model.OrderStatusApproved})
+}
+
+func (a *AdminController) CompleteOrderPayment(c *gin.Context) {
+	admin := c.MustGet("user").(model.User)
+	var order model.Order
+	if err := a.db.Preload("Plan").First(&order, c.Param("id")).Error; err != nil {
+		response.Error(c, 404, "order not found")
+		return
+	}
+	if expirePendingPaymentOrder(a.db, &order) {
+		response.Error(c, 409, "order payment timeout")
+		return
+	}
+	if order.Status != model.OrderStatusPendingPayment {
+		response.Error(c, 409, "order not pending payment")
+		return
+	}
+	if err := completePaidOrder(a.db, &order, &admin.ID); err != nil {
+		if err.Error() == "public plan sold out" {
+			response.Error(c, 409, err.Error())
+			return
+		}
+		response.Error(c, 500, "failed to complete payment")
+		return
+	}
+	response.OK(c, gin.H{"order": order})
 }
 
 func (a *AdminController) RejectOrder(c *gin.Context) {

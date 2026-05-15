@@ -11,6 +11,7 @@ const menu = [
   { key: 'users', label: '用户管理', hint: '账号与权限' },
   { key: 'announcements', label: '公告管理', hint: '控制台公告' },
   { key: 'docs', label: '配置文档', hint: 'Markdown 内容' },
+  { key: 'emailTemplates', label: '邮件模板', hint: '通知文案' },
   { key: 'navigation', label: '导航菜单', hint: '顶部菜单' },
   { key: 'settings', label: '系统设置', hint: '邮件与支付' }
 ]
@@ -38,7 +39,8 @@ const orderStatusMap = {
   pending_payment: '待支付',
   pending_review: '待审核',
   approved: '已通过',
-  rejected: '已拒绝'
+  rejected: '已拒绝',
+  payment_timeout: '支付超时'
 }
 
 const active = ref('overview')
@@ -56,6 +58,8 @@ const channels = ref([])
 const publicChannels = ref([])
 const docs = ref([])
 const announcements = ref([])
+const emailTemplates = ref([])
+const emailTemplateVariables = ref([])
 const error = ref('')
 const notice = ref('')
 const navDraft = ref([])
@@ -65,7 +69,7 @@ const smtpTesting = ref(false)
 let userSearchTimer = null
 let overviewMetricsTimer = null
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null })
-const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountCents: 0, status: '' })
+const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountRmb: 0, status: '', planType: '', quotaPeriod: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
 const planForm = reactive(emptyPlan())
 const modelForm = reactive(emptyModel())
@@ -75,6 +79,7 @@ const userForm = reactive(emptyUser())
 const apiKeyForm = reactive(emptyApiKey())
 const docForm = reactive(emptyDoc())
 const announcementForm = reactive(emptyAnnouncement())
+const emailTemplateForm = reactive(emptyEmailTemplate())
 const userSearch = reactive({ keyword: '', role: '', status: '', plan: '' })
 const settings = reactive({
   site_title: '',
@@ -91,6 +96,10 @@ const settings = reactive({
   smtp_from_email: '',
   smtp_from_name: '',
   smtp_use_tls: true,
+  order_payment_admin_email_enabled: false,
+  order_approved_user_email_enabled: false,
+  subscription_expire_email_enabled: false,
+  subscription_expire_remind_days: 3,
   epay_pid: '',
   epay_key: '',
   epay_notify_url: '',
@@ -109,6 +118,7 @@ const enabledChannels = computed(() => channels.value.filter((channel) => channe
 const enabledPublicChannels = computed(() => publicChannels.value.filter((channel) => channel.Enabled).length)
 const enabledDocs = computed(() => docs.value.filter((doc) => doc.Enabled).length)
 const enabledAnnouncements = computed(() => announcements.value.filter((item) => item.Enabled).length)
+const enabledEmailTemplates = computed(() => emailTemplates.value.filter((item) => item.Enabled).length)
 const pendingReviewOrders = computed(() => orders.value.filter((order) => order.Status === 'pending_review'))
 const overviewPlans = computed(() => plans.value.slice(0, 4))
 const hasMorePlans = computed(() => plans.value.length > 4)
@@ -267,6 +277,17 @@ function emptyAnnouncement() {
   }
 }
 
+function emptyEmailTemplate() {
+  return {
+    type: '',
+    name: '',
+    description: '',
+    subject: '',
+    body: '',
+    enabled: true
+  }
+}
+
 async function loadAll() {
   loading.value = true
   error.value = ''
@@ -279,7 +300,7 @@ async function loadAll() {
         plan: userSearch.plan || undefined
       }
     }
-    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, publicChannelsRes, keysRes, docsRes, announcementsRes, settingsRes] = await Promise.all([
+    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, publicChannelsRes, keysRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = await Promise.all([
       api.get('/admin/stats'),
       api.get('/admin/orders'),
       api.get('/admin/users', userParams),
@@ -290,6 +311,7 @@ async function loadAll() {
       api.get('/admin/keys'),
       api.get('/admin/docs'),
       api.get('/admin/announcements'),
+      api.get('/admin/email-templates'),
       api.get('/admin/settings')
     ])
     stats.value = statsRes.data || {}
@@ -303,6 +325,8 @@ async function loadAll() {
     apiKeys.value = keysRes.data || []
     docs.value = docsRes.data || []
     announcements.value = announcementsRes.data || []
+    emailTemplates.value = emailTemplatesRes.data?.items || []
+    emailTemplateVariables.value = emailTemplatesRes.data?.variables || []
     Object.assign(settings, settingsRes.data, { smtp_password: '', epay_key: '' })
     setNavigationDraft(settings.navigation_items)
     setAPIEndpointDraft(settings.api_endpoints)
@@ -502,6 +526,18 @@ function openAnnouncementModal(item = null) {
   showModal(item ? 'edit-announcement' : 'create-announcement', item ? '编辑公告' : '发布公告', item ? '保存修改' : '发布公告')
 }
 
+function openEmailTemplateModal(item) {
+  Object.assign(emailTemplateForm, emptyEmailTemplate(), {
+    type: item.Type,
+    name: item.Name,
+    description: item.Description || '',
+    subject: item.Subject || '',
+    body: item.Body || '',
+    enabled: Boolean(item.Enabled)
+  })
+  showModal('edit-email-template', `编辑邮件模板：${item.Name}`, '保存模板')
+}
+
 async function submitAnnouncement() {
   const payload = normalizeAnnouncement(announcementForm)
   await runAction(async () => {
@@ -512,6 +548,20 @@ async function submitAnnouncement() {
       await api.post('/admin/announcements', payload)
       notice.value = '公告已发布'
     }
+  })
+}
+
+async function submitEmailTemplate() {
+  const payload = {
+    name: emailTemplateForm.name,
+    description: emailTemplateForm.description,
+    subject: emailTemplateForm.subject,
+    body: emailTemplateForm.body,
+    enabled: emailTemplateForm.enabled
+  }
+  await runAction(async () => {
+    await api.put(`/admin/email-templates/${emailTemplateForm.type}`, payload)
+    notice.value = '邮件模板已保存'
   })
 }
 
@@ -709,6 +759,7 @@ async function deleteApiKey() {
 
 function openApproveModal(order) {
   const channel = channels.value.find((item) => item.Enabled) || null
+  const isPublic = isPublicOrder(order)
   Object.assign(approve, {
     orderId: String(order.ID),
     channelId: channel?.ID || '',
@@ -719,15 +770,18 @@ function openApproveModal(order) {
     apiKey: '',
     adminNote: '',
     planId: order.PlanID || order.Plan?.ID || '',
-    amountCents: order.AmountCents || 0,
-    status: order.Status
+    amountRmb: centsToAmount(order.AmountCents),
+    status: order.Status,
+    planType: order.Plan?.PlanType || '',
+    quotaPeriod: order.Plan?.QuotaPeriod || '',
   })
-  showModal('approve-order', `审核订单 #${order.ID}`, '通过并开通')
+  showModal('approve-order', `审核订单 #${order.ID}`, isPublic ? '确认' : '通过并开通')
 }
 
 function openEditOrderModal(order) {
   const upstream = order.Upstream || {}
   const channel = channels.value.find((item) => item.Name === upstream.Channel) || null
+  const isPublic = isPublicOrder(order)
   Object.assign(approve, {
     orderId: String(order.ID),
     channelId: channel?.ID || '',
@@ -738,8 +792,10 @@ function openEditOrderModal(order) {
     apiKey: upstream.APIKey || '',
     adminNote: order.AdminNote || '',
     planId: order.PlanID || order.Plan?.ID || '',
-    amountCents: order.AmountCents || 0,
-    status: order.Status
+    amountRmb: centsToAmount(order.AmountCents),
+    status: order.Status,
+    planType: order.Plan?.PlanType || '',
+    quotaPeriod: order.Plan?.QuotaPeriod || '',
   })
   showModal('edit-order', `编辑订单 #${order.ID}`, '保存修改')
 }
@@ -754,6 +810,12 @@ function selectedApproveChannel() {
 }
 
 function syncApproveChannel() {
+  if (approveOrderUsesPublicChannel()) {
+    approve.channel = ''
+    approve.baseUrl = ''
+    approve.channelId = ''
+    return
+  }
   const channel = selectedApproveChannel()
   approve.channel = channel?.Name || ''
   approve.baseUrl = channel?.BaseURL || ''
@@ -761,6 +823,10 @@ function syncApproveChannel() {
 
 async function approveOrder() {
   syncApproveChannel()
+  if (approveOrderUsesPublicChannel()) {
+    closeModal()
+    return
+  }
   await runAction(async () => {
     await api.post(`/admin/orders/${approve.orderId}/approve`, {
       channel_id: Number(approve.channelId) || undefined,
@@ -778,14 +844,18 @@ async function approveOrder() {
 async function editOrder() {
   syncApproveChannel()
   const payload = {
-    channel_id: Number(approve.channelId) || undefined,
-    channel: approve.channel,
-    base_url: approve.baseUrl,
-    username: approve.username,
-    password: approve.password,
-    api_key: approve.apiKey,
     admin_note: approve.adminNote,
-    amount_cents: Number(approve.amountCents) || undefined
+    amount_cents: amountToCents(approve.amountRmb)
+  }
+  if (!approveOrderUsesPublicChannel()) {
+    Object.assign(payload, {
+      channel_id: Number(approve.channelId) || undefined,
+      channel: approve.channel,
+      base_url: approve.baseUrl,
+      username: approve.username,
+      password: approve.password,
+      api_key: approve.apiKey
+    })
   }
   if (approve.status !== 'approved') {
     payload.plan_id = Number(approve.planId) || undefined
@@ -794,6 +864,13 @@ async function editOrder() {
     await api.put(`/admin/orders/${approve.orderId}`, payload)
     notice.value = '订单已保存'
   })
+}
+
+async function completeOrderPayment(order) {
+  await runAction(async () => {
+    await api.post(`/admin/orders/${order.ID}/complete-payment`)
+    notice.value = '订单已手动确认支付'
+  }, false)
 }
 
 async function rejectOrder() {
@@ -1170,6 +1247,18 @@ function quotaPeriodLabel(period) {
   return period === 'daily' ? '每日' : '每周'
 }
 
+function isPublicPlan(plan) {
+  return plan?.PlanType === 'public' || plan?.QuotaPeriod === 'public'
+}
+
+function isPublicOrder(order) {
+  return isPublicPlan(order?.Plan)
+}
+
+function approveOrderUsesPublicChannel() {
+  return approve.planType === 'public' || approve.quotaPeriod === 'public'
+}
+
 function planWeeks(plan) {
   return Math.max(1, Math.round((plan.DurationDays || 30) / 7))
 }
@@ -1271,6 +1360,7 @@ function submitModal() {
     'create-announcement': submitAnnouncement,
     'edit-announcement': submitAnnouncement,
     'delete-announcement': deleteAnnouncement,
+    'edit-email-template': submitEmailTemplate,
     'create-user': submitUser,
     'edit-user': submitUser,
     'edit-api-key': submitApiKey,
@@ -1482,12 +1572,13 @@ function submitModal() {
                     <td>#{{ order.ID }}</td>
                     <td>{{ order.User?.Email || '-' }}</td>
                     <td>{{ order.Plan?.Name || '-' }}</td>
-                    <td>{{ order.Upstream?.Channel || '-' }}</td>
+                    <td>{{ isPublicOrder(order) ? (order.Plan?.PublicChannel?.Name || '公共渠道') : (order.Upstream?.Channel || '-') }}</td>
                     <td>{{ money(order.AmountCents) }}</td>
                     <td><span class="status-badge">{{ statusLabel(order.Status) }}</span></td>
                     <td>
                       <div class="table-actions">
                         <button class="ghost-button small" @click="openEditOrderModal(order)">编辑</button>
+                        <button class="primary-button small" :disabled="order.Status !== 'pending_payment'" @click="completeOrderPayment(order)">完成支付</button>
                         <button class="ghost-button small" :disabled="order.Status !== 'pending_review'" @click="openApproveModal(order)">审核</button>
                         <button class="danger-button small" :disabled="order.Status !== 'pending_review'" @click="openRejectModal(order)">拒绝</button>
                       </div>
@@ -1870,6 +1961,58 @@ function submitModal() {
           </section>
         </div>
 
+        <div v-if="active === 'emailTemplates'" class="space-y-5">
+          <div class="page-toolbar">
+            <div>
+              <p class="section-kicker">Email Templates</p>
+              <h2>邮件模板</h2>
+              <span>{{ enabledEmailTemplates }} 个模板启用，{{ emailTemplates.length }} 个总模板。模板变量会在发送时自动替换。</span>
+            </div>
+            <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
+          </div>
+
+          <section class="panel-surface overflow-hidden">
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>模板</th>
+                    <th>邮件标题</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in emailTemplates" :key="item.Type">
+                    <td>
+                      <strong>{{ item.Name }}</strong>
+                      <small>{{ item.Description || item.Type }}</small>
+                    </td>
+                    <td>{{ item.Subject }}</td>
+                    <td><span class="status-badge" :class="{ muted: !item.Enabled }">{{ item.Enabled ? '已启用' : '已停用' }}</span></td>
+                    <td>
+                      <button class="ghost-button small" @click="openEmailTemplateModal(item)">编辑</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel-surface p-5">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Variables</p>
+                <h3>可用变量</h3>
+                <span>例如填写 {username}你好，发送时会替换成真实用户名。</span>
+              </div>
+            </div>
+            <div class="template-variable-list mt-4">
+              <code v-for="item in emailTemplateVariables" :key="item">{{ item }}</code>
+            </div>
+          </section>
+        </div>
+
         <form v-if="active === 'navigation'" class="space-y-5" @submit.prevent="saveNavigation">
           <div class="page-toolbar">
             <div>
@@ -1951,6 +2094,7 @@ function submitModal() {
             <button type="button" :class="{ active: settingsTab === 'basic' }" @click="settingsTab = 'basic'">基础信息</button>
             <button type="button" :class="{ active: settingsTab === 'endpoints' }" @click="settingsTab = 'endpoints'">API 端点</button>
             <button type="button" :class="{ active: settingsTab === 'smtp' }" @click="settingsTab = 'smtp'">SMTP 配置</button>
+            <button type="button" :class="{ active: settingsTab === 'notifications' }" @click="settingsTab = 'notifications'">通知开关</button>
             <button type="button" :class="{ active: settingsTab === 'epay' }" @click="settingsTab = 'epay'">易支付配置</button>
           </div>
 
@@ -2038,6 +2182,34 @@ function submitModal() {
               <label class="field md:col-span-2">
                 <span>测试收件邮箱</span>
                 <input v-model="settings.smtp_test_email" type="email" placeholder="输入一个邮箱用于接收测试邮件" />
+              </label>
+            </div>
+          </section>
+
+          <section v-if="settingsTab === 'notifications'" class="panel-surface p-5">
+            <div class="section-head mb-5">
+              <div>
+                <p class="section-kicker">Notifications</p>
+                <h3>邮件通知开关</h3>
+                <span>开启后按邮件模板发送，SMTP 未配置时会记录后端日志但不会阻塞订单流程。</span>
+              </div>
+            </div>
+            <div class="form-grid">
+              <label class="toggle-line md:col-span-2">
+                <input v-model="settings.order_payment_admin_email_enabled" type="checkbox" />
+                用户支付成功且订单待审核时通知管理员
+              </label>
+              <label class="toggle-line md:col-span-2">
+                <input v-model="settings.order_approved_user_email_enabled" type="checkbox" />
+                审核通过并开通套餐后通知用户
+              </label>
+              <label class="toggle-line">
+                <input v-model="settings.subscription_expire_email_enabled" type="checkbox" />
+                套餐到期提醒用户
+              </label>
+              <label class="field">
+                <span>到期前提醒天数</span>
+                <input v-model.number="settings.subscription_expire_remind_days" type="number" min="1" max="365" />
               </label>
             </div>
           </section>
@@ -2196,6 +2368,29 @@ function submitModal() {
           <label class="toggle-line"><input v-model="announcementForm.enabled" type="checkbox" />启用公告</label>
         </div>
 
+        <div v-if="modal.type === 'edit-email-template'" class="modal-body form-grid">
+          <label class="field md:col-span-2">
+            <span>模板名称</span>
+            <input v-model="emailTemplateForm.name" required />
+          </label>
+          <label class="field md:col-span-2">
+            <span>说明</span>
+            <input v-model="emailTemplateForm.description" />
+          </label>
+          <label class="field md:col-span-2">
+            <span>邮件标题</span>
+            <input v-model="emailTemplateForm.subject" required placeholder="{site_title} 通知" />
+          </label>
+          <label class="field md:col-span-2">
+            <span>邮件内容 HTML</span>
+            <textarea v-model="emailTemplateForm.body" class="markdown-editor" rows="12" required placeholder="<p>{username}你好：</p>"></textarea>
+          </label>
+          <label class="toggle-line md:col-span-2"><input v-model="emailTemplateForm.enabled" type="checkbox" />启用模板</label>
+          <div class="template-variable-list md:col-span-2">
+            <code v-for="item in emailTemplateVariables" :key="item">{{ item }}</code>
+          </div>
+        </div>
+
         <div v-if="modal.type === 'create-user' || modal.type === 'edit-user'" class="modal-body form-grid">
           <label class="field"><span>用户名</span><input v-model="userForm.username" required /></label>
           <label class="field"><span>邮箱</span><input v-model="userForm.email" type="email" required /></label>
@@ -2272,15 +2467,19 @@ function submitModal() {
 
         <div v-if="modal.type === 'approve-order'" class="modal-body form-grid">
           <label class="field"><span>订单 ID</span><input v-model="approve.orderId" readonly /></label>
-          <label class="field"><span>上游渠道</span>
+          <div v-if="approveOrderUsesPublicChannel()" class="order-flow-note md:col-span-2">
+            <strong>公共套餐无需审核绑定上游</strong>
+            <span>公共套餐在支付完成时会自动扣减公共渠道额度并开通，此处不需要填写上游账号、密码或 API Key。</span>
+          </div>
+          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游渠道</span>
             <select v-model="approve.channelId" required @change="syncApproveChannel">
               <option value="">请选择渠道</option>
               <option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}</option>
             </select>
           </label>
-          <label class="field"><span>上游账号</span><input v-model="approve.username" required /></label>
-          <label class="field"><span>上游密码</span><input v-model="approve.password" type="text" required /></label>
-          <label class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="text" required /></label>
+          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游账号</span><input v-model="approve.username" required /></label>
+          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游密码</span><input v-model="approve.password" type="text" required /></label>
+          <label v-if="!approveOrderUsesPublicChannel()" class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="text" required /></label>
           <label class="field md:col-span-2"><span>审核备注</span><textarea v-model="approve.adminNote" rows="3"></textarea></label>
         </div>
 
@@ -2292,16 +2491,20 @@ function submitModal() {
               <option v-for="plan in plans" :key="plan.ID" :value="plan.ID">{{ plan.Name }}</option>
             </select>
           </label>
-          <label class="field"><span>金额（分）</span><input v-model.number="approve.amountCents" type="number" min="0" /></label>
-          <label class="field"><span>上游渠道</span>
+          <label class="field"><span>金额（元）</span><input v-model.number="approve.amountRmb" type="number" min="0" step="0.01" /></label>
+          <div v-if="approveOrderUsesPublicChannel()" class="order-flow-note md:col-span-2">
+            <strong>公共套餐使用已绑定的公共渠道</strong>
+            <span>编辑公共套餐订单时不需要维护独立上游渠道、账号、密码或 API Key。</span>
+          </div>
+          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游渠道</span>
             <select v-model="approve.channelId" @change="syncApproveChannel">
               <option value="">不修改</option>
               <option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}</option>
             </select>
           </label>
-          <label class="field"><span>上游账号</span><input v-model="approve.username" placeholder="留空不修改" /></label>
-          <label class="field"><span>上游密码</span><input v-model="approve.password" type="text" placeholder="留空不修改" /></label>
-          <label class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="text" placeholder="留空不修改" /></label>
+          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游账号</span><input v-model="approve.username" placeholder="留空不修改" /></label>
+          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游密码</span><input v-model="approve.password" type="text" placeholder="留空不修改" /></label>
+          <label v-if="!approveOrderUsesPublicChannel()" class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="text" placeholder="留空不修改" /></label>
           <label class="field md:col-span-2"><span>审核备注</span><textarea v-model="approve.adminNote" rows="3"></textarea></label>
         </div>
 

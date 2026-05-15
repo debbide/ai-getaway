@@ -2686,6 +2686,22 @@ button:disabled {
   padding: 14px;
 }
 
+.template-variable-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.template-variable-list code {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(79, 124, 255, 0.08);
+  color: var(--ink);
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 @media (max-width: 640px) {
   .endpoint-item {
     grid-template-columns: 42px minmax(0, 1fr) 32px;
@@ -3408,6 +3424,19 @@ button:disabled {
 .api-key-legacy-hint {
   margin-top: 8px;
   font-size: 12px;
+}
+
+.order-countdown {
+  display: block;
+  margin-top: 6px;
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.payment-countdown {
+  color: #f0a27f;
+  font-weight: 900;
 }
 
 .select-plan-card {

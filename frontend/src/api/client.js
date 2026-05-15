@@ -16,6 +16,7 @@ const messageMap = {
   'no active upstream account bound': '当前账号尚未绑定可用上游通道，请联系管理员开通',
   'no api key to rotate': '当前没有可更新的 API Key，请先创建',
   'order already waiting review': '该套餐已有待审核订单，请勿重复提交',
+  'order payment timeout': '订单已支付超时，请重新创建订单',
   'order not pending payment': '订单当前状态不允许继续支付，请刷新后查看',
   'payment config missing': '支付配置未完成，请联系管理员',
   'payment not completed': '支付结果尚未确认，请完成支付后再试',

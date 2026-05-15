@@ -49,6 +49,8 @@ func AutoMigrate(db *gorm.DB) {
 		&model.ModelPricing{},
 		&model.APILog{},
 		&model.SystemSetting{},
+		&model.EmailTemplate{},
+		&model.EmailNotificationLog{},
 		&model.EmailVerification{},
 	); err != nil {
 		log.Fatalf("auto migrate failed: %v", err)
@@ -67,6 +69,7 @@ func Seed(db *gorm.DB, cfg config.Config) {
 	}
 
 	seedDocs(db)
+	service.SeedEmailTemplates(db)
 	if _, err := service.SyncOfficialOpenAIModelPrices(db); err != nil {
 		log.Printf("seed model pricing failed: %v", err)
 	}
@@ -109,6 +112,52 @@ func StartSlideCaptchaCleanup(db *gorm.DB) {
 		defer ticker.Stop()
 		for range ticker.C {
 			cleanup()
+		}
+	}()
+}
+
+func StartOrderTimeoutCleanup(db *gorm.DB) {
+	if db == nil {
+		return
+	}
+	cleanup := func() {
+		if !db.Migrator().HasTable(&model.Order{}) {
+			return
+		}
+		if err := db.Model(&model.Order{}).
+			Where("status = ? AND created_at <= ?", model.OrderStatusPendingPayment, time.Now().Add(-5*time.Minute)).
+			Update("status", model.OrderStatusPaymentTimeout).Error; err != nil {
+			log.Printf("order timeout cleanup failed: %v", err)
+		}
+	}
+
+	cleanup()
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			cleanup()
+		}
+	}()
+}
+
+func StartSubscriptionExpireEmailReminder(db *gorm.DB) {
+	if db == nil {
+		return
+	}
+	remind := func() {
+		if !db.Migrator().HasTable(&model.EmailTemplate{}) || !db.Migrator().HasTable(&model.EmailNotificationLog{}) {
+			return
+		}
+		service.SendSubscriptionExpireReminders(db)
+	}
+
+	remind()
+	go func() {
+		ticker := time.NewTicker(12 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			remind()
 		}
 	}()
 }

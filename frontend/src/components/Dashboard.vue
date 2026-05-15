@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
@@ -26,7 +26,9 @@ const copySuccessModalOpen = ref(false)
 const modalError = ref('')
 const loading = ref(false)
 const orderPage = ref(1)
+const nowMs = ref(Date.now())
 const orderPageSize = 5
+let orderTimer = null
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', payload: null, danger: false })
 const orderForm = reactive({ planId: '', order: null, paymentUrl: '', paymentOpened: false })
 const keyForm = reactive({ name: 'Default' })
@@ -71,6 +73,9 @@ const totalQuotaUsagePercent = computed(() => {
 })
 const quotaProgressStyle = computed(() => ({ '--quota-progress': `${quotaUsagePercent.value}%` }))
 const totalQuotaProgressStyle = computed(() => ({ '--quota-progress': `${totalQuotaUsagePercent.value}%` }))
+const currentPlanIsPublic = computed(() => isPublicPlan(auth.user?.plan))
+const currentPublicPlanExhausted = computed(() => currentPlanIsPublic.value && totalQuotaUsage.value && totalQuotaUsage.value.limit_usd_cents > 0 && totalQuotaUsage.value.used_usd_cents >= totalQuotaUsage.value.limit_usd_cents)
+const purchaseBlockedByActivePlan = computed(() => hasActiveSubscription.value && !currentPublicPlanExhausted.value)
 const quotaResetText = computed(() => {
   if (!quotaUsage.value?.window_end) return ''
   return `${quotaPeriodUnit(auth.user?.plan)}额度重置：${formatDateTime(quotaUsage.value.window_end)}`
@@ -90,7 +95,19 @@ const announcementSummary = computed(() => {
   return item.Summary || String(item.Content || '').split('\n').find(Boolean) || ''
 })
 
-onMounted(loadAll)
+onMounted(() => {
+  loadAll()
+  orderTimer = window.setInterval(() => {
+    nowMs.value = Date.now()
+    if (orders.value.some((order) => order.Status === 'pending_payment' && orderRemainingSeconds(order) <= 0)) {
+      loadAll()
+    }
+  }, 1000)
+})
+
+onBeforeUnmount(() => {
+  if (orderTimer) window.clearInterval(orderTimer)
+})
 
 async function loadAll() {
   loading.value = true
@@ -124,7 +141,7 @@ function setOrderPage(page) {
 }
 
 function openOrderModal(planId = selectedPlan.value) {
-  if (hasActiveSubscription.value) {
+  if (purchaseBlockedByActivePlan.value) {
     notice.value = '当前套餐仍在有效期内，请待到期后再购买'
     return
   }
@@ -325,6 +342,25 @@ function announcementLines(item) {
   return String(item?.Content || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
 }
 
+function orderExpiresAt(order) {
+  const created = new Date(order?.CreatedAt || order?.created_at || '')
+  if (Number.isNaN(created.getTime())) return null
+  return new Date(created.getTime() + 5 * 60 * 1000)
+}
+
+function orderRemainingSeconds(order) {
+  const expiresAt = orderExpiresAt(order)
+  if (!expiresAt) return 0
+  return Math.max(0, Math.ceil((expiresAt.getTime() - nowMs.value) / 1000))
+}
+
+function orderCountdown(order) {
+  const seconds = orderRemainingSeconds(order)
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
 function money(cents, currency = '￥') {
   return `${currency}${((cents || 0) / 100).toFixed(2)}`
 }
@@ -452,6 +488,7 @@ function statusLabel(value) {
   return {
     pending_review: '待审核',
     pending_payment: '待支付',
+    payment_timeout: '支付超时',
     approved: '已通过',
     rejected: '已拒绝',
     active: '启用中',
@@ -585,8 +622,8 @@ function statusLabel(value) {
                 <p class="section-kicker">Pricing</p>
                 <h3>选择套餐</h3>
               </div>
-              <button class="primary-button" :disabled="hasActiveSubscription" @click="openOrderModal()">
-                {{ hasActiveSubscription ? '等待当前套餐过期后购买' : '新建订单' }}
+              <button class="primary-button" :disabled="purchaseBlockedByActivePlan" @click="openOrderModal()">
+                {{ purchaseBlockedByActivePlan ? '等待当前套餐过期后购买' : '新建订单' }}
               </button>
             </div>
 
@@ -599,8 +636,8 @@ function statusLabel(value) {
                 v-for="plan in visiblePlans"
                 :key="plan.ID"
                 class="select-plan-card"
-                :class="{ active: selectedPlan === String(plan.ID), disabled: hasActiveSubscription || planSoldOut(plan) }"
-                @click="!hasActiveSubscription && !planSoldOut(plan) && (selectedPlan = String(plan.ID))"
+                :class="{ active: selectedPlan === String(plan.ID), disabled: purchaseBlockedByActivePlan || planSoldOut(plan) }"
+                @click="!purchaseBlockedByActivePlan && !planSoldOut(plan) && (selectedPlan = String(plan.ID))"
               >
                 <div v-if="plan.BadgeText" class="plan-ribbon-inline">{{ plan.BadgeText }}</div>
                 <h4>{{ plan.Name }}</h4>
@@ -612,10 +649,10 @@ function statusLabel(value) {
                 </div>
                 <button
                   class="ghost-button small"
-                  :disabled="hasActiveSubscription || planSoldOut(plan)"
+                  :disabled="purchaseBlockedByActivePlan || planSoldOut(plan)"
                   @click.stop="openOrderModal(String(plan.ID))"
                 >
-                  {{ planSoldOut(plan) ? '售罄' : (hasActiveSubscription ? '等待当前套餐过期后购买' : '选择并下单') }}
+                  {{ planSoldOut(plan) ? '售罄' : (purchaseBlockedByActivePlan ? '等待当前套餐过期后购买' : '选择并下单') }}
                 </button>
               </article>
             </div>
@@ -647,7 +684,10 @@ function statusLabel(value) {
                     <td>#{{ order.ID }}</td>
                     <td>{{ order.Plan?.Name || '-' }}</td>
                     <td>{{ money(order.AmountCents) }}</td>
-                    <td><span class="status-badge">{{ statusLabel(order.Status) }}</span></td>
+                    <td>
+                      <span class="status-badge">{{ statusLabel(order.Status) }}</span>
+                      <small v-if="order.Status === 'pending_payment'" class="order-countdown">剩余 {{ orderCountdown(order) }}</small>
+                    </td>
                     <td>
                       <button v-if="order.Status === 'pending_payment'" class="primary-button small" @click="openPayModal(order)">继续支付</button>
                       <span v-else class="text-muted">-</span>
@@ -712,7 +752,7 @@ function statusLabel(value) {
                 <span class="badge-active">活跃</span>
               </div>
 
-              <div class="plan-snapshot-meters">
+              <div v-if="!currentPlanIsPublic" class="plan-snapshot-meters">
                 <div v-if="quotaUsage" class="quota-meter">
                   <div class="quota-meter-head">
                     <span>周期额度</span>
@@ -761,7 +801,30 @@ function statusLabel(value) {
                 </div>
               </div>
 
-              <div class="plan-snapshot-times">
+              <div v-else-if="totalQuotaUsage" class="plan-snapshot-meters">
+                <div class="quota-meter quota-meter--total">
+                  <div class="quota-meter-head">
+                    <span>总额度</span>
+                    <strong>{{ totalQuotaUsagePercent.toFixed(1) }}%</strong>
+                  </div>
+                  <div class="quota-meter-values">
+                    <span>已用 {{ usd(totalQuotaUsage.used_usd_cents || 0) }}</span>
+                    <span>总额 {{ usd(totalQuotaUsage.limit_usd_cents || 0) }}</span>
+                  </div>
+                  <div
+                    class="quota-progress-track quota-progress-track--total"
+                    role="progressbar"
+                    :aria-valuenow="Math.round(totalQuotaUsagePercent)"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    :style="totalQuotaProgressStyle"
+                  >
+                    <span class="quota-progress-fill"></span>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="!currentPlanIsPublic" class="plan-snapshot-times">
                 <div class="plan-snapshot-timecell">
                   <span class="detail-label text-muted">套餐开始</span>
                   <span class="detail-value">{{ formatDateTime(planPeriodStartIso) }}</span>
@@ -822,7 +885,8 @@ function statusLabel(value) {
           <div class="payment-panel">
             <strong>{{ orderForm.order?.Plan?.Name || '套餐订单' }}</strong>
             <span>订单金额：{{ money(orderForm.order?.AmountCents) }}</span>
-            <p>请先点击“去支付”打开支付页面。完成支付后回到这里点击“已完成支付”，系统确认支付成功后才会进入待审核。</p>
+            <span v-if="orderForm.order?.Status === 'pending_payment'" class="payment-countdown">支付剩余时间：{{ orderCountdown(orderForm.order) }}</span>
+            <p>请在 5 分钟内点击“去支付”打开支付页面。完成支付后回到这里点击“已完成支付”，系统确认支付成功后才会进入待审核。</p>
             <button type="button" class="primary-button" @click="startPayment">
               {{ orderForm.paymentOpened ? '重新打开支付页面' : '去支付' }}
             </button>

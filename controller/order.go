@@ -24,6 +24,8 @@ type OrderController struct {
 	db *gorm.DB
 }
 
+const pendingPaymentTTL = 5 * time.Minute
+
 func NewOrderController(db *gorm.DB) *OrderController {
 	return &OrderController{db: db}
 }
@@ -39,10 +41,11 @@ func (o *OrderController) Create(c *gin.Context) {
 		response.Error(c, 401, "user not found")
 		return
 	}
-	if service.HasActiveSubscription(user, time.Now()) {
+	if activeSubscriptionBlocksNewOrder(o.db, user) {
 		response.Error(c, 409, "active subscription in effect")
 		return
 	}
+	expirePendingPaymentOrders(o.db)
 
 	var req createOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -94,8 +97,27 @@ func (o *OrderController) Create(c *gin.Context) {
 	response.Created(c, gin.H{"order": order, "reused": false})
 }
 
+func activeSubscriptionBlocksNewOrder(db *gorm.DB, user model.User) bool {
+	if !service.HasActiveSubscription(user, time.Now()) {
+		return false
+	}
+	if user.Plan == nil || user.Plan.PlanType != model.PlanTypePublic {
+		return true
+	}
+	limit := service.PlanTotalLimitUSDCents(user.Plan)
+	if limit <= 0 {
+		return true
+	}
+	start := time.Time{}
+	if startedAt := subscriptionStartAt(db, user); startedAt != nil {
+		start = *startedAt
+	}
+	return service.UsedUSDCentsSince(db, user.ID, start) < limit
+}
+
 func (o *OrderController) ListMine(c *gin.Context) {
 	user := c.MustGet("user").(model.User)
+	expirePendingPaymentOrders(o.db)
 	var orders []model.Order
 	o.db.Preload("Plan").Where("user_id = ?", user.ID).Order("id desc").Find(&orders)
 	response.OK(c, orders)
@@ -106,6 +128,10 @@ func (o *OrderController) Pay(c *gin.Context) {
 	var order model.Order
 	if err := o.db.Preload("Plan").Where("id = ? AND user_id = ?", c.Param("id"), user.ID).First(&order).Error; err != nil {
 		response.Error(c, 404, "order not found")
+		return
+	}
+	if expirePendingPaymentOrder(o.db, &order) {
+		response.Error(c, 409, "order payment timeout")
 		return
 	}
 	if order.Status != model.OrderStatusPendingPayment {
@@ -133,6 +159,10 @@ func (o *OrderController) MarkPaid(c *gin.Context) {
 		response.Error(c, 404, "order not found")
 		return
 	}
+	if expirePendingPaymentOrder(o.db, &order) {
+		response.Error(c, 409, "order payment timeout")
+		return
+	}
 	if order.Status == model.OrderStatusPendingReview || order.Status == model.OrderStatusApproved {
 		response.OK(c, gin.H{"order": order})
 		return
@@ -157,7 +187,7 @@ func (o *OrderController) MarkPaid(c *gin.Context) {
 		return
 	}
 
-	if err := o.completePaidOrder(&order); err != nil {
+	if err := completePaidOrder(o.db, &order, nil); err != nil {
 		response.Error(c, 500, "failed to update order")
 		return
 	}
@@ -198,8 +228,12 @@ func (o *OrderController) EpayNotify(c *gin.Context) {
 		c.String(404, "fail")
 		return
 	}
+	if expirePendingPaymentOrder(o.db, &order) {
+		c.String(200, "success")
+		return
+	}
 	if order.Status == model.OrderStatusPendingPayment {
-		if err := o.completePaidOrder(&order); err != nil {
+		if err := completePaidOrder(o.db, &order, nil); err != nil {
 			c.String(500, "fail")
 			return
 		}
@@ -207,23 +241,46 @@ func (o *OrderController) EpayNotify(c *gin.Context) {
 	c.String(200, "success")
 }
 
-func (o *OrderController) completePaidOrder(order *model.Order) error {
+func pendingPaymentExpiresAt(order model.Order) time.Time {
+	return order.CreatedAt.Add(pendingPaymentTTL)
+}
+
+func expirePendingPaymentOrders(db *gorm.DB) {
+	db.Model(&model.Order{}).
+		Where("status = ? AND created_at <= ?", model.OrderStatusPendingPayment, time.Now().Add(-pendingPaymentTTL)).
+		Update("status", model.OrderStatusPaymentTimeout)
+}
+
+func expirePendingPaymentOrder(db *gorm.DB, order *model.Order) bool {
+	if order.Status != model.OrderStatusPendingPayment {
+		return false
+	}
+	if time.Now().Before(pendingPaymentExpiresAt(*order)) {
+		return false
+	}
+	db.Model(order).Update("status", model.OrderStatusPaymentTimeout)
+	order.Status = model.OrderStatusPaymentTimeout
+	return true
+}
+
+func completePaidOrder(db *gorm.DB, order *model.Order, approvedByID *uint) error {
 	if order.Plan.ID == 0 {
-		if err := o.db.Preload("Plan").First(order, order.ID).Error; err != nil {
+		if err := db.Preload("Plan").First(order, order.ID).Error; err != nil {
 			return err
 		}
 	}
 	if order.Plan.PlanType != model.PlanTypePublic {
-		if err := o.db.Model(order).Update("status", model.OrderStatusPendingReview).Error; err != nil {
+		if err := db.Model(order).Update("status", model.OrderStatusPendingReview).Error; err != nil {
 			return err
 		}
 		order.Status = model.OrderStatusPendingReview
+		go service.SendOrderPaymentAdminNotification(db, order.ID)
 		return nil
 	}
 
 	now := time.Now()
 	expiresAt := now.AddDate(100, 0, 0)
-	err := o.db.Transaction(func(tx *gorm.DB) error {
+	err := db.Transaction(func(tx *gorm.DB) error {
 		var plan model.Plan
 		if err := tx.Preload("PublicChannel").First(&plan, order.PlanID).Error; err != nil {
 			return err
@@ -240,10 +297,14 @@ func (o *OrderController) completePaidOrder(order *model.Order) error {
 		if result.RowsAffected == 0 {
 			return fmt.Errorf("public plan sold out")
 		}
-		if err := tx.Model(order).Updates(map[string]interface{}{
+		orderUpdates := map[string]interface{}{
 			"status":      model.OrderStatusApproved,
 			"approved_at": &now,
-		}).Error; err != nil {
+		}
+		if approvedByID != nil {
+			orderUpdates["approved_by_id"] = *approvedByID
+		}
+		if err := tx.Model(order).Updates(orderUpdates).Error; err != nil {
 			return err
 		}
 		return tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
@@ -257,6 +318,7 @@ func (o *OrderController) completePaidOrder(order *model.Order) error {
 	}
 	order.Status = model.OrderStatusApproved
 	order.ApprovedAt = &now
+	go service.SendOrderApprovedUserNotification(db, order.ID, order.AdminNote)
 	return nil
 }
 
