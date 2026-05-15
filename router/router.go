@@ -50,6 +50,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 		api.GET("/docs", docsController.PublicList)
 		api.GET("/docs/:slug", docsController.PublicBySlug)
 		api.GET("/announcements", announcementController.PublicList)
+		api.GET("/payment/manual", settingsController.ManualPayment)
 		api.Any("/payment/epay/notify", orderController.EpayNotify)
 
 		authed := api.Group("", middleware.Auth(cfg, db))
@@ -59,6 +60,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			authed.POST("/orders", orderController.Create)
 			authed.GET("/orders", orderController.ListMine)
 			authed.POST("/orders/:id/pay", orderController.Pay)
+			authed.POST("/orders/:id/manual-payment", orderController.SubmitManualPayment)
 			authed.PATCH("/orders/:id/paid", orderController.MarkPaid)
 			authed.GET("/keys/secret", apiKeyController.Secret)
 			authed.GET("/keys", apiKeyController.List)

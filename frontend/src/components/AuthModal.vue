@@ -5,6 +5,9 @@ import { useAuthStore } from '../stores/auth'
 
 const open = defineModel('open', { type: Boolean, default: false })
 const mode = defineModel('mode', { type: String, default: 'login' })
+const props = defineProps({
+  allowRegistration: { type: Boolean, default: true }
+})
 const auth = useAuthStore()
 const form = reactive({ username: '', email: '', password: '', emailCode: '' })
 const captcha = reactive({ challengeId: '', image: '', trackWidth: 280, pieceWidth: 42, x: 0 })
@@ -29,13 +32,22 @@ const slideButtonStyle = computed(() => {
 })
 
 watch([open, mode], () => {
-  error.value = ''
+  const registrationBlocked = mode.value === 'register' && !props.allowRegistration
+  error.value = registrationBlocked ? '当前站点暂未开放新用户注册' : ''
   notice.value = ''
+  if (registrationBlocked) {
+    mode.value = 'login'
+  }
   closeSecurity()
 })
 
 function switchMode(nextMode) {
   if (mode.value === nextMode) return
+  if (nextMode === 'register' && !props.allowRegistration) {
+    error.value = '当前站点暂未开放新用户注册'
+    notice.value = ''
+    return
+  }
   mode.value = nextMode
   Object.assign(form, { username: '', email: '', password: '', emailCode: '' })
   error.value = ''
@@ -99,6 +111,10 @@ async function finishSecurity() {
 }
 
 function sendEmailCode() {
+  if (!props.allowRegistration) {
+    error.value = '当前站点暂未开放新用户注册'
+    return
+  }
   if (!form.email) {
     error.value = '请先填写邮箱'
     return
@@ -124,6 +140,10 @@ async function sendEmailCodeWithCaptcha() {
 }
 
 function submit() {
+  if (mode.value === 'register' && !props.allowRegistration) {
+    error.value = '当前站点暂未开放新用户注册'
+    return
+  }
   requestSecurity('submit')
 }
 
@@ -171,9 +191,14 @@ async function submitWithCaptcha() {
           <button class="icon-button" @click="open = false">×</button>
         </div>
 
-        <div class="auth-tabs">
+        <div v-if="allowRegistration" class="auth-tabs">
           <button :class="{ active: mode === 'login' }" @click="switchMode('login')">登录</button>
           <button :class="{ active: mode === 'register' }" @click="switchMode('register')">注册</button>
+        </div>
+
+        <div v-if="!allowRegistration" class="notice-card notice-error">
+          <strong>注册已关闭</strong>
+          <span>当前站点暂未开放新用户注册，请使用已有账号登录。</span>
         </div>
 
         <form class="space-y-4" @submit.prevent="submit">

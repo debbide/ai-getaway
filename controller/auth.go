@@ -56,6 +56,15 @@ type changePasswordRequest struct {
 }
 
 func (a *AuthController) SendEmailCode(c *gin.Context) {
+	if err := ensureSystemSettingColumns(a.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
+	if !loadSettings(a.db).AllowRegistration {
+		response.Error(c, 403, "registration disabled")
+		return
+	}
+
 	var req emailCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, 400, err.Error())
@@ -92,6 +101,15 @@ func (a *AuthController) SendEmailCode(c *gin.Context) {
 }
 
 func (a *AuthController) Register(c *gin.Context) {
+	if err := ensureSystemSettingColumns(a.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
+	if !loadSettings(a.db).AllowRegistration {
+		response.Error(c, 403, "registration disabled")
+		return
+	}
+
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, 400, err.Error())
@@ -177,35 +195,17 @@ func (a *AuthController) Me(c *gin.Context) {
 		return
 	}
 	body := publicUser(user)
-	subscriptionStartedAt := subscriptionStartAt(a.db, user)
+	subscriptionStartedAt := service.SubscriptionStartAt(a.db, user, time.Now())
 	if subscriptionStartedAt != nil {
 		body["subscription_started_at"] = subscriptionStartedAt
 	}
 	if service.HasActiveSubscription(user, time.Now()) && user.Plan != nil {
-		body["quota_usage"] = service.PlanQuotaUsage(a.db, user.ID, user.Plan, time.Now())
+		body["quota_usage"] = service.PlanQuotaUsageFrom(a.db, user.ID, user.Plan, subscriptionStartedAt, time.Now())
 		if subscriptionStartedAt != nil && user.ExpiresAt != nil {
 			body["total_quota_usage"] = service.PlanTotalQuotaUsage(a.db, user.ID, user.Plan, *subscriptionStartedAt, *user.ExpiresAt)
 		}
 	}
 	response.OK(c, body)
-}
-
-func subscriptionStartAt(db *gorm.DB, user model.User) *time.Time {
-	if user.PlanID != nil {
-		var lastOrder model.Order
-		result := db.Where("user_id = ? AND plan_id = ? AND status = ?", user.ID, *user.PlanID, model.OrderStatusApproved).
-			Order("approved_at DESC, id DESC").
-			Limit(1).
-			Find(&lastOrder)
-		if result.Error == nil && result.RowsAffected > 0 && lastOrder.ApprovedAt != nil {
-			return lastOrder.ApprovedAt
-		}
-	}
-	if service.HasActiveSubscription(user, time.Now()) && user.Plan != nil && user.ExpiresAt != nil && user.Plan.DurationDays > 0 {
-		fallbackStartedAt := user.ExpiresAt.AddDate(0, 0, -user.Plan.DurationDays)
-		return &fallbackStartedAt
-	}
-	return nil
 }
 
 func (a *AuthController) ChangePassword(c *gin.Context) {

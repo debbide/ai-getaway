@@ -31,7 +31,7 @@ const orderPageSize = 5
 let orderTimer = null
 let paymentPollTimer = null
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', payload: null, danger: false })
-const orderForm = reactive({ planId: '', order: null, paymentUrl: '', paymentOpened: false })
+const orderForm = reactive({ planId: '', paymentMethod: 'online', order: null, paymentUrl: '', paymentOpened: false, manualQRCode: '', manualNote: '' })
 const keyForm = reactive({ name: 'Default' })
 
 const totalOrderPages = computed(() => Math.max(1, Math.ceil(orders.value.length / orderPageSize)))
@@ -153,17 +153,28 @@ function openOrderModal(planId = selectedPlan.value) {
     return
   }
   orderForm.planId = planId || ''
+  orderForm.paymentMethod = 'online'
   orderForm.order = null
   orderForm.paymentUrl = ''
   orderForm.paymentOpened = false
+  orderForm.manualQRCode = ''
+  orderForm.manualNote = accountPaymentNote()
   showModal('create-order', '创建订单', '确认下单')
 }
 
 function openPayModal(order) {
   orderForm.planId = String(order.PlanID || order.Plan?.ID || '')
+  orderForm.paymentMethod = order.PaymentMethod || 'online'
   orderForm.order = order
   orderForm.paymentUrl = ''
   orderForm.paymentOpened = false
+  orderForm.manualNote = order.UserPaymentNote || accountPaymentNote()
+  if (isManualPaymentOrder(order)) {
+    orderForm.manualQRCode = ''
+    showModal('manual-pay-order', `人工支付订单 #${order.ID}`, '已扫码，提交审核')
+    loadManualPaymentInfo()
+    return
+  }
   showModal('pay-order', `支付订单 #${order.ID}`, '已完成支付')
   startPaymentPolling()
 }
@@ -202,14 +213,23 @@ async function createOrder() {
   }
   modalError.value = ''
   try {
-    const res = await api.post('/orders', { plan_id: Number(orderForm.planId) })
+    const res = await api.post('/orders', { plan_id: Number(orderForm.planId), payment_method: orderForm.paymentMethod })
     orderForm.order = res.data.order
     orderForm.paymentUrl = ''
     orderForm.paymentOpened = false
-    modal.type = 'pay-order'
-    modal.title = `支付订单 #${orderForm.order.ID}`
-    modal.actionLabel = '已完成支付'
-    notice.value = res.data.reused ? '已为你找到未支付订单，请继续支付' : '订单已创建，请完成支付'
+    orderForm.paymentMethod = orderForm.order.PaymentMethod || orderForm.paymentMethod
+    if (isManualPaymentOrder(orderForm.order)) {
+      modal.type = 'manual-pay-order'
+      modal.title = `人工支付订单 #${orderForm.order.ID}`
+      modal.actionLabel = '已扫码，提交审核'
+      notice.value = res.data.reused ? '已为你找到未支付订单，请继续人工支付' : '订单已创建，请扫码完成人工支付'
+      await loadManualPaymentInfo()
+    } else {
+      modal.type = 'pay-order'
+      modal.title = `支付订单 #${orderForm.order.ID}`
+      modal.actionLabel = '已完成支付'
+      notice.value = res.data.reused ? '已为你找到未支付订单，请继续支付' : '订单已创建，请完成支付'
+    }
     await loadAll()
     window.dispatchEvent(new Event('app-data-updated'))
   } catch (err) {
@@ -226,6 +246,35 @@ async function startPayment() {
     orderForm.paymentOpened = true
     window.open(orderForm.paymentUrl, '_blank', 'noopener,noreferrer')
     startPaymentPolling()
+  } catch (err) {
+    modalError.value = err.message
+  }
+}
+
+async function loadManualPaymentInfo() {
+  try {
+    const res = await api.get('/payment/manual')
+    orderForm.manualQRCode = res.data?.manual_payment_qr_code || ''
+  } catch (err) {
+    modalError.value = err.message
+  }
+}
+
+async function submitManualPayment() {
+  if (!orderForm.order?.ID) return
+  modalError.value = ''
+  if (!String(orderForm.manualNote || '').trim()) {
+    modalError.value = '请填写当前账号或留言，方便管理员核对付款'
+    return
+  }
+  try {
+    await api.post(`/orders/${orderForm.order.ID}/manual-payment`, {
+      user_payment_note: orderForm.manualNote
+    })
+    notice.value = '人工支付信息已提交，订单已进入待审核'
+    closeModal()
+    await loadAll()
+    window.dispatchEvent(new Event('app-data-updated'))
   } catch (err) {
     modalError.value = err.message
   }
@@ -335,11 +384,20 @@ function submitModal() {
   const actions = {
     'create-order': createOrder,
     'pay-order': markPaid,
+    'manual-pay-order': submitManualPayment,
     'create-key': createKey,
     'rotate-key': rotateKey,
     'disable-key': disableKey
   }
   actions[modal.type]?.()
+}
+
+function isManualPaymentOrder(order) {
+  return order?.PaymentMethod === 'manual' || order?.PaymentChannel === 'manual'
+}
+
+function accountPaymentNote() {
+  return auth.user?.email || auth.user?.username || ''
 }
 
 function openUsageRecords() {
@@ -724,7 +782,9 @@ function statusLabel(value) {
                       <small v-if="order.Status === 'pending_payment'" class="order-countdown">剩余 {{ orderCountdown(order) }}</small>
                     </td>
                     <td>
-                      <button v-if="order.Status === 'pending_payment'" class="primary-button small" @click="openPayModal(order)">继续支付</button>
+                      <button v-if="order.Status === 'pending_payment'" class="primary-button small" @click="openPayModal(order)">
+                        {{ isManualPaymentOrder(order) ? '继续人工支付' : '继续支付' }}
+                      </button>
                       <span v-else class="text-muted">-</span>
                     </td>
                   </tr>
@@ -911,8 +971,23 @@ function statusLabel(value) {
             </select>
           </label>
           <div class="order-flow-note md:col-span-2">
-            <strong>下单后会先创建待支付订单</strong>
-            <span>下一步打开支付窗口。支付完成后回到本页面点击“已完成支付”，系统会核验支付结果。</span>
+            <strong>选择支付方式</strong>
+            <div class="payment-method-options">
+              <label :class="{ active: orderForm.paymentMethod === 'online' }">
+                <input v-model="orderForm.paymentMethod" type="radio" value="online" />
+                <span>
+                  <b>在线支付</b>
+                  <small>跳转支付页面，支付后系统自动核验结果。</small>
+                </span>
+              </label>
+              <label :class="{ active: orderForm.paymentMethod === 'manual' }">
+                <input v-model="orderForm.paymentMethod" type="radio" value="manual" />
+                <span>
+                  <b>人工支付</b>
+                  <small>扫码转账并留言当前账号，可节省在线支付手续费。</small>
+                </span>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -926,6 +1001,24 @@ function statusLabel(value) {
             <button type="button" class="primary-button" @click="startPayment">
               {{ orderForm.paymentOpened ? '重新打开支付页面' : '去支付' }}
             </button>
+          </div>
+        </div>
+
+        <div v-if="modal.type === 'manual-pay-order'" class="modal-body">
+          <div class="payment-panel manual-payment-panel">
+            <strong>{{ orderForm.order?.Plan?.Name || '套餐订单' }}</strong>
+            <span>订单金额：{{ money(orderForm.order?.AmountCents) }}</span>
+            <p>请使用下方付款二维码扫码支付，支付时备注或留言你的当前账号，方便管理员核对。人工支付可节省在线支付手续费。</p>
+            <div v-if="orderForm.manualQRCode" class="manual-payment-qr">
+              <img :src="orderForm.manualQRCode" alt="人工支付付款二维码" />
+            </div>
+            <div v-else class="manual-payment-empty">
+              管理员尚未上传付款二维码，请联系站点支持。
+            </div>
+            <label class="field">
+              <span>付款备注 / 当前账号</span>
+              <textarea v-model="orderForm.manualNote" rows="3" required placeholder="请填写当前账号邮箱、转账备注或其他便于核对的信息"></textarea>
+            </label>
           </div>
         </div>
 

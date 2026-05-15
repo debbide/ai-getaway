@@ -47,7 +47,12 @@ type epayPaymentResult struct {
 }
 
 type createOrderRequest struct {
-	PlanID uint `json:"plan_id" binding:"required"`
+	PlanID        uint   `json:"plan_id" binding:"required"`
+	PaymentMethod string `json:"payment_method"`
+}
+
+type submitManualPaymentRequest struct {
+	UserPaymentNote string `json:"user_payment_note"`
 }
 
 func (o *OrderController) Create(c *gin.Context) {
@@ -68,6 +73,7 @@ func (o *OrderController) Create(c *gin.Context) {
 		response.Error(c, 400, err.Error())
 		return
 	}
+	paymentMethod := normalizePaymentMethod(req.PaymentMethod)
 
 	var plan model.Plan
 	if err := o.db.Preload("PublicChannel").Where("id = ? AND enabled = ?", req.PlanID, true).First(&plan).Error; err != nil {
@@ -89,6 +95,28 @@ func (o *OrderController) Create(c *gin.Context) {
 			response.Error(c, 409, "order already waiting review")
 			return
 		}
+		if existing.PaymentMethod != paymentMethod && existing.PaymentURLGeneratedAt == nil {
+			if err := o.db.Model(&existing).Updates(map[string]interface{}{
+				"payment_method":           paymentMethod,
+				"user_payment_note":        "",
+				"payment_channel":          "",
+				"paid_amount_cents":        0,
+				"paid_at":                  nil,
+				"provider_trade_no":        nil,
+				"payment_raw":              "",
+				"payment_url_generated_at": nil,
+			}).Error; err != nil {
+				response.Error(c, 500, "failed to create order")
+				return
+			}
+			existing.PaymentMethod = paymentMethod
+			existing.UserPaymentNote = ""
+			existing.PaymentChannel = ""
+			existing.PaidAmountCents = 0
+			existing.PaidAt = nil
+			existing.ProviderTradeNo = nil
+			existing.PaymentRaw = ""
+		}
 		response.OK(c, gin.H{"order": existing, "reused": true})
 		return
 	}
@@ -103,6 +131,7 @@ func (o *OrderController) Create(c *gin.Context) {
 		AmountCents:        plan.PriceCents,
 		SettlementUSDCents: plan.SettlementUSDCents,
 		Status:             model.OrderStatusPendingPayment,
+		PaymentMethod:      paymentMethod,
 		PaymentRef:         fmt.Sprintf("ORDER%d%d", ctxUser.ID, time.Now().UnixNano()),
 	}
 	if err := o.db.Create(&order).Error; err != nil {
@@ -111,6 +140,15 @@ func (o *OrderController) Create(c *gin.Context) {
 	}
 	order.Plan = plan
 	response.Created(c, gin.H{"order": order, "reused": false})
+}
+
+func normalizePaymentMethod(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case model.PaymentMethodManual:
+		return model.PaymentMethodManual
+	default:
+		return model.PaymentMethodOnline
+	}
 }
 
 func activeSubscriptionBlocksNewOrder(db *gorm.DB, user model.User) bool {
@@ -125,7 +163,7 @@ func activeSubscriptionBlocksNewOrder(db *gorm.DB, user model.User) bool {
 		return true
 	}
 	start := time.Time{}
-	if startedAt := subscriptionStartAt(db, user); startedAt != nil {
+	if startedAt := service.SubscriptionStartAt(db, user, time.Now()); startedAt != nil {
 		start = *startedAt
 	}
 	return service.UsedUSDCentsSince(db, user.ID, start) < limit
@@ -154,6 +192,10 @@ func (o *OrderController) Pay(c *gin.Context) {
 		response.Error(c, 409, "order not pending payment")
 		return
 	}
+	if order.PaymentMethod == model.PaymentMethodManual {
+		response.Error(c, 409, "manual payment selected")
+		return
+	}
 
 	if err := ensureSystemSettingColumns(o.db); err != nil {
 		response.Error(c, 500, "failed to load settings")
@@ -168,6 +210,69 @@ func (o *OrderController) Pay(c *gin.Context) {
 	now := time.Now()
 	o.db.Model(&order).Update("payment_url_generated_at", &now)
 	response.OK(c, gin.H{"payment_url": payURL, "order": order})
+}
+
+func (o *OrderController) ManualPaymentInfo(c *gin.Context) {
+	if err := ensureSystemSettingColumns(o.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
+	setting := loadSettings(o.db)
+	response.OK(c, gin.H{
+		"manual_payment_qr_code": setting.ManualPaymentQRCode,
+	})
+}
+
+func (o *OrderController) SubmitManualPayment(c *gin.Context) {
+	user := c.MustGet("user").(model.User)
+	var req submitManualPaymentRequest
+	_ = c.ShouldBindJSON(&req)
+
+	var order model.Order
+	if err := o.db.Preload("Plan").Where("id = ? AND user_id = ?", c.Param("id"), user.ID).First(&order).Error; err != nil {
+		response.Error(c, 404, "order not found")
+		return
+	}
+	if expirePendingPaymentOrder(o.db, &order) {
+		response.Error(c, 409, "order payment timeout")
+		return
+	}
+	if order.Status != model.OrderStatusPendingPayment {
+		response.Error(c, 409, "order not pending payment")
+		return
+	}
+	if order.PaymentMethod != model.PaymentMethodManual {
+		response.Error(c, 409, "manual payment not selected")
+		return
+	}
+	if err := ensureSystemSettingColumns(o.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
+	setting := loadSettings(o.db)
+	if strings.TrimSpace(setting.ManualPaymentQRCode) == "" {
+		response.Error(c, 400, "manual payment qr code missing")
+		return
+	}
+
+	now := time.Now()
+	updates := map[string]interface{}{
+		"status":            model.OrderStatusPendingReview,
+		"payment_channel":   model.PaymentMethodManual,
+		"paid_amount_cents": order.AmountCents,
+		"paid_at":           &now,
+		"user_payment_note": strings.TrimSpace(req.UserPaymentNote),
+	}
+	if err := o.db.Model(&order).Updates(updates).Error; err != nil {
+		response.Error(c, 500, "failed to update order")
+		return
+	}
+	if err := o.db.Preload("Plan").First(&order, order.ID).Error; err != nil {
+		response.Error(c, 500, "failed to update order")
+		return
+	}
+	go service.SendOrderPaymentAdminNotification(o.db, order.ID)
+	response.OK(c, gin.H{"order": order})
 }
 
 func (o *OrderController) MarkPaid(c *gin.Context) {
@@ -262,12 +367,15 @@ func pendingPaymentExpiresAt(order model.Order) time.Time {
 
 func expirePendingPaymentOrders(db *gorm.DB) {
 	db.Model(&model.Order{}).
-		Where("status = ? AND created_at <= ?", model.OrderStatusPendingPayment, time.Now().Add(-pendingPaymentTTL)).
+		Where("status = ? AND (payment_method IS NULL OR payment_method <> ?) AND created_at <= ?", model.OrderStatusPendingPayment, model.PaymentMethodManual, time.Now().Add(-pendingPaymentTTL)).
 		Update("status", model.OrderStatusPaymentTimeout)
 }
 
 func expirePendingPaymentOrder(db *gorm.DB, order *model.Order) bool {
 	if order.Status != model.OrderStatusPendingPayment {
+		return false
+	}
+	if order.PaymentMethod == model.PaymentMethodManual {
 		return false
 	}
 	if time.Now().Before(pendingPaymentExpiresAt(*order)) {

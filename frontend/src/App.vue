@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from './api/client'
 import { useAuthStore } from './stores/auth'
 import AuthModal from './components/AuthModal.vue'
@@ -8,6 +8,7 @@ import AdminPanel from './components/AdminPanel.vue'
 import UsageRecords from './components/UsageRecords.vue'
 import DocsPage from './components/DocsPage.vue'
 import ModelsPage from './components/ModelsPage.vue'
+import FaqPage from './components/FaqPage.vue'
 
 const defaultNavigation = [
   { label: '首页', path: '/' },
@@ -24,7 +25,8 @@ const defaultSettings = {
   navigation_items: JSON.stringify(defaultNavigation),
   pricing_title: '简单透明的定价',
   pricing_subtitle: '保质保量无降智不掺假',
-  pricing_notice: '本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转'
+  pricing_notice: '本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转',
+  allow_registration: true
 }
 
 const auth = useAuthStore()
@@ -50,6 +52,7 @@ const isUsageRecordsPage = computed(() => currentPath.value === '/usage-records'
 const isPlansPage = computed(() => currentPath.value === '/plans')
 const isModelsPage = computed(() => currentPath.value === '/models')
 const isDocsPage = computed(() => currentPath.value === '/docs' || currentPath.value.startsWith('/docs/'))
+const isFaqPage = computed(() => currentPath.value === '/faq')
 const navItems = computed(() => parseNavigation(publicSettings.value.navigation_items))
 const activeThemeLabel = computed(() => ({ light: '浅色', dark: '深色', system: '系统' })[themeMode.value] || '深色')
 const accountEmail = computed(() => auth.user?.email || '')
@@ -71,6 +74,10 @@ onMounted(async () => {
   await auth.loadMe()
   await loadPublicSettings()
   await loadPlans()
+})
+
+watch(currentPath, () => {
+  refreshAppData()
 })
 
 onBeforeUnmount(() => {
@@ -160,6 +167,10 @@ function navigateItem(item) {
 }
 
 function openAuth(mode) {
+  if (mode === 'register' && !publicSettings.value.allow_registration) {
+    error.value = '当前站点暂未开放新用户注册'
+    mode = 'login'
+  }
   authMode.value = mode
   authOpen.value = true
 }
@@ -185,7 +196,7 @@ function afterPrimaryAction() {
     navigate('/console')
     return
   }
-  openAuth('register')
+  openAuth(publicSettings.value.allow_registration ? 'register' : 'login')
 }
 
 function setTheme(mode) {
@@ -354,9 +365,11 @@ function planSubtitle(index) {
       </div>
     </header>
 
-    <DocsPage v-if="isDocsPage" />
+    <DocsPage v-if="isDocsPage" :key="currentPath" />
 
-    <ModelsPage v-else-if="isModelsPage" @navigate="navigate" @start="afterPrimaryAction" />
+    <ModelsPage v-else-if="isModelsPage" :key="currentPath" @navigate="navigate" @start="afterPrimaryAction" />
+
+    <FaqPage v-else-if="isFaqPage" :key="currentPath" @navigate="navigate" @start="afterPrimaryAction" />
 
     <main v-else-if="!isConsolePage && !isAdminPage && !isPlansPage && !isUsageRecordsPage">
       <section class="home-hero">
@@ -485,11 +498,11 @@ function planSubtitle(index) {
           </div>
           <div class="flex gap-3">
             <button class="ghost-button" @click="openAuth('login')">登录</button>
-            <button class="primary-button" @click="openAuth('register')">注册</button>
+            <button v-if="publicSettings.allow_registration" class="primary-button" @click="openAuth('register')">注册</button>
           </div>
         </div>
       </section>
-      <UsageRecords v-if="auth.loggedIn" @navigate="navigate" />
+      <UsageRecords v-if="auth.loggedIn" :key="currentPath" @navigate="navigate" />
     </main>
 
     <main v-else-if="isAdminPage" class="console-page">
@@ -521,7 +534,7 @@ function planSubtitle(index) {
           <button class="primary-button" @click="navigate('/console')">返回控制台</button>
         </div>
       </section>
-      <AdminPanel v-if="auth.loggedIn && auth.isAdmin" />
+      <AdminPanel v-if="auth.loggedIn && auth.isAdmin" :key="currentPath" />
     </main>
 
     <main v-else class="console-page">
@@ -542,11 +555,11 @@ function planSubtitle(index) {
           </div>
           <div class="flex gap-3">
             <button class="ghost-button" @click="openAuth('login')">登录</button>
-            <button class="primary-button" @click="openAuth('register')">注册</button>
+            <button v-if="publicSettings.allow_registration" class="primary-button" @click="openAuth('register')">注册</button>
           </div>
         </div>
       </section>
-      <Dashboard v-if="auth.loggedIn" :plans="plans" :api-endpoints="publicSettings.api_endpoints" @navigate="navigate" />
+      <Dashboard v-if="auth.loggedIn" :key="currentPath" :plans="plans" :api-endpoints="publicSettings.api_endpoints" @navigate="navigate" />
     </main>
 
     <footer class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-8 text-sm text-muted sm:px-6">
@@ -554,7 +567,7 @@ function planSubtitle(index) {
       <span>联系邮箱：{{ publicSettings.contact_email || 'support@example.com' }}</span>
     </footer>
 
-    <AuthModal v-model:open="authOpen" v-model:mode="authMode" />
+    <AuthModal v-model:open="authOpen" v-model:mode="authMode" :allow-registration="publicSettings.allow_registration" />
 
     <Transition name="modal-fade">
       <div v-if="passwordModalOpen" class="modal-backdrop password-backdrop" @click.self="closePasswordModal">

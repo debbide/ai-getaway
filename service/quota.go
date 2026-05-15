@@ -20,6 +20,10 @@ type QuotaUsage struct {
 }
 
 func PlanQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, now time.Time) QuotaUsage {
+	return PlanQuotaUsageFrom(db, userID, plan, nil, now)
+}
+
+func PlanQuotaUsageFrom(db *gorm.DB, userID uint, plan *model.Plan, activeFrom *time.Time, now time.Time) QuotaUsage {
 	period := "weekly"
 	if plan != nil && plan.QuotaPeriod == model.QuotaPeriodPublic {
 		period = model.QuotaPeriodPublic
@@ -27,7 +31,7 @@ func PlanQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, now time.Time) Q
 		period = "daily"
 	}
 
-	start, end := QuotaWindow(period, now)
+	start, end := QuotaUsageWindow(period, activeFrom, now)
 	limit := int64(0)
 	if plan != nil {
 		limit = plan.SettlementUSDCents
@@ -124,6 +128,14 @@ func QuotaWindow(period string, now time.Time) (time.Time, time.Time) {
 	daysSinceMonday := (int(now.Weekday()) + 6) % 7
 	weekStart := dayStart.AddDate(0, 0, -daysSinceMonday)
 	return weekStart, weekStart.AddDate(0, 0, 7)
+}
+
+func QuotaUsageWindow(period string, activeFrom *time.Time, now time.Time) (time.Time, time.Time) {
+	start, end := QuotaWindow(period, now)
+	if activeFrom != nil && activeFrom.After(start) {
+		start = *activeFrom
+	}
+	return start, end
 }
 
 func UsedUSDCentsSince(db *gorm.DB, userID uint, since time.Time) int64 {

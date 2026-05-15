@@ -29,6 +29,7 @@ type updateSettingsRequest struct {
 	PricingTitle                   string `json:"pricing_title"`
 	PricingSubtitle                string `json:"pricing_subtitle"`
 	PricingNotice                  string `json:"pricing_notice"`
+	AllowRegistration              bool   `json:"allow_registration"`
 	SMTPHost                       string `json:"smtp_host"`
 	SMTPPort                       int    `json:"smtp_port"`
 	SMTPUsername                   string `json:"smtp_username"`
@@ -45,6 +46,7 @@ type updateSettingsRequest struct {
 	EpayNotifyURL                  string `json:"epay_notify_url"`
 	EpayReturnURL                  string `json:"epay_return_url"`
 	EpaySubmitURL                  string `json:"epay_submit_url"`
+	ManualPaymentQRCode            string `json:"manual_payment_qr_code"`
 }
 
 type testSMTPRequest struct {
@@ -65,13 +67,25 @@ func (s *SettingsController) Public(c *gin.Context) {
 	}
 	setting := loadSettings(s.db)
 	response.OK(c, gin.H{
-		"site_title":       setting.SiteTitle,
-		"contact_email":    setting.ContactEmail,
-		"api_endpoints":    setting.APIEndpoints,
-		"navigation_items": setting.NavigationItems,
-		"pricing_title":    setting.PricingTitle,
-		"pricing_subtitle": setting.PricingSubtitle,
-		"pricing_notice":   setting.PricingNotice,
+		"site_title":         setting.SiteTitle,
+		"contact_email":      setting.ContactEmail,
+		"api_endpoints":      setting.APIEndpoints,
+		"navigation_items":   setting.NavigationItems,
+		"pricing_title":      setting.PricingTitle,
+		"pricing_subtitle":   setting.PricingSubtitle,
+		"pricing_notice":     setting.PricingNotice,
+		"allow_registration": setting.AllowRegistration,
+	})
+}
+
+func (s *SettingsController) ManualPayment(c *gin.Context) {
+	if err := ensureSystemSettingColumns(s.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
+	setting := loadSettings(s.db)
+	response.OK(c, gin.H{
+		"manual_payment_qr_code": setting.ManualPaymentQRCode,
 	})
 }
 
@@ -90,6 +104,7 @@ func (s *SettingsController) Get(c *gin.Context) {
 		"pricing_title":                     setting.PricingTitle,
 		"pricing_subtitle":                  setting.PricingSubtitle,
 		"pricing_notice":                    setting.PricingNotice,
+		"allow_registration":                setting.AllowRegistration,
 		"smtp_host":                         setting.SMTPHost,
 		"smtp_port":                         setting.SMTPPort,
 		"smtp_username":                     setting.SMTPUsername,
@@ -106,6 +121,7 @@ func (s *SettingsController) Get(c *gin.Context) {
 		"epay_return_url":                   setting.EpayReturnURL,
 		"epay_submit_url":                   setting.EpaySubmitURL,
 		"epay_key_configured":               setting.EpayKey != "",
+		"manual_payment_qr_code":            setting.ManualPaymentQRCode,
 	})
 }
 
@@ -129,6 +145,7 @@ func (s *SettingsController) Update(c *gin.Context) {
 		"pricing_title":                     req.PricingTitle,
 		"pricing_subtitle":                  req.PricingSubtitle,
 		"pricing_notice":                    req.PricingNotice,
+		"allow_registration":                req.AllowRegistration,
 		"smtp_host":                         req.SMTPHost,
 		"smtp_port":                         req.SMTPPort,
 		"smtp_username":                     req.SMTPUsername,
@@ -143,6 +160,7 @@ func (s *SettingsController) Update(c *gin.Context) {
 		"epay_notify_url":                   req.EpayNotifyURL,
 		"epay_return_url":                   req.EpayReturnURL,
 		"epay_submit_url":                   req.EpaySubmitURL,
+		"manual_payment_qr_code":            req.ManualPaymentQRCode,
 	}
 	if req.SMTPPassword != "" {
 		updates["smtp_password"] = req.SMTPPassword
@@ -205,11 +223,13 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 		"pricing_title":                     "VARCHAR(128)",
 		"pricing_subtitle":                  "VARCHAR(255)",
 		"pricing_notice":                    "VARCHAR(512)",
+		"allow_registration":                "BOOLEAN DEFAULT TRUE",
 		"epay_pid":                          "VARCHAR(128)",
 		"epay_key":                          "VARCHAR(255)",
 		"epay_notify_url":                   "VARCHAR(512)",
 		"epay_return_url":                   "VARCHAR(512)",
 		"epay_submit_url":                   "VARCHAR(512)",
+		"manual_payment_qr_code":            "LONGTEXT",
 		"order_payment_admin_email_enabled": "BOOLEAN DEFAULT FALSE",
 		"order_approved_user_email_enabled": "BOOLEAN DEFAULT FALSE",
 		"subscription_expire_email_enabled": "BOOLEAN DEFAULT FALSE",
@@ -295,7 +315,7 @@ func systemSettingColumnExists(db *gorm.DB, column string) bool {
 func loadSettings(db *gorm.DB) model.SystemSetting {
 	var setting model.SystemSetting
 	if err := db.First(&setting, 1).Error; err != nil {
-		setting = model.SystemSetting{Model: gorm.Model{ID: 1}, SiteTitle: "AI Gateway", SMTPPort: 587, SMTPUseTLS: true}
+		setting = model.SystemSetting{Model: gorm.Model{ID: 1}, SiteTitle: "AI Gateway", AllowRegistration: true, SMTPPort: 587, SMTPUseTLS: true}
 		db.FirstOrCreate(&setting, model.SystemSetting{Model: gorm.Model{ID: 1}})
 	}
 	if setting.SiteTitle == "" {

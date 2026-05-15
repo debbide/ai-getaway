@@ -93,6 +93,7 @@ const settings = reactive({
   pricing_title: '',
   pricing_subtitle: '',
   pricing_notice: '',
+  allow_registration: true,
   smtp_host: '',
   smtp_port: 587,
   smtp_username: '',
@@ -109,6 +110,7 @@ const settings = reactive({
   epay_notify_url: '',
   epay_return_url: '',
   epay_submit_url: '',
+  manual_payment_qr_code: '',
   smtp_password_configured: false,
   epay_key_configured: false,
   smtp_test_email: ''
@@ -141,6 +143,14 @@ const filteredUsers = computed(() => {
 })
 const filteredApiKeys = computed(() => apiKeys.value)
 
+function responseData(result, fallback) {
+  return result.status === 'fulfilled' ? result.value.data : fallback
+}
+
+function collectLoadErrors(results) {
+  return results.filter((item) => item.status === 'rejected').map((item) => item.reason?.message).filter(Boolean)
+}
+
 onMounted(async () => {
   await loadAll()
   startOverviewMetricsPolling()
@@ -152,7 +162,7 @@ watch(
     if (active.value !== 'users') return
     if (userSearchTimer) clearTimeout(userSearchTimer)
     userSearchTimer = setTimeout(() => {
-      loadAll()
+      refreshActiveData()
     }, 250)
   }
 )
@@ -163,6 +173,7 @@ onBeforeUnmount(() => {
 })
 
 watch(active, (value) => {
+  refreshActiveData()
   if (value === 'overview') {
     refreshOverviewMetrics()
     startOverviewMetricsPolling()
@@ -304,7 +315,7 @@ async function loadAll() {
         plan: userSearch.plan || undefined
       }
     }
-    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, publicChannelsRes, keysRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = await Promise.all([
+    const results = await Promise.allSettled([
       api.get('/admin/stats'),
       api.get('/admin/orders'),
       api.get('/admin/users', userParams),
@@ -318,22 +329,27 @@ async function loadAll() {
       api.get('/admin/email-templates'),
       api.get('/admin/settings')
     ])
-    stats.value = statsRes.data || {}
-    orders.value = ordersRes.data || []
-    users.value = usersRes.data || []
-    plans.value = plansRes.data || []
-    models.value = modelsRes.data?.items || []
-    modelSource.value = modelsRes.data?.official_source || ''
-    channels.value = channelsRes.data || []
-    publicChannels.value = publicChannelsRes.data || []
-    apiKeys.value = keysRes.data || []
-    docs.value = docsRes.data || []
-    announcements.value = announcementsRes.data || []
-    emailTemplates.value = emailTemplatesRes.data?.items || []
-    emailTemplateVariables.value = emailTemplatesRes.data?.variables || []
-    Object.assign(settings, settingsRes.data, { smtp_password: '', epay_key: '' })
+    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, publicChannelsRes, keysRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = results
+    const modelData = responseData(modelsRes, { items: [], official_source: '' })
+    const templateData = responseData(emailTemplatesRes, { items: [], variables: [] })
+    stats.value = responseData(statsRes, {})
+    orders.value = responseData(ordersRes, [])
+    users.value = responseData(usersRes, [])
+    plans.value = responseData(plansRes, [])
+    models.value = modelData?.items || []
+    modelSource.value = modelData?.official_source || ''
+    channels.value = responseData(channelsRes, [])
+    publicChannels.value = responseData(publicChannelsRes, [])
+    apiKeys.value = responseData(keysRes, [])
+    docs.value = responseData(docsRes, [])
+    announcements.value = responseData(announcementsRes, [])
+    emailTemplates.value = templateData?.items || []
+    emailTemplateVariables.value = templateData?.variables || []
+    Object.assign(settings, responseData(settingsRes, {}), { smtp_password: '', epay_key: '' })
     setNavigationDraft(settings.navigation_items)
     setAPIEndpointDraft(settings.api_endpoints)
+    const loadErrors = collectLoadErrors(results)
+    if (loadErrors.length) error.value = `部分数据暂时加载失败：${loadErrors[0]}`
   } catch (err) {
     error.value = err.message
   } finally {
@@ -343,7 +359,160 @@ async function loadAll() {
 
 async function refreshAdminData() {
   notice.value = ''
-  await loadAll()
+  await refreshActiveData()
+}
+
+function setActiveSection(section) {
+  if (active.value === section) {
+    refreshAdminData()
+    return
+  }
+  active.value = section
+}
+
+async function refreshActiveData() {
+  loading.value = true
+  error.value = ''
+  try {
+    await loadAdminSection(active.value)
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadAdminSection(section) {
+  switch (section) {
+    case 'overview':
+      await loadOverviewData()
+      break
+    case 'plans':
+      await loadPlansData()
+      break
+    case 'orders':
+      await loadOrdersData()
+      break
+    case 'models':
+      await loadModelsData()
+      break
+    case 'channels':
+      await loadChannelsData()
+      break
+    case 'users':
+      await loadUsersData()
+      break
+    case 'announcements':
+      await loadAnnouncementsData()
+      break
+    case 'docs':
+      await loadDocsData()
+      break
+    case 'emailTemplates':
+      await loadEmailTemplatesData()
+      break
+    case 'navigation':
+    case 'settings':
+      await loadSettingsData()
+      break
+    default:
+      await loadAll()
+  }
+}
+
+async function loadOverviewData() {
+  const [statsRes, ordersRes, usersRes, plansRes] = await Promise.all([
+    api.get('/admin/stats'),
+    api.get('/admin/orders'),
+    api.get('/admin/users', userFilterParams()),
+    api.get('/admin/plans')
+  ])
+  stats.value = statsRes.data || {}
+  orders.value = ordersRes.data || []
+  users.value = usersRes.data || []
+  plans.value = plansRes.data || []
+}
+
+async function loadPlansData() {
+  const [plansRes, publicChannelsRes] = await Promise.all([
+    api.get('/admin/plans'),
+    api.get('/admin/public-channels')
+  ])
+  plans.value = plansRes.data || []
+  publicChannels.value = publicChannelsRes.data || []
+}
+
+async function loadOrdersData() {
+  const [ordersRes, plansRes, channelsRes] = await Promise.all([
+    api.get('/admin/orders'),
+    api.get('/admin/plans'),
+    api.get('/admin/upstream-channels')
+  ])
+  orders.value = ordersRes.data || []
+  plans.value = plansRes.data || []
+  channels.value = channelsRes.data || []
+}
+
+async function loadModelsData() {
+  const res = await api.get('/admin/models')
+  models.value = res.data?.items || []
+  modelSource.value = res.data?.official_source || ''
+}
+
+async function loadChannelsData() {
+  const [channelsRes, publicChannelsRes] = await Promise.all([
+    api.get('/admin/upstream-channels'),
+    api.get('/admin/public-channels')
+  ])
+  channels.value = channelsRes.data || []
+  publicChannels.value = publicChannelsRes.data || []
+}
+
+async function loadUsersData() {
+  const [usersRes, plansRes, channelsRes, keysRes] = await Promise.all([
+    api.get('/admin/users', userFilterParams()),
+    api.get('/admin/plans'),
+    api.get('/admin/upstream-channels'),
+    api.get('/admin/keys')
+  ])
+  users.value = usersRes.data || []
+  plans.value = plansRes.data || []
+  channels.value = channelsRes.data || []
+  apiKeys.value = keysRes.data || []
+}
+
+async function loadAnnouncementsData() {
+  const res = await api.get('/admin/announcements')
+  announcements.value = res.data || []
+}
+
+async function loadDocsData() {
+  const res = await api.get('/admin/docs')
+  docs.value = res.data || []
+}
+
+async function loadEmailTemplatesData() {
+  const res = await api.get('/admin/email-templates')
+  emailTemplates.value = res.data?.items || []
+  emailTemplateVariables.value = res.data?.variables || []
+}
+
+async function loadSettingsData() {
+  const res = await api.get('/admin/settings')
+  Object.assign(settings, res.data, { smtp_password: '', epay_key: '' })
+  setNavigationDraft(settings.navigation_items)
+  setAPIEndpointDraft(settings.api_endpoints)
+}
+
+function userFilterParams() {
+  return {
+    params: {
+      q: userSearch.keyword || undefined,
+      role: userSearch.role || undefined,
+      status: userSearch.status || undefined,
+      plan: userSearch.plan || undefined
+    }
+  }
 }
 
 async function refreshOverviewMetrics() {
@@ -779,7 +948,7 @@ function openApproveModal(order) {
     planType: order.Plan?.PlanType || '',
     quotaPeriod: order.Plan?.QuotaPeriod || '',
   })
-  showModal('approve-order', `审核订单 #${order.ID}`, isPublic ? '确认' : '通过并开通')
+  showModal('approve-order', `审核订单 #${order.ID}`, isPublic ? '确认通过' : '通过并开通', { order })
 }
 
 function openEditOrderModal(order) {
@@ -801,7 +970,7 @@ function openEditOrderModal(order) {
     planType: order.Plan?.PlanType || '',
     quotaPeriod: order.Plan?.QuotaPeriod || '',
   })
-  showModal('edit-order', `编辑订单 #${order.ID}`, '保存修改')
+  showModal('edit-order', `编辑订单 #${order.ID}`, '保存修改', { order })
 }
 
 function openRejectModal(order) {
@@ -828,7 +997,10 @@ function syncApproveChannel() {
 async function approveOrder() {
   syncApproveChannel()
   if (approveOrderUsesPublicChannel()) {
-    closeModal()
+    await runAction(async () => {
+      await api.post(`/admin/orders/${approve.orderId}/complete-payment`)
+      notice.value = '订单已确认并开通'
+    })
     return
   }
   await runAction(async () => {
@@ -895,6 +1067,33 @@ async function saveSettings() {
     settings.epay_key = ''
     notice.value = '系统设置已保存'
   }, false)
+}
+
+function handleManualPaymentQRUpload(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  if (!file.type.startsWith('image/')) {
+    error.value = '请上传图片格式的付款二维码'
+    event.target.value = ''
+    return
+  }
+  if (file.size > 1024 * 1024) {
+    error.value = '付款二维码图片不能超过 1MB'
+    event.target.value = ''
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    settings.manual_payment_qr_code = String(reader.result || '')
+  }
+  reader.onerror = () => {
+    error.value = '二维码读取失败，请重新选择图片'
+  }
+  reader.readAsDataURL(file)
+}
+
+function clearManualPaymentQR() {
+  settings.manual_payment_qr_code = ''
 }
 
 async function sendSMTPTest() {
@@ -1392,7 +1591,7 @@ function submitModal() {
             :key="item.key"
             class="nav-pill"
             :class="{ 'nav-pill-active': active === item.key }"
-            @click="active = item.key"
+            @click="setActiveSection(item.key)"
           >
             <span>{{ item.label }}</span>
             <small>{{ item.hint }}</small>
@@ -1469,7 +1668,7 @@ function submitModal() {
                   <p class="section-kicker">Pending</p>
                   <h3>待处理订单</h3>
                 </div>
-                <button class="ghost-button" @click="active = 'orders'">查看全部</button>
+                <button class="ghost-button" @click="setActiveSection('orders')">查看全部</button>
               </div>
               <div class="mt-4 grid gap-3">
                 <article v-for="order in pendingReviewOrders.slice(0, 4)" :key="order.ID" class="list-row">
@@ -1500,7 +1699,7 @@ function submitModal() {
                 </article>
               </div>
               <div v-if="hasMorePlans" class="mt-4 flex justify-end">
-                <button class="ghost-button" @click="active = 'plans'">更多</button>
+                <button class="ghost-button" @click="setActiveSection('plans')">更多</button>
               </div>
             </section>
           </div>
@@ -1574,7 +1773,10 @@ function submitModal() {
                 <tbody>
                   <tr v-for="order in orders" :key="order.ID">
                     <td>#{{ order.ID }}</td>
-                    <td>{{ order.User?.Email || '-' }}</td>
+                    <td>
+                      <strong>{{ order.User?.Email || '-' }}</strong>
+                      <small v-if="order.UserPaymentNote">付款备注：{{ order.UserPaymentNote }}</small>
+                    </td>
                     <td>{{ order.Plan?.Name || '-' }}</td>
                     <td>{{ isPublicOrder(order) ? (order.Plan?.PublicChannel?.Name || '公共渠道') : (order.Upstream?.Channel || '-') }}</td>
                     <td>{{ money(order.AmountCents) }}</td>
@@ -2100,6 +2302,7 @@ function submitModal() {
             <button type="button" :class="{ active: settingsTab === 'smtp' }" @click="settingsTab = 'smtp'">SMTP 配置</button>
             <button type="button" :class="{ active: settingsTab === 'notifications' }" @click="settingsTab = 'notifications'">通知开关</button>
             <button type="button" :class="{ active: settingsTab === 'epay' }" @click="settingsTab = 'epay'">易支付配置</button>
+            <button type="button" :class="{ active: settingsTab === 'manualPayment' }" @click="settingsTab = 'manualPayment'">人工支付</button>
           </div>
 
           <section v-if="settingsTab === 'basic'" class="panel-surface p-5">
@@ -2123,6 +2326,10 @@ function submitModal() {
               <label class="field md:col-span-2">
                 <span>定价页提示内容</span>
                 <textarea v-model="settings.pricing_notice" rows="3" placeholder="展示在定价页顶部提示框中的说明文字"></textarea>
+              </label>
+              <label class="toggle-line md:col-span-2">
+                <input v-model="settings.allow_registration" type="checkbox" />
+                允许新用户注册
               </label>
             </div>
           </section>
@@ -2236,6 +2443,33 @@ function submitModal() {
                 <span>商户 KEY</span>
                 <input v-model="settings.epay_key" type="password" :placeholder="settings.epay_key_configured ? '已配置，留空不修改' : '请输入商户 KEY'" />
               </label>
+            </div>
+          </section>
+
+          <section v-if="settingsTab === 'manualPayment'" class="panel-surface p-5">
+            <div class="section-head mb-5">
+              <div>
+                <p class="section-kicker">Manual Payment</p>
+                <h3>人工支付二维码</h3>
+                <span>上传后，用户选择人工支付时会展示该二维码，并引导用户备注当前账号。</span>
+              </div>
+            </div>
+            <div class="manual-payment-admin">
+              <div class="manual-payment-preview">
+                <img v-if="settings.manual_payment_qr_code" :src="settings.manual_payment_qr_code" alt="人工支付付款二维码预览" />
+                <span v-else>尚未上传付款二维码</span>
+              </div>
+              <div class="form-grid">
+                <label class="field md:col-span-2">
+                  <span>上传付款二维码</span>
+                  <input type="file" accept="image/*" @change="handleManualPaymentQRUpload" />
+                </label>
+                <div class="order-flow-note md:col-span-2">
+                  <strong>用户侧提示</strong>
+                  <span>用户点击人工支付后会看到二维码，并被要求填写当前账号或转账留言；提交后订单进入待审核。</span>
+                </div>
+                <button type="button" class="danger-button small" :disabled="!settings.manual_payment_qr_code" @click="clearManualPaymentQR">清空二维码</button>
+              </div>
             </div>
           </section>
         </form>
@@ -2471,6 +2705,10 @@ function submitModal() {
 
         <div v-if="modal.type === 'approve-order'" class="modal-body form-grid">
           <label class="field"><span>订单 ID</span><input v-model="approve.orderId" readonly /></label>
+          <div v-if="modal.payload?.order?.UserPaymentNote" class="order-flow-note md:col-span-2">
+            <strong>用户付款备注</strong>
+            <span>{{ modal.payload.order.UserPaymentNote }}</span>
+          </div>
           <div v-if="approveOrderUsesPublicChannel()" class="order-flow-note md:col-span-2">
             <strong>公共套餐无需审核绑定上游</strong>
             <span>公共套餐在支付完成时会自动扣减公共渠道额度并开通，此处不需要填写上游账号、密码或 API Key。</span>
@@ -2489,6 +2727,10 @@ function submitModal() {
 
         <div v-if="modal.type === 'edit-order'" class="modal-body form-grid">
           <label class="field"><span>订单 ID</span><input v-model="approve.orderId" readonly /></label>
+          <div v-if="modal.payload?.order?.UserPaymentNote" class="order-flow-note md:col-span-2">
+            <strong>用户付款备注</strong>
+            <span>{{ modal.payload.order.UserPaymentNote }}</span>
+          </div>
           <label class="field"><span>关联套餐</span>
             <select v-model="approve.planId" :disabled="approve.status === 'approved'">
               <option value="">不分配</option>

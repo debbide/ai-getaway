@@ -595,8 +595,20 @@ func (a *AdminController) CompleteOrderPayment(c *gin.Context) {
 		response.Error(c, 404, "order not found")
 		return
 	}
-	if expirePendingPaymentOrder(a.db, &order) {
+	if order.Status == model.OrderStatusPendingPayment && expirePendingPaymentOrder(a.db, &order) {
 		response.Error(c, 409, "order payment timeout")
+		return
+	}
+	if order.Plan.PlanType == model.PlanTypePublic && (order.Status == model.OrderStatusPendingReview || order.Status == model.OrderStatusManualReview || order.Status == model.OrderStatusPaidLate) {
+		if err := approvePublicPaidOrder(a.db, &order, &admin.ID); err != nil {
+			if err.Error() == "public plan sold out" {
+				response.Error(c, 409, err.Error())
+				return
+			}
+			response.Error(c, 500, "failed to complete payment")
+			return
+		}
+		response.OK(c, gin.H{"order": order})
 		return
 	}
 	if order.Status != model.OrderStatusPendingPayment {
@@ -612,6 +624,69 @@ func (a *AdminController) CompleteOrderPayment(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"order": order})
+}
+
+func approvePublicPaidOrder(db *gorm.DB, order *model.Order, approvedByID *uint) error {
+	if order == nil {
+		return gorm.ErrRecordNotFound
+	}
+	if order.Plan.ID == 0 {
+		if err := db.Preload("Plan").First(order, order.ID).Error; err != nil {
+			return err
+		}
+	}
+	if order.Plan.PlanType != model.PlanTypePublic {
+		return errors.New("order not pending payment")
+	}
+
+	now := time.Now()
+	expiresAt := now.AddDate(100, 0, 0)
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var plan model.Plan
+		if err := tx.Preload("PublicChannel").First(&plan, order.PlanID).Error; err != nil {
+			return err
+		}
+		updates := map[string]interface{}{
+			"status":      model.OrderStatusApproved,
+			"approved_at": &now,
+		}
+		if approvedByID != nil {
+			updates["approved_by_id"] = *approvedByID
+		}
+		result := tx.Model(&model.Order{}).
+			Where("id = ? AND status IN ?", order.ID, []string{model.OrderStatusPendingReview, model.OrderStatusManualReview, model.OrderStatusPaidLate}).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if plan.PublicChannelID == nil || plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents {
+			return errors.New("public plan sold out")
+		}
+		result = tx.Model(&model.PublicChannel{}).
+			Where("id = ? AND remaining_usd_cents >= ?", *plan.PublicChannelID, plan.SettlementUSDCents).
+			Update("remaining_usd_cents", gorm.Expr("remaining_usd_cents - ?", plan.SettlementUSDCents))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return errors.New("public plan sold out")
+		}
+		return tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
+			"status":     model.UserStatusApproved,
+			"plan_id":    plan.ID,
+			"expires_at": &expiresAt,
+		}).Error
+	})
+	if err != nil {
+		return err
+	}
+	order.Status = model.OrderStatusApproved
+	order.ApprovedAt = &now
+	go service.SendOrderApprovedUserNotification(db, order.ID, order.AdminNote)
+	return nil
 }
 
 func (a *AdminController) RejectOrder(c *gin.Context) {

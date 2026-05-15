@@ -7,6 +7,7 @@ const messageMap = {
   'api key secret unavailable': '该密钥当前无法解密展示，请使用“更新密钥”重新生成',
   'email already exists': '该邮箱已存在，请更换邮箱或直接登录',
   'email already registered': '该邮箱已注册，请直接登录',
+  'registration disabled': '当前站点暂未开放新用户注册',
   'email not verified': '邮箱尚未完成验证，请先完成邮箱验证',
   'invalid credentials': '邮箱或密码不正确，请检查后重试',
   'invalid email verification code': '邮箱验证码不正确或已过期',
@@ -18,6 +19,9 @@ const messageMap = {
   'order already waiting review': '该套餐已有待审核订单，请勿重复提交',
   'order payment timeout': '订单已支付超时，请重新创建订单',
   'order not pending payment': '订单当前状态不允许继续支付，请刷新后查看',
+  'manual payment selected': '该订单已选择人工支付，请扫码并提交审核',
+  'manual payment not selected': '该订单未选择人工支付',
+  'manual payment qr code missing': '管理员尚未上传人工支付二维码，请联系站点支持',
   'payment config missing': '支付配置未完成，请联系管理员',
   'payment not completed': '支付结果尚未确认，请完成支付后再试',
   'payment amount mismatch': '支付金额不一致，订单已转人工处理',
@@ -50,11 +54,16 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
   (response) => response.data,
-  (error) => {
+  async (error) => {
     const status = error.response?.status
     const rawMessage = error.response?.data?.message || error.message || '请求失败'
     if (status === 401) {
       const token = localStorage.getItem('token')
+      if (shouldRetryAuthRequest(error, rawMessage, token)) {
+        error.config.__authRetry = true
+        error.config.headers = { ...(error.config.headers || {}), Authorization: `Bearer ${token}` }
+        return api.request(error.config)
+      }
       if (token && rawMessage.includes('invalid authorization token')) {
         localStorage.removeItem('token')
         window.dispatchEvent(new CustomEvent('auth-expired'))
@@ -70,6 +79,12 @@ api.interceptors.response.use(
     return Promise.reject(apiError(message, { status, rawMessage }))
   }
 )
+
+function shouldRetryAuthRequest(error, rawMessage, token) {
+  if (!token || !error.config || error.config.__authRetry) return false
+  if (rawMessage.includes('invalid authorization token')) return false
+  return rawMessage.includes('missing authorization token') || rawMessage.includes('user not found')
+}
 
 function apiError(message, props = {}) {
   const err = new Error(message)

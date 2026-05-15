@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"ai-gateway/model"
+
+	"gorm.io/gorm"
 )
 
 func HasActiveSubscription(user model.User, now time.Time) bool {
@@ -17,4 +19,22 @@ func HasActiveSubscription(user model.User, now time.Time) bool {
 		return false
 	}
 	return now.Before(*user.ExpiresAt)
+}
+
+func SubscriptionStartAt(db *gorm.DB, user model.User, now time.Time) *time.Time {
+	if db != nil && user.PlanID != nil {
+		var lastOrder model.Order
+		result := db.Where("user_id = ? AND plan_id = ? AND status = ?", user.ID, *user.PlanID, model.OrderStatusApproved).
+			Order("approved_at DESC, id DESC").
+			Limit(1).
+			Find(&lastOrder)
+		if result.Error == nil && result.RowsAffected > 0 && lastOrder.ApprovedAt != nil {
+			return lastOrder.ApprovedAt
+		}
+	}
+	if HasActiveSubscription(user, now) && user.Plan != nil && user.ExpiresAt != nil && user.Plan.DurationDays > 0 {
+		fallbackStartedAt := user.ExpiresAt.AddDate(0, 0, -user.Plan.DurationDays)
+		return &fallbackStartedAt
+	}
+	return nil
 }

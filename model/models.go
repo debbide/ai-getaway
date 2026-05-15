@@ -22,6 +22,9 @@ const (
 	OrderStatusPaidLate       = "paid_late"
 	OrderStatusManualReview   = "pending_manual_review"
 
+	PaymentMethodOnline = "online"
+	PaymentMethodManual = "manual"
+
 	APIKeyStatusActive   = "active"
 	APIKeyStatusDisabled = "disabled"
 
@@ -81,6 +84,7 @@ type Order struct {
 	AmountCents           int64
 	SettlementUSDCents    int64   `gorm:"default:0"`
 	Status                string  `gorm:"size:32;default:pending_payment;index"`
+	PaymentMethod         string  `gorm:"size:32;default:online;index"`
 	PaymentRef            string  `gorm:"size:128;uniqueIndex"`
 	ProviderTradeNo       *string `gorm:"size:128;uniqueIndex"`
 	PaymentChannel        string  `gorm:"size:32"`
@@ -88,6 +92,7 @@ type Order struct {
 	PaidAt                *time.Time
 	PaymentURLGeneratedAt *time.Time
 	PaymentRaw            string `gorm:"type:text"`
+	UserPaymentNote       string `gorm:"size:255"`
 	AdminNote             string `gorm:"size:255"`
 	ApprovedAt            *time.Time
 	ApprovedByID          *uint
@@ -215,6 +220,7 @@ type SystemSetting struct {
 	PricingTitle                   string `gorm:"size:128;default:简单透明的定价"`
 	PricingSubtitle                string `gorm:"size:255;default:保质保量无降智不掺假"`
 	PricingNotice                  string `gorm:"size:512;default:本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转"`
+	AllowRegistration              bool   `gorm:"default:true"`
 	SMTPHost                       string `gorm:"size:128"`
 	SMTPPort                       int    `gorm:"default:587"`
 	SMTPUsername                   string `gorm:"size:128"`
@@ -231,6 +237,7 @@ type SystemSetting struct {
 	EpayNotifyURL                  string `gorm:"size:512"`
 	EpayReturnURL                  string `gorm:"size:512"`
 	EpaySubmitURL                  string `gorm:"size:512"`
+	ManualPaymentQRCode            string `gorm:"type:longtext"`
 }
 
 type EmailTemplate struct {

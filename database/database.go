@@ -77,7 +77,7 @@ func Seed(db *gorm.DB, cfg config.Config) {
 		log.Printf("seed model pricing failed: %v", err)
 	}
 
-	db.FirstOrCreate(&model.SystemSetting{}, model.SystemSetting{Model: gorm.Model{ID: 1}})
+	db.FirstOrCreate(&model.SystemSetting{}, model.SystemSetting{Model: gorm.Model{ID: 1}, AllowRegistration: true})
 
 	var count int64
 	db.Model(&model.User{}).Where("role = ?", model.RoleAdmin).Count(&count)
@@ -128,7 +128,7 @@ func StartOrderTimeoutCleanup(db *gorm.DB) {
 			return
 		}
 		if err := db.Model(&model.Order{}).
-			Where("status = ? AND created_at <= ?", model.OrderStatusPendingPayment, time.Now().Add(-5*time.Minute)).
+			Where("status = ? AND (payment_method IS NULL OR payment_method <> ?) AND created_at <= ?", model.OrderStatusPendingPayment, model.PaymentMethodManual, time.Now().Add(-5*time.Minute)).
 			Update("status", model.OrderStatusPaymentTimeout).Error; err != nil {
 			log.Printf("order timeout cleanup failed: %v", err)
 		}
