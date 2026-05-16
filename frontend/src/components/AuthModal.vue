@@ -1,5 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { Close, Refresh } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
@@ -30,8 +32,9 @@ const pieceStyle = computed(() => ({
 }))
 const slideButtonStyle = computed(() => {
   const progress = sliderMax.value ? captcha.x / sliderMax.value : 0
-  return { left: `calc(${progress * 100}% - ${progress * 54}px)` }
+  return { left: `calc(${progress * 100}% - ${progress * 56}px)` }
 })
+const captchaX = computed(() => Math.round(Math.min(captcha.trackWidth, Math.max(0, Number(captcha.x) || 0))))
 
 watch([open, mode], () => {
   const registrationBlocked = mode.value === 'register' && !props.allowRegistration
@@ -41,6 +44,14 @@ watch([open, mode], () => {
     mode.value = 'login'
   }
   closeSecurity()
+})
+
+watch(error, (message) => {
+  if (message) ElMessage.error(message)
+})
+
+watch(notice, (message) => {
+  if (message) ElMessage.success(message)
 })
 
 onBeforeUnmount(() => {
@@ -156,7 +167,7 @@ async function sendEmailCodeWithCaptcha() {
     await api.post('/auth/email-code', {
       email: form.email,
       challenge_id: captcha.challengeId,
-      captcha_x: Number(captcha.x)
+      captcha_x: captchaX.value
     })
     notice.value = '验证码已发送，请查收邮箱'
     startEmailCodeCooldown()
@@ -184,7 +195,7 @@ async function submitWithCaptcha() {
         email: form.email,
         password: form.password,
         challenge_id: captcha.challengeId,
-        captcha_x: Number(captcha.x)
+        captcha_x: captchaX.value
       })
       open.value = false
     } else {
@@ -194,7 +205,7 @@ async function submitWithCaptcha() {
         password: form.password,
         email_code: form.emailCode,
         challenge_id: captcha.challengeId,
-        captcha_x: Number(captcha.x)
+        captcha_x: captchaX.value
       })
       notice.value = '注册成功，邮箱已验证，请登录'
       mode.value = 'login'
@@ -209,75 +220,63 @@ async function submitWithCaptcha() {
 </script>
 
 <template>
-  <Transition name="modal-fade" appear>
-    <div v-if="open" class="modal-backdrop auth-backdrop" @click.self="open = false">
+  <el-dialog v-model="open" class="auth-el-dialog" modal-class="auth-overlay" width="min(460px, calc(100vw - 32px))" align-center :show-close="false">
       <div class="auth-card">
         <div class="modal-head">
           <div>
             <p class="section-kicker">{{ mode === 'login' ? 'Welcome back' : 'Create account' }}</p>
             <h2>{{ mode === 'login' ? '登录' : '注册' }}</h2>
           </div>
-          <button class="icon-button" @click="open = false">×</button>
+          <el-button class="icon-button" :icon="Close" circle @click="open = false" />
         </div>
 
-        <div v-if="allowRegistration" class="auth-tabs">
-          <button :class="{ active: mode === 'login' }" @click="switchMode('login')">登录</button>
-          <button :class="{ active: mode === 'register' }" @click="switchMode('register')">注册</button>
-        </div>
+        <el-segmented
+          v-if="allowRegistration"
+          class="auth-tabs"
+          :model-value="mode"
+          :options="[
+            { label: '登录', value: 'login' },
+            { label: '注册', value: 'register' }
+          ]"
+          @update:model-value="switchMode"
+        />
 
-        <div v-if="!allowRegistration" class="notice-card notice-error">
-          <strong>注册已关闭</strong>
-          <span>当前站点暂未开放新用户注册，请使用已有账号登录。</span>
-        </div>
+        <el-form class="space-y-4" label-position="top" @submit.prevent="submit">
+          <el-form-item v-if="mode === 'register'" label="用户名" required>
+            <el-input v-model="form.username" />
+          </el-form-item>
+          <el-form-item label="邮箱" required>
+            <el-input v-model="form.email" type="email" />
+          </el-form-item>
+          <el-form-item label="密码" required>
+            <el-input v-model="form.password" type="password" minlength="8" show-password />
+          </el-form-item>
 
-        <form class="space-y-4" @submit.prevent="submit">
-          <label v-if="mode === 'register'" class="field">
-            <span>用户名</span>
-            <input v-model="form.username" required />
-          </label>
-          <label class="field">
-            <span>邮箱</span>
-            <input v-model="form.email" type="email" required />
-          </label>
-          <label class="field">
-            <span>密码</span>
-            <input v-model="form.password" type="password" minlength="8" required />
-          </label>
-
-          <label v-if="mode === 'register'" class="field">
-            <span>邮箱验证码</span>
-            <div class="inline-field">
-              <input v-model="form.emailCode" maxlength="6" required />
-              <button class="ghost-button" type="button" :disabled="sendingCode || emailCodeCooldown > 0" @click="sendEmailCode">
+          <el-form-item v-if="mode === 'register'" label="邮箱验证码" required>
+            <el-input v-model="form.emailCode" maxlength="6">
+              <template #append>
+                <el-button type="primary" plain :disabled="sendingCode || emailCodeCooldown > 0" @click="sendEmailCode">
                 {{ sendingCode ? '发送中' : emailCodeCooldown > 0 ? `${emailCodeCooldown}秒后重试` : '发送' }}
-              </button>
-            </div>
-          </label>
+                </el-button>
+              </template>
+            </el-input>
+          </el-form-item>
 
-          <div v-if="error" class="notice-card notice-error">
-            <strong>操作未完成</strong>
-            <span>{{ error }}</span>
-          </div>
-          <div v-if="notice" class="notice-card notice-success">
-            <strong>处理成功</strong>
-            <span>{{ notice }}</span>
-          </div>
-          <button class="primary-button w-full justify-center py-3" :disabled="loading">
+          <el-button class="w-full justify-center py-3" type="primary" native-type="submit" :loading="loading">
             {{ loading ? '处理中' : mode === 'login' ? '登录' : '创建账号' }}
-          </button>
-        </form>
+          </el-button>
+        </el-form>
       </div>
 
-      <Transition name="security-pop">
-        <div v-if="securityOpen" class="security-backdrop" @click.self="closeSecurity">
+      <el-dialog v-model="securityOpen" class="security-el-dialog" modal-class="security-overlay" width="min(430px, calc(100vw - 32px))" append-to-body align-center :show-close="false">
           <section class="security-card security-dialog" :class="{ passed: captchaPassed }">
             <div class="security-head">
               <h3>请完成安全验证</h3>
-              <button class="security-close" type="button" @click="closeSecurity">×</button>
+              <el-button class="security-close" :icon="Close" circle @click="closeSecurity" />
             </div>
             <div class="captcha-stage">
               <div class="captcha-sky">
-                <button class="security-refresh" type="button" title="刷新验证码" @click="loadCaptcha">↻</button>
+                <el-button class="security-refresh" :icon="Refresh" circle title="刷新验证码" @click="loadCaptcha" />
                 <span class="planet one"></span>
                 <span class="planet two"></span>
                 <span class="planet three"></span>
@@ -289,14 +288,19 @@ async function submitWithCaptcha() {
                 <span class="captcha-fragment" :style="pieceStyle"></span>
               </div>
             </div>
-            <div class="slide-rail">
-              <input :value="captcha.x" type="range" min="0" :max="sliderMax" aria-label="拖动滑块完成验证" @input="handleCaptchaSlide" />
+            <div class="slide-rail" :style="{ '--slide-progress': `${sliderMax ? (captcha.x / sliderMax) * 100 : 0}%` }">
+              <input
+                :value="captcha.x"
+                type="range"
+                min="0"
+                :max="sliderMax"
+                aria-label="拖动滑块完成验证"
+                @input="handleCaptchaSlide"
+              />
               <span class="slide-button" :style="slideButtonStyle">›</span>
             </div>
             <p class="security-tip">{{ captchaPassed ? '验证通过，正在继续操作' : '向右拖动滑块完成验证' }}</p>
           </section>
-        </div>
-      </Transition>
-    </div>
-  </Transition>
+      </el-dialog>
+  </el-dialog>
 </template>

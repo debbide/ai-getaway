@@ -128,7 +128,14 @@ func StartOrderTimeoutCleanup(db *gorm.DB) {
 			return
 		}
 		if err := db.Model(&model.Order{}).
-			Where("status = ? AND (payment_method IS NULL OR payment_method <> ?) AND created_at <= ?", model.OrderStatusPendingPayment, model.PaymentMethodManual, time.Now().Add(-5*time.Minute)).
+			Where(
+				"status = ? AND ((payment_method = ? AND created_at <= ?) OR ((payment_method IS NULL OR payment_method <> ?) AND created_at <= ?))",
+				model.OrderStatusPendingPayment,
+				model.PaymentMethodManual,
+				time.Now().Add(-2*time.Hour),
+				model.PaymentMethodManual,
+				time.Now().Add(-5*time.Minute),
+			).
 			Update("status", model.OrderStatusPaymentTimeout).Error; err != nil {
 			log.Printf("order timeout cleanup failed: %v", err)
 		}

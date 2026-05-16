@@ -72,6 +72,8 @@ type Plan struct {
 	SettlementUSDCents int64  `gorm:"default:0"`
 	DurationDays       int    `gorm:"not null"`
 	Description        string `gorm:"size:255"`
+	IsLottery          bool   `gorm:"default:false;index"`
+	LotteryURL         string `gorm:"size:512"`
 	Enabled            bool   `gorm:"default:true;index"`
 }
 
@@ -237,6 +239,8 @@ type SystemSetting struct {
 	EpayNotifyURL                  string `gorm:"size:512"`
 	EpayReturnURL                  string `gorm:"size:512"`
 	EpaySubmitURL                  string `gorm:"size:512"`
+	OnlinePaymentEnabled           bool   `gorm:"default:true"`
+	ManualPaymentEnabled           bool   `gorm:"default:true"`
 	ManualPaymentQRCode            string `gorm:"type:longtext"`
 }
 

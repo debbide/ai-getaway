@@ -1,5 +1,7 @@
-<script setup>
+﻿<script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api/client'
 
 const menu = [
@@ -110,6 +112,8 @@ const settings = reactive({
   epay_notify_url: '',
   epay_return_url: '',
   epay_submit_url: '',
+  online_payment_enabled: true,
+  manual_payment_enabled: true,
   manual_payment_qr_code: '',
   smtp_password_configured: false,
   epay_key_configured: false,
@@ -182,6 +186,14 @@ watch(active, (value) => {
   stopOverviewMetricsPolling()
 })
 
+watch(error, (message) => {
+  if (message) ElMessage.error(message)
+})
+
+watch(notice, (message) => {
+  if (message) ElMessage.success(message)
+})
+
 function emptyPlan() {
   return {
     id: null,
@@ -197,6 +209,8 @@ function emptyPlan() {
     settlement_usd_cents: 2000,
     duration_days: 30,
     description: '',
+    is_lottery: false,
+    lottery_url: '',
     enabled: true
   }
 }
@@ -553,6 +567,8 @@ function openPlanModal(plan = null) {
       settlement_usd_cents: plan.SettlementUSDCents,
       duration_days: plan.DurationDays,
       description: plan.Description,
+      is_lottery: Boolean(plan.IsLottery),
+      lottery_url: plan.LotteryURL || '',
       enabled: plan.Enabled
     })
   }
@@ -1302,10 +1318,12 @@ function normalizePlan(plan) {
     plan_type: isPublic ? 'public' : 'subscription',
     quota_period: isPublic ? 'public' : plan.quota_period,
     public_channel_id: isPublic ? Number(plan.public_channel_id || 0) : null,
-    price_cents: amountToCents(plan.price_rmb),
+    price_cents: plan.is_lottery ? 0 : amountToCents(plan.price_rmb),
     settlement_usd_cents: amountToCents(plan.period_usd_quota),
     duration_days: isPublic ? 1 : Number(plan.duration_days || 1),
     description: plan.description.trim(),
+    is_lottery: Boolean(plan.is_lottery),
+    lottery_url: plan.lottery_url.trim(),
     enabled: Boolean(plan.enabled)
   }
 }
@@ -1585,24 +1603,17 @@ function submitModal() {
         <div class="sidebar-glow"></div>
         <p class="section-kicker">Admin Center</p>
         <h2 class="mt-2 text-2xl font-black text-ink">管理后台</h2>
-        <div class="mt-6 grid gap-2">
-          <button
-            v-for="item in menu"
-            :key="item.key"
-            class="nav-pill"
-            :class="{ 'nav-pill-active': active === item.key }"
-            @click="setActiveSection(item.key)"
-          >
-            <span>{{ item.label }}</span>
-            <small>{{ item.hint }}</small>
-          </button>
-        </div>
+        <el-menu class="mt-6 admin-el-menu" :default-active="active" @select="setActiveSection">
+          <el-menu-item v-for="item in menu" :key="item.key" :index="item.key">
+            <div class="admin-menu-item">
+              <span>{{ item.label }}</span>
+              <small>{{ item.hint }}</small>
+            </div>
+          </el-menu-item>
+        </el-menu>
       </aside>
 
       <div class="min-w-0">
-        <div v-if="error" class="alert alert-danger">{{ error }}</div>
-        <div v-if="notice" class="alert alert-success">{{ notice }}</div>
-
         <div v-if="active === 'overview'" class="space-y-6">
           <div class="admin-hero">
             <div>
@@ -1668,7 +1679,7 @@ function submitModal() {
                   <p class="section-kicker">Pending</p>
                   <h3>待处理订单</h3>
                 </div>
-                <button class="ghost-button" @click="setActiveSection('orders')">查看全部</button>
+                <el-button @click="setActiveSection('orders')">查看全部</el-button>
               </div>
               <div class="mt-4 grid gap-3">
                 <article v-for="order in pendingReviewOrders.slice(0, 4)" :key="order.ID" class="list-row">
@@ -1676,7 +1687,7 @@ function submitModal() {
                     <strong>#{{ order.ID }} · {{ order.User?.Email || '未知用户' }}</strong>
                     <span>{{ order.Plan?.Name || '未关联套餐' }} · {{ money(order.AmountCents) }}</span>
                   </div>
-                  <button class="primary-button small" @click="openApproveModal(order)">审核</button>
+                  <el-button type="primary" size="small" @click="openApproveModal(order)">审核</el-button>
                 </article>
               </div>
             </section>
@@ -1687,7 +1698,7 @@ function submitModal() {
                   <p class="section-kicker">Plans</p>
                   <h3>套餐状态</h3>
                 </div>
-                <button class="ghost-button" @click="openPlanModal()">新增</button>
+                <el-button @click="openPlanModal()">新增</el-button>
               </div>
               <div class="mt-4 grid gap-3">
                 <article v-for="plan in overviewPlans" :key="plan.ID" class="plan-mini">
@@ -1699,7 +1710,7 @@ function submitModal() {
                 </article>
               </div>
               <div v-if="hasMorePlans" class="mt-4 flex justify-end">
-                <button class="ghost-button" @click="setActiveSection('plans')">更多</button>
+                <el-button @click="setActiveSection('plans')">更多</el-button>
               </div>
             </section>
           </div>
@@ -1713,37 +1724,65 @@ function submitModal() {
               <span>{{ enabledPlans }} 个启用套餐，{{ plans.length }} 个总套餐</span>
             </div>
             <div class="toolbar-actions">
-              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
-              <button class="primary-button" @click="openPlanModal()">新增套餐</button>
+              <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
+              <el-button type="primary" @click="openPlanModal()">新增套餐</el-button>
             </div>
           </div>
 
-          <div class="plan-grid">
-            <article v-for="plan in plans" :key="plan.ID" class="plan-card" :class="{ disabled: !plan.Enabled }">
-              <div class="plan-card-top">
-                <div>
-                  <p>{{ plan.Code || '未设置编码' }}</p>
-                  <h3>{{ plan.Name }}</h3>
-                </div>
-                <span class="status-badge" :class="{ muted: !plan.Enabled }">{{ plan.Enabled ? '已启用' : '已停用' }}</span>
-              </div>
-              <p class="plan-desc">{{ plan.Description || '暂无说明' }}</p>
-              <div class="plan-price">
-                <strong>{{ rmb(plan.PriceCents) }}</strong>
-                <span>{{ plan.DurationDays }} 天</span>
-              </div>
-              <div class="quota-grid">
-                <span><b>{{ usd(plan.SettlementUSDCents) }}</b>{{ quotaPeriodLabel(plan.QuotaPeriod) }}美元额度</span>
-                <span><b>{{ totalUsd(plan) }}</b>预计总额度</span>
-                <span v-if="plan.QuotaPeriod === 'public'"><b>{{ publicChannelName(plan) }}</b>公共渠道</span>
-                <span v-else><b>{{ plan.DurationDays }} 天</b>订阅周期</span>
-              </div>
-              <div class="card-actions">
-                <button class="ghost-button" @click="openPlanModal(plan)">编辑</button>
-                <button class="danger-button" @click="confirmDeletePlan(plan)">删除</button>
-              </div>
-            </article>
-          </div>
+          <section class="panel-surface overflow-hidden">
+            <div class="table-wrap">
+              <el-table :data="plans" border>
+                <el-table-column label="套餐" min-width="240">
+                  <template #default="{ row: plan }">
+                    <div class="model-cell">
+                      <strong>{{ plan.Name }}</strong>
+                      <small>{{ plan.Code || '未设置编码' }}</small>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="说明" min-width="220">
+                  <template #default="{ row: plan }">{{ plan.Description || '暂无说明' }}</template>
+                </el-table-column>
+                <el-table-column label="售价" width="120">
+                  <template #default="{ row: plan }">{{ plan.IsLottery ? '抽奖' : rmb(plan.PriceCents) }}</template>
+                </el-table-column>
+                <el-table-column label="类型" width="110">
+                  <template #default="{ row: plan }">
+                    <el-tag :type="plan.IsLottery ? 'warning' : 'info'">{{ plan.IsLottery ? '抽奖套餐' : '购买套餐' }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="额度周期" min-width="150">
+                  <template #default="{ row: plan }">{{ quotaPeriodLabel(plan.QuotaPeriod) }}美元额度</template>
+                </el-table-column>
+                <el-table-column label="周期额度" width="130">
+                  <template #default="{ row: plan }">{{ usd(plan.SettlementUSDCents) }}</template>
+                </el-table-column>
+                <el-table-column label="预计总额度" width="130">
+                  <template #default="{ row: plan }">{{ totalUsd(plan) }}</template>
+                </el-table-column>
+                <el-table-column label="渠道 / 订阅" min-width="160">
+                  <template #default="{ row: plan }">
+                    <span v-if="plan.IsLottery">{{ plan.LotteryURL || '未设置跳转地址' }}</span>
+                    <span v-else-if="plan.QuotaPeriod === 'public'">{{ publicChannelName(plan) }}</span>
+                    <span v-else>{{ plan.DurationDays }} 天</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="状态" width="110">
+                  <template #default="{ row: plan }">
+                    <el-tag :type="plan.Enabled ? 'success' : 'info'">{{ plan.Enabled ? '已启用' : '已停用' }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="150">
+                  <template #default="{ row: plan }">
+                    <div class="table-actions">
+                      <el-button size="small" @click="openPlanModal(plan)">编辑</el-button>
+                      <el-button type="danger" size="small" @click="confirmDeletePlan(plan)">删除</el-button>
+                    </div>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </section>
         </div>
 
         <div v-if="active === 'orders'" class="space-y-5">
@@ -1753,45 +1792,44 @@ function submitModal() {
               <h2>审核管理</h2>
               <span>订单审核、绑定上游账号和驳回原因都在弹窗内完成</span>
             </div>
-            <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
+            <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
           </div>
 
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>订单</th>
-                    <th>用户</th>
-                    <th>套餐</th>
-                    <th>上游渠道</th>
-                    <th>金额</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="order in orders" :key="order.ID">
-                    <td>#{{ order.ID }}</td>
-                    <td>
-                      <strong>{{ order.User?.Email || '-' }}</strong>
-                      <small v-if="order.UserPaymentNote">付款备注：{{ order.UserPaymentNote }}</small>
-                    </td>
-                    <td>{{ order.Plan?.Name || '-' }}</td>
-                    <td>{{ isPublicOrder(order) ? (order.Plan?.PublicChannel?.Name || '公共渠道') : (order.Upstream?.Channel || '-') }}</td>
-                    <td>{{ money(order.AmountCents) }}</td>
-                    <td><span class="status-badge">{{ statusLabel(order.Status) }}</span></td>
-                    <td>
-                      <div class="table-actions">
-                        <button class="ghost-button small" @click="openEditOrderModal(order)">编辑</button>
-                        <button class="primary-button small" :disabled="order.Status !== 'pending_payment'" @click="completeOrderPayment(order)">完成支付</button>
-                        <button class="ghost-button small" :disabled="!reviewableOrderStatuses.includes(order.Status)" @click="openApproveModal(order)">审核</button>
-                        <button class="danger-button small" :disabled="!reviewableOrderStatuses.includes(order.Status)" @click="openRejectModal(order)">拒绝</button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <el-table :data="orders" border>
+                <el-table-column label="订单" width="90">
+                  <template #default="{ row: order }">#{{ order.ID }}</template>
+                </el-table-column>
+                <el-table-column label="用户" min-width="220">
+                  <template #default="{ row: order }">
+                    <strong>{{ order.User?.Email || '-' }}</strong>
+                    <small v-if="order.UserPaymentNote">付款备注：{{ order.UserPaymentNote }}</small>
+                  </template>
+                </el-table-column>
+                <el-table-column label="套餐" min-width="150">
+                  <template #default="{ row: order }">{{ order.Plan?.Name || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="上游渠道" min-width="170">
+                  <template #default="{ row: order }">{{ isPublicOrder(order) ? (order.Plan?.PublicChannel?.Name || '公共渠道') : (order.Upstream?.Channel || '-') }}</template>
+                </el-table-column>
+                <el-table-column label="金额" width="110">
+                  <template #default="{ row: order }">{{ money(order.AmountCents) }}</template>
+                </el-table-column>
+                <el-table-column label="状态" width="130">
+                  <template #default="{ row: order }"><el-tag>{{ statusLabel(order.Status) }}</el-tag></template>
+                </el-table-column>
+                <el-table-column label="操作" min-width="260">
+                  <template #default="{ row: order }">
+                    <div class="table-actions">
+                      <el-button size="small" @click="openEditOrderModal(order)">编辑</el-button>
+                      <el-button type="primary" size="small" :disabled="order.Status !== 'pending_payment'" @click="completeOrderPayment(order)">完成支付</el-button>
+                      <el-button size="small" :disabled="!reviewableOrderStatuses.includes(order.Status)" @click="openApproveModal(order)">审核</el-button>
+                      <el-button type="danger" size="small" :disabled="!reviewableOrderStatuses.includes(order.Status)" @click="openRejectModal(order)">拒绝</el-button>
+                    </div>
+                  </template>
+                </el-table-column>
+              </el-table>
             </div>
           </section>
         </div>
@@ -1804,59 +1842,25 @@ function submitModal() {
               <span>{{ enabledModels }} 个启用模型，用户扣费按这里的单价和倍率计算</span>
             </div>
             <div class="toolbar-actions">
-              <button class="ghost-button" type="button" :disabled="loading" @click="syncOfficialModels">同步官方倍率</button>
-              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
-              <button class="primary-button" @click="openModelModal()">新增模型</button>
+              <el-button :loading="loading" @click="syncOfficialModels">同步官方倍率</el-button>
+              <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
+              <el-button type="primary" @click="openModelModal()">新增模型</el-button>
             </div>
           </div>
 
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <table class="data-table model-pricing-table">
-                <thead>
-                  <tr>
-                    <th>模型</th>
-                    <th>输入单价</th>
-                    <th>缓存读取</th>
-                    <th>输出单价</th>
-                    <th>倍率</th>
-                    <th>展示卡片</th>
-                    <th>状态</th>
-                    <th>同步时间</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="item in models" :key="item.ID">
-                    <td class="model-cell">
-                      <strong>{{ item.ModelName }}</strong>
-                      <small>{{ item.DisplayName || item.Provider || '-' }}</small>
-                    </td>
-                    <td class="price-cell">
-                      <strong>{{ modelActualUnit(item, 'InputUSDPerMillion') }}</strong>
-                      <small>原价 {{ modelUnit(item.InputUSDPerMillion) }}</small>
-                    </td>
-                    <td class="price-cell">
-                      <strong>{{ modelActualUnit(item, 'CachedInputUSDPerMillion') }}</strong>
-                      <small>原价 {{ modelUnit(item.CachedInputUSDPerMillion) }}</small>
-                    </td>
-                    <td class="price-cell">
-                      <strong>{{ modelActualUnit(item, 'OutputUSDPerMillion') }}</strong>
-                      <small>原价 {{ modelUnit(item.OutputUSDPerMillion) }}</small>
-                    </td>
-                    <td class="multiplier-cell">{{ Number(item.BillingMultiplier || 1).toFixed(2) }}x</td>
-                    <td class="status-cell"><span class="status-badge" :class="{ muted: !item.Featured }">{{ item.Featured ? '展示' : '不展示' }}</span></td>
-                    <td class="status-cell"><span class="status-badge model-status-badge" :class="{ muted: item.Status !== 'active' }">{{ modelStatusLabel(item.Status) }}</span></td>
-                    <td class="time-cell">{{ formatSyncTime(item.OfficialSyncedAt) }}</td>
-                    <td class="actions-cell">
-                      <div class="table-actions">
-                        <button class="ghost-button small" @click="openModelModal(item)">编辑</button>
-                        <button class="danger-button small" @click="confirmDeleteModel(item)">删除</button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <el-table :data="models" class="model-pricing-table" border>
+                <el-table-column label="模型" min-width="210"><template #default="{ row: item }"><div class="model-cell"><strong>{{ item.ModelName }}</strong><small>{{ item.DisplayName || item.Provider || '-' }}</small></div></template></el-table-column>
+                <el-table-column label="输入单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'InputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.InputUSDPerMillion) }}</small></div></template></el-table-column>
+                <el-table-column label="缓存读取" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'CachedInputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.CachedInputUSDPerMillion) }}</small></div></template></el-table-column>
+                <el-table-column label="输出单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'OutputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.OutputUSDPerMillion) }}</small></div></template></el-table-column>
+                <el-table-column label="倍率" width="90"><template #default="{ row: item }">{{ Number(item.BillingMultiplier || 1).toFixed(2) }}x</template></el-table-column>
+                <el-table-column label="展示卡片" width="110"><template #default="{ row: item }"><el-tag :type="item.Featured ? 'success' : 'info'">{{ item.Featured ? '展示' : '不展示' }}</el-tag></template></el-table-column>
+                <el-table-column label="状态" width="110"><template #default="{ row: item }"><el-tag :type="item.Status === 'active' ? 'success' : 'info'">{{ modelStatusLabel(item.Status) }}</el-tag></template></el-table-column>
+                <el-table-column label="同步时间" min-width="150"><template #default="{ row: item }">{{ formatSyncTime(item.OfficialSyncedAt) }}</template></el-table-column>
+                <el-table-column label="操作" width="150"><template #default="{ row: item }"><div class="table-actions"><el-button size="small" @click="openModelModal(item)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteModel(item)">删除</el-button></div></template></el-table-column>
+              </el-table>
             </div>
           </section>
 
@@ -1880,72 +1884,41 @@ function submitModal() {
               <span>普通渠道 {{ enabledChannels }}/{{ channels.length }}，公共渠道 {{ enabledPublicChannels }}/{{ publicChannels.length }}</span>
             </div>
             <div class="toolbar-actions">
-              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
-              <button v-if="channelsTab === 'upstream'" class="primary-button" @click="openChannelModal()">新增渠道</button>
-              <button v-else class="primary-button" @click="openPublicChannelModal()">新增公共渠道</button>
+              <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
+              <el-button v-if="channelsTab === 'upstream'" type="primary" @click="openChannelModal()">新增渠道</el-button>
+              <el-button v-else type="primary" @click="openPublicChannelModal()">新增公共渠道</el-button>
             </div>
           </div>
 
-          <div class="settings-tabs">
-            <button :class="{ active: channelsTab === 'upstream' }" @click="channelsTab = 'upstream'">上游渠道</button>
-            <button :class="{ active: channelsTab === 'public' }" @click="channelsTab = 'public'">公共渠道</button>
-          </div>
+          <el-segmented
+            v-model="channelsTab"
+            class="settings-tabs"
+            :options="[
+              { label: '上游渠道', value: 'upstream' },
+              { label: '公共渠道', value: 'public' }
+            ]"
+          />
 
           <section v-if="channelsTab === 'upstream'" class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>渠道名称</th>
-                    <th>API 地址</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="channel in channels" :key="channel.ID">
-                    <td>{{ channel.Name }}</td>
-                    <td>{{ channel.BaseURL }}</td>
-                    <td><span class="status-badge" :class="{ muted: !channel.Enabled }">{{ channel.Enabled ? '已启用' : '已停用' }}</span></td>
-                    <td>
-                      <div class="table-actions">
-                        <button class="ghost-button small" @click="openChannelModal(channel)">编辑</button>
-                        <button class="danger-button small" @click="confirmDeleteChannel(channel)">删除</button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <el-table :data="channels" border>
+                <el-table-column label="渠道名称" min-width="160" prop="Name" />
+                <el-table-column label="API 地址" min-width="260" prop="BaseURL" />
+                <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled ? 'success' : 'info'">{{ channel.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="150"><template #default="{ row: channel }"><div class="table-actions"><el-button size="small" @click="openChannelModal(channel)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteChannel(channel)">删除</el-button></div></template></el-table-column>
+              </el-table>
             </div>
           </section>
 
           <section v-else class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>渠道名称</th>
-                    <th>API 地址</th>
-                    <th>剩余额度 / 总额度</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="channel in publicChannels" :key="channel.ID">
-                    <td>{{ channel.Name }}</td>
-                    <td>{{ channel.BaseURL }}</td>
-                    <td>{{ channelQuotaText(channel) }}</td>
-                    <td><span class="status-badge" :class="{ muted: !channel.Enabled || channel.RemainingUSDCents <= 0 }">{{ channel.RemainingUSDCents <= 0 ? '售罄' : (channel.Enabled ? '已启用' : '已停用') }}</span></td>
-                    <td>
-                      <div class="table-actions">
-                        <button class="ghost-button small" @click="openPublicChannelModal(channel)">编辑</button>
-                        <button class="danger-button small" @click="confirmDeletePublicChannel(channel)">删除</button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <el-table :data="publicChannels" border>
+                <el-table-column label="渠道名称" min-width="160" prop="Name" />
+                <el-table-column label="API 地址" min-width="260" prop="BaseURL" />
+                <el-table-column label="剩余额度 / 总额度" min-width="160"><template #default="{ row: channel }">{{ channelQuotaText(channel) }}</template></el-table-column>
+                <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled && channel.RemainingUSDCents > 0 ? 'success' : 'info'">{{ channel.RemainingUSDCents <= 0 ? '售罄' : (channel.Enabled ? '已启用' : '已停用') }}</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="150"><template #default="{ row: channel }"><div class="table-actions"><el-button size="small" @click="openPublicChannelModal(channel)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeletePublicChannel(channel)">删除</el-button></div></template></el-table-column>
+              </el-table>
             </div>
           </section>
         </div>
@@ -1958,112 +1931,69 @@ function submitModal() {
               <span>新增、修改和删除用户都通过模态框完成，状态和角色使用中文选项</span>
             </div>
             <div class="toolbar-actions">
-              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
-              <button class="primary-button" @click="openUserModal()">新增用户</button>
+              <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
+              <el-button type="primary" @click="openUserModal()">新增用户</el-button>
             </div>
           </div>
 
-          <div class="settings-tabs">
-            <button type="button" :class="{ active: usersTab === 'users' }" @click="usersTab = 'users'">用户列表</button>
-            <button type="button" :class="{ active: usersTab === 'api-keys' }" @click="usersTab = 'api-keys'">API Key</button>
-          </div>
+          <el-segmented
+            v-model="usersTab"
+            class="settings-tabs"
+            :options="[
+              { label: '用户列表', value: 'users' },
+              { label: 'API Key', value: 'api-keys' }
+            ]"
+          />
 
           <section v-if="usersTab === 'users'" class="panel-surface p-4">
-            <div class="form-grid user-filter-grid">
-              <label class="field">
-                <span>搜索</span>
-                <input v-model="userSearch.keyword" placeholder="用户名 / 邮箱 / ID" />
-              </label>
-              <label class="field">
-                <span>角色</span>
-                <select v-model="userSearch.role">
-                  <option value="">全部</option>
-                  <option v-for="option in roleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>状态</span>
-                <select v-model="userSearch.status">
-                  <option value="">全部</option>
-                  <option v-for="option in statusOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>套餐</span>
-                <select v-model="userSearch.plan">
-                  <option value="">全部</option>
-                  <option v-for="plan in plans" :key="plan.ID" :value="String(plan.ID)">{{ plan.Name }}</option>
-                </select>
-              </label>
-            </div>
+            <el-form class="form-grid user-filter-grid" label-position="top">
+              <el-form-item label="搜索">
+                <el-input v-model="userSearch.keyword" clearable placeholder="用户名 / 邮箱 / ID" />
+              </el-form-item>
+              <el-form-item label="角色">
+                <el-select v-model="userSearch.role" clearable placeholder="全部">
+                  <el-option label="全部" value="" />
+                  <el-option v-for="option in roleOptions" :key="option.value" :label="option.label" :value="option.value" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="状态">
+                <el-select v-model="userSearch.status" clearable placeholder="全部">
+                  <el-option label="全部" value="" />
+                  <el-option v-for="option in statusOptions" :key="option.value" :label="option.label" :value="option.value" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="套餐">
+                <el-select v-model="userSearch.plan" clearable filterable placeholder="全部">
+                  <el-option label="全部" value="" />
+                  <el-option v-for="plan in plans" :key="plan.ID" :label="plan.Name" :value="String(plan.ID)" />
+                </el-select>
+              </el-form-item>
+            </el-form>
           </section>
 
           <section v-if="usersTab === 'users'" class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>用户</th>
-                    <th>角色</th>
-                    <th>状态</th>
-                    <th>套餐</th>
-                    <th>订阅额度</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="user in filteredUsers" :key="user.ID">
-                    <td>
-                      <strong>{{ user.Email }}</strong>
-                      <small>{{ user.Username }}</small>
-                    </td>
-                    <td>{{ roleLabel(user.Role) }}</td>
-                    <td><span class="status-badge">{{ statusLabel(user.Status) }}</span></td>
-                    <td>{{ planLabel(user) }}</td>
-                    <td>{{ user.Plan ? `${usd(user.Plan.SettlementUSDCents)} / ${user.Plan.QuotaPeriod === 'daily' ? '日' : '周'}` : '未分配' }}</td>
-                    <td>
-                      <div class="table-actions">
-                        <button class="ghost-button small" @click="openUserModal(user)">编辑</button>
-                        <button class="ghost-button small" @click="openUserUpstreamModal(user)">渠道</button>
-                        <button class="danger-button small" @click="confirmDeleteUser(user)">删除</button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <el-table :data="filteredUsers" border>
+                <el-table-column label="用户" min-width="220"><template #default="{ row: user }"><strong>{{ user.Email }}</strong><small>{{ user.Username }}</small></template></el-table-column>
+                <el-table-column label="角色" width="110"><template #default="{ row: user }">{{ roleLabel(user.Role) }}</template></el-table-column>
+                <el-table-column label="状态" width="110"><template #default="{ row: user }"><el-tag>{{ statusLabel(user.Status) }}</el-tag></template></el-table-column>
+                <el-table-column label="套餐" min-width="150"><template #default="{ row: user }">{{ planLabel(user) }}</template></el-table-column>
+                <el-table-column label="订阅额度" min-width="160"><template #default="{ row: user }">{{ user.Plan ? `${usd(user.Plan.SettlementUSDCents)} / ${user.Plan.QuotaPeriod === 'daily' ? '日' : '周'}` : '未分配' }}</template></el-table-column>
+                <el-table-column label="操作" width="190"><template #default="{ row: user }"><div class="table-actions"><el-button size="small" @click="openUserModal(user)">编辑</el-button><el-button size="small" @click="openUserUpstreamModal(user)">渠道</el-button><el-button type="danger" size="small" @click="confirmDeleteUser(user)">删除</el-button></div></template></el-table-column>
+              </el-table>
             </div>
           </section>
 
           <section v-if="usersTab === 'api-keys'" class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>用户</th>
-                    <th>名称</th>
-                    <th>前缀</th>
-                    <th>状态</th>
-                    <th>更新时间</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="key in filteredApiKeys" :key="key.ID">
-                    <td>{{ key.User?.Email || key.User?.Username || '-' }}</td>
-                    <td>{{ key.Name }}</td>
-                    <td>{{ apiKeyPrefix(key.KeyPrefix) }}</td>
-                    <td><span class="status-badge">{{ apiKeyStatusLabel(key.Status) }}</span></td>
-                    <td>{{ formatDate(key.UpdatedAt || key.CreatedAt) }}</td>
-                    <td>
-                      <div class="table-actions">
-                        <button class="ghost-button small" @click="openApiKeyModal(key)">编辑</button>
-                        <button class="ghost-button small" @click="toggleApiKeyStatus(key)">{{ key.Status === 'active' ? '停用' : '启用' }}</button>
-                        <button class="danger-button small" @click="confirmDeleteApiKey(key)">删除</button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <el-table :data="filteredApiKeys" border>
+                <el-table-column label="用户" min-width="220"><template #default="{ row: key }">{{ key.User?.Email || key.User?.Username || '-' }}</template></el-table-column>
+                <el-table-column label="名称" min-width="140" prop="Name" />
+                <el-table-column label="前缀" min-width="120"><template #default="{ row: key }">{{ apiKeyPrefix(key.KeyPrefix) }}</template></el-table-column>
+                <el-table-column label="状态" width="110"><template #default="{ row: key }"><el-tag>{{ apiKeyStatusLabel(key.Status) }}</el-tag></template></el-table-column>
+                <el-table-column label="更新时间" min-width="160"><template #default="{ row: key }">{{ formatDate(key.UpdatedAt || key.CreatedAt) }}</template></el-table-column>
+                <el-table-column label="操作" width="200"><template #default="{ row: key }"><div class="table-actions"><el-button size="small" @click="openApiKeyModal(key)">编辑</el-button><el-button size="small" @click="toggleApiKeyStatus(key)">{{ key.Status === 'active' ? '停用' : '启用' }}</el-button><el-button type="danger" size="small" @click="confirmDeleteApiKey(key)">删除</el-button></div></template></el-table-column>
+              </el-table>
             </div>
           </section>
         </div>
@@ -2076,44 +2006,20 @@ function submitModal() {
               <span>{{ enabledAnnouncements }} 条启用公告，{{ announcements.length }} 条总公告。用户控制台默认展示最新启用公告。</span>
             </div>
             <div class="toolbar-actions">
-              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
-              <button class="primary-button" @click="openAnnouncementModal()">发布公告</button>
+              <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
+              <el-button type="primary" @click="openAnnouncementModal()">发布公告</el-button>
             </div>
           </div>
 
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>公告</th>
-                    <th>发布时间</th>
-                    <th>排序</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="item in announcements" :key="item.ID">
-                    <td>
-                      <strong>{{ item.Title }}</strong>
-                      <small>{{ item.Summary || item.Content }}</small>
-                    </td>
-                    <td>{{ formatDate(item.PublishedAt || item.CreatedAt) }}</td>
-                    <td>{{ item.SortOrder }}</td>
-                    <td>
-                      <span class="status-badge" :class="{ muted: !item.Enabled }">{{ item.Enabled ? '已启用' : '已停用' }}</span>
-                      <span v-if="item.Pinned" class="status-badge">置顶</span>
-                    </td>
-                    <td>
-                      <div class="table-actions">
-                        <button class="ghost-button small" @click="openAnnouncementModal(item)">编辑</button>
-                        <button class="danger-button small" @click="confirmDeleteAnnouncement(item)">删除</button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <el-table :data="announcements" border>
+                <el-table-column label="公告" min-width="260"><template #default="{ row: item }"><strong>{{ item.Title }}</strong><small>{{ item.Summary || item.Content }}</small></template></el-table-column>
+                <el-table-column label="发布时间" min-width="160"><template #default="{ row: item }">{{ formatDate(item.PublishedAt || item.CreatedAt) }}</template></el-table-column>
+                <el-table-column label="排序" width="90" prop="SortOrder" />
+                <el-table-column label="状态" width="150"><template #default="{ row: item }"><el-tag :type="item.Enabled ? 'success' : 'info'">{{ item.Enabled ? '已启用' : '已停用' }}</el-tag><el-tag v-if="item.Pinned" class="ml-1">置顶</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="150"><template #default="{ row: item }"><div class="table-actions"><el-button size="small" @click="openAnnouncementModal(item)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteAnnouncement(item)">删除</el-button></div></template></el-table-column>
+              </el-table>
             </div>
           </section>
         </div>
@@ -2126,43 +2032,21 @@ function submitModal() {
               <span>{{ enabledDocs }} 篇启用文档，{{ docs.length }} 篇总文档。左侧导航、排序和内容都可在这里维护。</span>
             </div>
             <div class="toolbar-actions">
-              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
-              <button class="primary-button" @click="openDocModal()">新增文档</button>
+              <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
+              <el-button type="primary" @click="openDocModal()">新增文档</el-button>
             </div>
           </div>
 
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>文档</th>
-                    <th>分组</th>
-                    <th>Slug</th>
-                    <th>排序</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="doc in docs" :key="doc.ID">
-                    <td>
-                      <strong>{{ doc.Title }}</strong>
-                      <small>{{ doc.Description || '暂无说明' }}</small>
-                    </td>
-                    <td>{{ doc.GroupName || '-' }}</td>
-                    <td><code>{{ doc.Slug }}</code></td>
-                    <td>{{ doc.SortOrder }}</td>
-                    <td><span class="status-badge" :class="{ muted: !doc.Enabled }">{{ doc.Enabled ? '已启用' : '已停用' }}</span></td>
-                    <td>
-                      <div class="table-actions">
-                        <button class="ghost-button small" @click="openDocModal(doc)">编辑</button>
-                        <button class="danger-button small" @click="confirmDeleteDoc(doc)">删除</button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <el-table :data="docs" border>
+                <el-table-column label="文档" min-width="240"><template #default="{ row: doc }"><strong>{{ doc.Title }}</strong><small>{{ doc.Description || '暂无说明' }}</small></template></el-table-column>
+                <el-table-column label="分组" min-width="120"><template #default="{ row: doc }">{{ doc.GroupName || '-' }}</template></el-table-column>
+                <el-table-column label="Slug" min-width="150"><template #default="{ row: doc }"><code>{{ doc.Slug }}</code></template></el-table-column>
+                <el-table-column label="排序" width="90" prop="SortOrder" />
+                <el-table-column label="状态" width="110"><template #default="{ row: doc }"><el-tag :type="doc.Enabled ? 'success' : 'info'">{{ doc.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="150"><template #default="{ row: doc }"><div class="table-actions"><el-button size="small" @click="openDocModal(doc)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteDoc(doc)">删除</el-button></div></template></el-table-column>
+              </el-table>
             </div>
           </section>
         </div>
@@ -2174,34 +2058,17 @@ function submitModal() {
               <h2>邮件模板</h2>
               <span>{{ enabledEmailTemplates }} 个模板启用，{{ emailTemplates.length }} 个总模板。模板变量会在发送时自动替换。</span>
             </div>
-            <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
+            <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
           </div>
 
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>模板</th>
-                    <th>邮件标题</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="item in emailTemplates" :key="item.Type">
-                    <td>
-                      <strong>{{ item.Name }}</strong>
-                      <small>{{ item.Description || item.Type }}</small>
-                    </td>
-                    <td>{{ item.Subject }}</td>
-                    <td><span class="status-badge" :class="{ muted: !item.Enabled }">{{ item.Enabled ? '已启用' : '已停用' }}</span></td>
-                    <td>
-                      <button class="ghost-button small" @click="openEmailTemplateModal(item)">编辑</button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <el-table :data="emailTemplates" border>
+                <el-table-column label="模板" min-width="220"><template #default="{ row: item }"><strong>{{ item.Name }}</strong><small>{{ item.Description || item.Type }}</small></template></el-table-column>
+                <el-table-column label="邮件标题" min-width="260" prop="Subject" />
+                <el-table-column label="状态" width="110"><template #default="{ row: item }"><el-tag :type="item.Enabled ? 'success' : 'info'">{{ item.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="100"><template #default="{ row: item }"><el-button size="small" @click="openEmailTemplateModal(item)">编辑</el-button></template></el-table-column>
+              </el-table>
             </div>
           </section>
 
@@ -2219,7 +2086,7 @@ function submitModal() {
           </section>
         </div>
 
-        <form v-if="active === 'navigation'" class="space-y-5" @submit.prevent="saveNavigation">
+        <el-form v-if="active === 'navigation'" class="space-y-5" label-position="top" @submit.prevent="saveNavigation">
           <div class="page-toolbar">
             <div>
               <p class="section-kicker">Navigation</p>
@@ -2227,8 +2094,8 @@ function submitModal() {
               <span>维护首页顶部导航，支持一级菜单、下拉子菜单、排序和外链。</span>
             </div>
             <div class="toolbar-actions">
-              <button type="button" class="icon-button refresh-button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshAdminData">↻</button>
-              <button class="primary-button">保存导航</button>
+              <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
+              <el-button type="primary" native-type="submit">保存导航</el-button>
             </div>
           </div>
 
@@ -2240,97 +2107,89 @@ function submitModal() {
                   <small>按顺序维护顶部导航，链接可填写 /plans、/models 或完整网址。</small>
                 </div>
                 <div class="nav-builder-actions">
-                  <button type="button" class="ghost-button small" @click="resetNavigationDefault">恢复默认</button>
-                  <button type="button" class="primary-button small" @click="addNavItem">新增菜单</button>
+                  <el-button size="small" @click="resetNavigationDefault">恢复默认</el-button>
+                  <el-button type="primary" size="small" @click="addNavItem">新增菜单</el-button>
                 </div>
               </div>
 
               <div class="nav-editor-list">
                 <article v-for="(item, index) in navDraft" :key="`nav-${index}`" class="nav-editor-card">
                   <div class="nav-editor-grid">
-                    <label class="field">
-                      <span>菜单名称</span>
-                      <input v-model="item.label" placeholder="首页" @input="syncNavigationSetting" />
-                    </label>
-                    <label class="field">
-                      <span>链接地址</span>
-                      <input v-model="item.path" placeholder="/plans" @input="syncNavigationSetting" />
-                    </label>
-                    <label class="toggle-line nav-toggle">
-                      <input v-model="item.external" type="checkbox" @change="syncNavigationSetting" />
-                      新窗口打开
-                    </label>
+                    <el-form-item label="菜单名称">
+                      <el-input v-model="item.label" placeholder="首页" @input="syncNavigationSetting" />
+                    </el-form-item>
+                    <el-form-item label="链接地址">
+                      <el-input v-model="item.path" placeholder="/plans" @input="syncNavigationSetting" />
+                    </el-form-item>
+                    <el-form-item class="nav-toggle" label="新窗口打开">
+                      <el-switch v-model="item.external" @change="syncNavigationSetting" />
+                    </el-form-item>
                     <div class="nav-row-actions">
-                      <button type="button" class="ghost-button small" :disabled="index === 0" @click="moveNavItem(index, -1)">上移</button>
-                      <button type="button" class="ghost-button small" :disabled="index === navDraft.length - 1" @click="moveNavItem(index, 1)">下移</button>
-                      <button type="button" class="danger-button small" @click="removeNavItem(index)">删除</button>
+                      <el-button size="small" :disabled="index === 0" @click="moveNavItem(index, -1)">上移</el-button>
+                      <el-button size="small" :disabled="index === navDraft.length - 1" @click="moveNavItem(index, 1)">下移</el-button>
+                      <el-button type="danger" size="small" @click="removeNavItem(index)">删除</el-button>
                     </div>
                   </div>
 
                   <div class="child-nav-list">
                     <div v-for="(child, childIndex) in item.children" :key="`nav-${index}-child-${childIndex}`" class="child-nav-row">
-                      <input v-model="child.label" placeholder="子菜单名称" @input="syncNavigationSetting" />
-                      <input v-model="child.path" placeholder="/claude" @input="syncNavigationSetting" />
-                      <label>
-                        <input v-model="child.external" type="checkbox" @change="syncNavigationSetting" />
-                        新窗口
-                      </label>
-                      <button type="button" class="danger-button small" @click="removeNavItem(index, childIndex)">删除</button>
+                      <el-input v-model="child.label" placeholder="子菜单名称" @input="syncNavigationSetting" />
+                      <el-input v-model="child.path" placeholder="/claude" @input="syncNavigationSetting" />
+                      <el-switch v-model="child.external" active-text="新窗口" @change="syncNavigationSetting" />
+                      <el-button type="danger" size="small" @click="removeNavItem(index, childIndex)">删除</el-button>
                     </div>
                   </div>
 
-                  <button type="button" class="ghost-button small" @click="addChildNavItem(index)">新增子菜单</button>
+                  <el-button size="small" @click="addChildNavItem(index)">新增子菜单</el-button>
                 </article>
               </div>
             </div>
           </section>
-        </form>
+        </el-form>
 
-        <form v-if="active === 'settings'" class="space-y-5" @submit.prevent="saveSettings">
+        <el-form v-if="active === 'settings'" class="space-y-5" label-position="top" @submit.prevent="saveSettings">
           <div class="page-toolbar">
             <div>
               <p class="section-kicker">Settings</p>
               <h2>系统设置</h2>
               <span>基础信息、SMTP 配置和易支付配置按类别维护</span>
             </div>
-            <button class="primary-button">保存设置</button>
+            <el-button type="primary" native-type="submit">保存设置</el-button>
           </div>
 
-          <div class="settings-tabs">
-            <button type="button" :class="{ active: settingsTab === 'basic' }" @click="settingsTab = 'basic'">基础信息</button>
-            <button type="button" :class="{ active: settingsTab === 'endpoints' }" @click="settingsTab = 'endpoints'">API 端点</button>
-            <button type="button" :class="{ active: settingsTab === 'smtp' }" @click="settingsTab = 'smtp'">SMTP 配置</button>
-            <button type="button" :class="{ active: settingsTab === 'notifications' }" @click="settingsTab = 'notifications'">通知开关</button>
-            <button type="button" :class="{ active: settingsTab === 'epay' }" @click="settingsTab = 'epay'">易支付配置</button>
-            <button type="button" :class="{ active: settingsTab === 'manualPayment' }" @click="settingsTab = 'manualPayment'">人工支付</button>
-          </div>
+          <el-segmented
+            v-model="settingsTab"
+            class="settings-tabs"
+            :options="[
+              { label: '基础信息', value: 'basic' },
+              { label: 'API 端点', value: 'endpoints' },
+              { label: 'SMTP 配置', value: 'smtp' },
+              { label: '通知开关', value: 'notifications' },
+              { label: '易支付配置', value: 'epay' },
+              { label: '人工支付', value: 'manualPayment' }
+            ]"
+          />
 
           <section v-if="settingsTab === 'basic'" class="panel-surface p-5">
             <div class="form-grid">
-              <label class="field">
-                <span>网站标题</span>
-                <input v-model="settings.site_title" placeholder="AI Gateway" />
-              </label>
-              <label class="field">
-                <span>联系邮箱</span>
-                <input v-model="settings.contact_email" type="email" placeholder="support@example.com" />
-              </label>
-              <label class="field">
-                <span>定价页主标题</span>
-                <input v-model="settings.pricing_title" placeholder="简单透明的定价" />
-              </label>
-              <label class="field">
-                <span>定价页副标题</span>
-                <input v-model="settings.pricing_subtitle" placeholder="保质保量无降智不掺假" />
-              </label>
-              <label class="field md:col-span-2">
-                <span>定价页提示内容</span>
-                <textarea v-model="settings.pricing_notice" rows="3" placeholder="展示在定价页顶部提示框中的说明文字"></textarea>
-              </label>
-              <label class="toggle-line md:col-span-2">
-                <input v-model="settings.allow_registration" type="checkbox" />
-                允许新用户注册
-              </label>
+              <el-form-item label="网站标题">
+                <el-input v-model="settings.site_title" placeholder="AI Gateway" />
+              </el-form-item>
+              <el-form-item label="联系邮箱">
+                <el-input v-model="settings.contact_email" type="email" placeholder="support@example.com" />
+              </el-form-item>
+              <el-form-item label="定价页主标题">
+                <el-input v-model="settings.pricing_title" placeholder="简单透明的定价" />
+              </el-form-item>
+              <el-form-item label="定价页副标题">
+                <el-input v-model="settings.pricing_subtitle" placeholder="保质保量无降智不掺假" />
+              </el-form-item>
+              <el-form-item class="md:col-span-2" label="定价页提示内容">
+                <el-input v-model="settings.pricing_notice" type="textarea" :rows="3" placeholder="展示在定价页顶部提示框中的说明文字" />
+              </el-form-item>
+              <el-form-item class="md:col-span-2" label="允许新用户注册">
+                <el-switch v-model="settings.allow_registration" />
+              </el-form-item>
             </div>
           </section>
 
@@ -2341,25 +2200,22 @@ function submitModal() {
                 <h3>API 端点</h3>
                 <span>配置用户控制台展示的 API 接入地址、标签和线路说明。</span>
               </div>
-              <button type="button" class="primary-button small" @click="addAPIEndpoint">新增端点</button>
+              <el-button type="primary" size="small" @click="addAPIEndpoint">新增端点</el-button>
             </div>
             <div class="endpoint-admin-list">
               <article v-for="(endpoint, index) in apiEndpointDraft" :key="index" class="endpoint-admin-item">
                 <div class="form-grid">
-                  <label class="field">
-                    <span>展示标签</span>
-                    <input v-model="endpoint.label" placeholder="CN2 优化" @input="syncAPIEndpointSetting" />
-                  </label>
-                  <label class="field">
-                    <span>线路说明</span>
-                    <input v-model="endpoint.description" placeholder="国内直连优化线路" @input="syncAPIEndpointSetting" />
-                  </label>
-                  <label class="field md:col-span-2">
-                    <span>API 地址</span>
-                    <input v-model="endpoint.url" placeholder="https://api.example.com/v1" @input="syncAPIEndpointSetting" />
-                  </label>
+                  <el-form-item label="展示标签">
+                    <el-input v-model="endpoint.label" placeholder="CN2 优化" @input="syncAPIEndpointSetting" />
+                  </el-form-item>
+                  <el-form-item label="线路说明">
+                    <el-input v-model="endpoint.description" placeholder="国内直连优化线路" @input="syncAPIEndpointSetting" />
+                  </el-form-item>
+                  <el-form-item class="md:col-span-2" label="API 地址">
+                    <el-input v-model="endpoint.url" placeholder="https://api.example.com/v1" @input="syncAPIEndpointSetting" />
+                  </el-form-item>
                 </div>
-                <button type="button" class="danger-button small" :disabled="apiEndpointDraft.length <= 1" @click="removeAPIEndpoint(index)">删除</button>
+                <el-button type="danger" size="small" :disabled="apiEndpointDraft.length <= 1" @click="removeAPIEndpoint(index)">删除</el-button>
               </article>
             </div>
           </section>
@@ -2371,29 +2227,20 @@ function submitModal() {
                 <h3>SMTP 配置</h3>
               </div>
               <div class="toolbar-actions">
-                <label class="toggle-line">
-                  <input v-model="settings.smtp_use_tls" type="checkbox" />
-                  使用 TLS
-                </label>
-                <button type="button" class="ghost-button small" :disabled="smtpTesting" @click="sendSMTPTest">
+                <el-switch v-model="settings.smtp_use_tls" active-text="使用 TLS" />
+                <el-button size="small" :loading="smtpTesting" @click="sendSMTPTest">
                   {{ smtpTesting ? '发送中...' : '发送测试邮件' }}
-                </button>
+                </el-button>
               </div>
             </div>
             <div class="form-grid">
-              <label class="field"><span>SMTP 主机</span><input v-model="settings.smtp_host" placeholder="smtp.example.com" /></label>
-              <label class="field"><span>SMTP 端口</span><input v-model.number="settings.smtp_port" type="number" min="1" /></label>
-              <label class="field"><span>SMTP 用户名</span><input v-model="settings.smtp_username" /></label>
-              <label class="field">
-                <span>SMTP 密码</span>
-                <input v-model="settings.smtp_password" type="password" :placeholder="settings.smtp_password_configured ? '已配置，留空不修改' : '请输入密码'" />
-              </label>
-              <label class="field"><span>发件邮箱</span><input v-model="settings.smtp_from_email" /></label>
-              <label class="field"><span>发件名称</span><input v-model="settings.smtp_from_name" /></label>
-              <label class="field md:col-span-2">
-                <span>测试收件邮箱</span>
-                <input v-model="settings.smtp_test_email" type="email" placeholder="输入一个邮箱用于接收测试邮件" />
-              </label>
+              <el-form-item label="SMTP 主机"><el-input v-model="settings.smtp_host" placeholder="smtp.example.com" /></el-form-item>
+              <el-form-item label="SMTP 端口"><el-input-number v-model="settings.smtp_port" :min="1" class="w-full" /></el-form-item>
+              <el-form-item label="SMTP 用户名"><el-input v-model="settings.smtp_username" /></el-form-item>
+              <el-form-item label="SMTP 密码"><el-input v-model="settings.smtp_password" type="password" show-password :placeholder="settings.smtp_password_configured ? '已配置，留空不修改' : '请输入密码'" /></el-form-item>
+              <el-form-item label="发件邮箱"><el-input v-model="settings.smtp_from_email" /></el-form-item>
+              <el-form-item label="发件名称"><el-input v-model="settings.smtp_from_name" /></el-form-item>
+              <el-form-item class="md:col-span-2" label="测试收件邮箱"><el-input v-model="settings.smtp_test_email" type="email" placeholder="输入一个邮箱用于接收测试邮件" /></el-form-item>
             </div>
           </section>
 
@@ -2406,22 +2253,18 @@ function submitModal() {
               </div>
             </div>
             <div class="form-grid">
-              <label class="toggle-line md:col-span-2">
-                <input v-model="settings.order_payment_admin_email_enabled" type="checkbox" />
-                用户支付成功且订单待审核时通知管理员
-              </label>
-              <label class="toggle-line md:col-span-2">
-                <input v-model="settings.order_approved_user_email_enabled" type="checkbox" />
-                审核通过并开通套餐后通知用户
-              </label>
-              <label class="toggle-line">
-                <input v-model="settings.subscription_expire_email_enabled" type="checkbox" />
-                套餐到期提醒用户
-              </label>
-              <label class="field">
-                <span>到期前提醒天数</span>
-                <input v-model.number="settings.subscription_expire_remind_days" type="number" min="1" max="365" />
-              </label>
+              <el-form-item class="md:col-span-2" label="用户支付成功且订单待审核时通知管理员">
+                <el-switch v-model="settings.order_payment_admin_email_enabled" />
+              </el-form-item>
+              <el-form-item class="md:col-span-2" label="审核通过并开通套餐后通知用户">
+                <el-switch v-model="settings.order_approved_user_email_enabled" />
+              </el-form-item>
+              <el-form-item label="套餐到期提醒用户">
+                <el-switch v-model="settings.subscription_expire_email_enabled" />
+              </el-form-item>
+              <el-form-item label="到期前提醒天数">
+                <el-input-number v-model="settings.subscription_expire_remind_days" :min="1" :max="365" class="w-full" />
+              </el-form-item>
             </div>
           </section>
 
@@ -2434,15 +2277,18 @@ function submitModal() {
               </div>
             </div>
             <div class="form-grid">
-              <label class="field md:col-span-2">
-                <span>接口网址</span>
-                <input v-model="settings.epay_submit_url" placeholder="https://mapi.example.com/" />
-              </label>
-              <label class="field"><span>商户 ID</span><input v-model="settings.epay_pid" placeholder="请输入商户 ID" /></label>
-              <label class="field">
-                <span>商户 KEY</span>
-                <input v-model="settings.epay_key" type="password" :placeholder="settings.epay_key_configured ? '已配置，留空不修改' : '请输入商户 KEY'" />
-              </label>
+              <el-form-item class="md:col-span-2" label="启用在线支付">
+                <el-switch v-model="settings.online_payment_enabled" active-text="前端展示在线支付" />
+              </el-form-item>
+              <el-form-item class="md:col-span-2" label="接口网址">
+                <el-input v-model="settings.epay_submit_url" placeholder="https://mapi.example.com/" />
+              </el-form-item>
+              <el-form-item label="商户 ID">
+                <el-input v-model="settings.epay_pid" placeholder="请输入商户 ID" />
+              </el-form-item>
+              <el-form-item label="商户 KEY">
+                <el-input v-model="settings.epay_key" type="password" show-password :placeholder="settings.epay_key_configured ? '已配置，留空不修改' : '请输入商户 KEY'" />
+              </el-form-item>
             </div>
           </section>
 
@@ -2460,251 +2306,224 @@ function submitModal() {
                 <span v-else>尚未上传付款二维码</span>
               </div>
               <div class="form-grid">
-                <label class="field md:col-span-2">
-                  <span>上传付款二维码</span>
-                  <input type="file" accept="image/*" @change="handleManualPaymentQRUpload" />
-                </label>
+                <el-form-item class="md:col-span-2" label="启用人工支付">
+                  <el-switch v-model="settings.manual_payment_enabled" active-text="前端展示人工支付" />
+                </el-form-item>
+                <el-form-item class="md:col-span-2" label="上传付款二维码">
+                  <el-upload :auto-upload="false" accept="image/*" :show-file-list="false" :on-change="(file) => handleManualPaymentQRUpload({ target: { files: [file.raw] } })">
+                    <el-button>选择图片</el-button>
+                  </el-upload>
+                </el-form-item>
                 <div class="order-flow-note md:col-span-2">
                   <strong>用户侧提示</strong>
                   <span>用户点击人工支付后会看到二维码，并被要求填写当前账号或转账留言；提交后订单进入待审核。</span>
                 </div>
-                <button type="button" class="danger-button small" :disabled="!settings.manual_payment_qr_code" @click="clearManualPaymentQR">清空二维码</button>
+                <el-button type="danger" size="small" :disabled="!settings.manual_payment_qr_code" @click="clearManualPaymentQR">清空二维码</el-button>
               </div>
             </div>
           </section>
-        </form>
+        </el-form>
       </div>
     </div>
 
-    <div v-if="modal.open" class="modal-backdrop" @click.self="closeModal">
-      <form class="modal-card" @submit.prevent="submitModal">
-        <div class="modal-head">
-          <h3>{{ modal.title }}</h3>
-          <button type="button" class="icon-button" @click="closeModal">×</button>
-        </div>
+    <el-dialog v-model="modal.open" class="admin-modal-dialog" :title="modal.title" width="760px" align-center @close="closeModal">
+      <el-form class="admin-modal-form" label-position="top" @submit.prevent="submitModal">
 
         <div v-if="modal.type === 'create-plan' || modal.type === 'edit-plan'" class="modal-body form-grid">
-          <label class="field"><span>套餐名称</span><input v-model="planForm.name" required placeholder="月卡套餐" /></label>
-          <label class="field"><span>套餐编码</span><input v-model="planForm.code" placeholder="monthly" /></label>
-          <label class="field"><span>套餐角标文案</span><input v-model="planForm.badge_text" placeholder="热卖推荐" maxlength="16" /></label>
-          <label class="field"><span>限额周期</span>
-            <select v-model="planForm.quota_period">
-              <option value="daily">日限额套餐</option>
-              <option value="weekly">周限额套餐</option>
-              <option value="public">公共渠道</option>
-            </select>
-          </label>
-          <label v-if="planForm.quota_period === 'public'" class="field">
-            <span>绑定公共渠道</span>
-            <select v-model="planForm.public_channel_id" required>
-              <option value="">请选择公共渠道</option>
-              <option v-for="channel in publicChannels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}（剩余 {{ usd(channel.RemainingUSDCents) }}）</option>
-            </select>
-          </label>
-          <label class="field"><span>售价（RMB）</span><input v-model.number="planForm.price_rmb" type="number" min="0.01" step="0.01" required /></label>
-          <label class="field"><span>{{ planForm.quota_period === 'public' ? '预计总美元额度' : (planForm.quota_period === 'daily' ? '每日美元额度' : '每周美元额度') }}</span><input v-model.number="planForm.period_usd_quota" type="number" min="0" step="0.01" /></label>
-          <label v-if="planForm.quota_period !== 'public'" class="field"><span>有效期（天）</span><input v-model.number="planForm.duration_days" type="number" min="1" required /></label>
-          <label v-if="planForm.quota_period !== 'public'" class="field"><span>预计总美元额度</span><input :value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></label>
-          <label class="field md:col-span-2"><span>套餐说明</span><textarea v-model="planForm.description" rows="3"></textarea></label>
-          <label class="toggle-line md:col-span-2"><input v-model="planForm.enabled" type="checkbox" />启用套餐</label>
+          <el-form-item label="套餐名称" required><el-input v-model="planForm.name" placeholder="月卡套餐" /></el-form-item>
+          <el-form-item label="套餐编码"><el-input v-model="planForm.code" placeholder="monthly" /></el-form-item>
+          <el-form-item label="套餐角标文案"><el-input v-model="planForm.badge_text" placeholder="热卖推荐" maxlength="16" /></el-form-item>
+          <el-form-item label="抽奖套餐"><el-switch v-model="planForm.is_lottery" active-text="参与抽奖" /></el-form-item>
+          <el-form-item label="限额周期">
+            <el-select v-model="planForm.quota_period">
+              <el-option label="日限额套餐" value="daily" />
+              <el-option label="周限额套餐" value="weekly" />
+              <el-option label="公共渠道" value="public" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="planForm.quota_period === 'public'" label="绑定公共渠道" required>
+            <el-select v-model="planForm.public_channel_id" placeholder="请选择公共渠道">
+              <el-option label="请选择公共渠道" value="" />
+              <el-option v-for="channel in publicChannels.filter((item) => item.Enabled)" :key="channel.ID" :label="`${channel.Name}（剩余 ${usd(channel.RemainingUSDCents)}）`" :value="channel.ID" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="planForm.is_lottery" class="md:col-span-2" label="参与抽奖按钮跳转地址" required><el-input v-model="planForm.lottery_url" placeholder="https://example.com/lottery" /></el-form-item>
+          <el-form-item v-if="!planForm.is_lottery" label="售价（RMB）"><el-input v-model.number="planForm.price_rmb" type="number" min="0.01" step="0.01" required /></el-form-item>
+          <el-form-item :label="planForm.quota_period === 'public' ? '预计总美元额度' : (planForm.quota_period === 'daily' ? '每日美元额度' : '每周美元额度')"><el-input v-model.number="planForm.period_usd_quota" type="number" min="0" step="0.01" /></el-form-item>
+          <el-form-item v-if="planForm.quota_period !== 'public'" label="有效期（天）"><el-input v-model.number="planForm.duration_days" type="number" min="1" required /></el-form-item>
+          <el-form-item v-if="planForm.quota_period !== 'public'" label="预计总美元额度"><el-input :model-value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></el-form-item>
+          <el-form-item class="md:col-span-2" label="套餐说明"><el-input v-model="planForm.description" type="textarea" :rows="3" /></el-form-item>
+          <el-form-item class="md:col-span-2" label="启用套餐"><el-switch v-model="planForm.enabled" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'create-channel' || modal.type === 'edit-channel'" class="modal-body form-grid">
-          <label class="field"><span>渠道名称</span><input v-model="channelForm.name" required placeholder="OpenAI" /></label>
-          <label class="field md:col-span-2"><span>API 地址</span><input v-model="channelForm.base_url" required placeholder="https://api.openai.com" /></label>
-          <label class="toggle-line md:col-span-2"><input v-model="channelForm.enabled" type="checkbox" />启用渠道</label>
+          <el-form-item label="渠道名称" required><el-input v-model="channelForm.name" placeholder="OpenAI" /></el-form-item>
+          <el-form-item class="md:col-span-2" label="API 地址" required><el-input v-model="channelForm.base_url" placeholder="https://api.openai.com" /></el-form-item>
+          <el-form-item class="md:col-span-2" label="启用渠道"><el-switch v-model="channelForm.enabled" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'create-public-channel' || modal.type === 'edit-public-channel'" class="modal-body form-grid">
-          <label class="field"><span>渠道名称</span><input v-model="publicChannelForm.name" required placeholder="公共 OpenAI" /></label>
-          <label class="field md:col-span-2"><span>API 地址</span><input v-model="publicChannelForm.base_url" required placeholder="https://api.openai.com" /></label>
-          <label class="field md:col-span-2">
-            <span>API Key</span>
-            <input v-model="publicChannelForm.api_key" type="text" :required="!publicChannelForm.id" :placeholder="publicChannelForm.id ? '留空则不修改' : '请输入公共渠道 API Key'" />
-          </label>
-          <label class="field"><span>渠道总额度（美元）</span><input v-model.number="publicChannelForm.total_usd_quota" type="number" min="0" step="0.01" required /></label>
-          <label class="field"><span>剩余美元额度</span><input v-model.number="publicChannelForm.remaining_usd_quota" type="number" min="0" step="0.01" required /></label>
-          <label class="toggle-line md:col-span-2"><input v-model="publicChannelForm.enabled" type="checkbox" />启用公共渠道</label>
+          <el-form-item label="渠道名称" required><el-input v-model="publicChannelForm.name" placeholder="公共 OpenAI" /></el-form-item>
+          <el-form-item class="md:col-span-2" label="API 地址" required><el-input v-model="publicChannelForm.base_url" placeholder="https://api.openai.com" /></el-form-item>
+          <el-form-item class="md:col-span-2" label="API Key" :required="!publicChannelForm.id">
+            <el-input v-model="publicChannelForm.api_key" :placeholder="publicChannelForm.id ? '留空则不修改' : '请输入公共渠道 API Key'" />
+          </el-form-item>
+          <el-form-item label="渠道总额度（美元）"><el-input v-model.number="publicChannelForm.total_usd_quota" type="number" min="0" step="0.01" required /></el-form-item>
+          <el-form-item label="剩余美元额度"><el-input v-model.number="publicChannelForm.remaining_usd_quota" type="number" min="0" step="0.01" required /></el-form-item>
+          <el-form-item class="md:col-span-2" label="启用公共渠道"><el-switch v-model="publicChannelForm.enabled" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'create-model' || modal.type === 'edit-model'" class="modal-body form-grid">
-          <label class="field"><span>模型 ID</span><input v-model="modelForm.model" required placeholder="gpt-5.5" /></label>
-          <label class="field"><span>显示名称</span><input v-model="modelForm.display_name" placeholder="GPT-5.5" /></label>
-          <label class="field"><span>服务商</span><input v-model="modelForm.provider" placeholder="openai" /></label>
-          <label class="field"><span>输入单价 / 1M Token</span><input v-model.number="modelForm.input_usd_per_million" type="number" min="0" step="0.0001" /></label>
-          <label class="field"><span>缓存读取单价 / 1M Token</span><input v-model.number="modelForm.cached_input_usd_per_million" type="number" min="0" step="0.0001" /></label>
-          <label class="field"><span>输出单价 / 1M Token</span><input v-model.number="modelForm.output_usd_per_million" type="number" min="0" step="0.0001" /></label>
-          <label class="field"><span>扣费倍率</span><input v-model.number="modelForm.billing_multiplier" type="number" min="0.0001" step="0.01" /></label>
-          <label class="field"><span>状态</span>
-            <select v-model="modelForm.status">
-              <option value="active">启用</option>
-              <option value="disabled">停用</option>
-            </select>
-          </label>
-          <label class="toggle-line md:col-span-2"><input v-model="modelForm.featured" type="checkbox" />展示在 /models 顶部卡片中</label>
-          <label class="field md:col-span-2"><span>备注</span><textarea v-model="modelForm.notes" rows="3"></textarea></label>
+          <el-form-item label="模型 ID" required><el-input v-model="modelForm.model" placeholder="gpt-5.5" /></el-form-item>
+          <el-form-item label="显示名称"><el-input v-model="modelForm.display_name" placeholder="GPT-5.5" /></el-form-item>
+          <el-form-item label="服务商"><el-input v-model="modelForm.provider" placeholder="openai" /></el-form-item>
+          <el-form-item label="输入单价 / 1M Token"><el-input v-model.number="modelForm.input_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
+          <el-form-item label="缓存读取单价 / 1M Token"><el-input v-model.number="modelForm.cached_input_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
+          <el-form-item label="输出单价 / 1M Token"><el-input v-model.number="modelForm.output_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
+          <el-form-item label="扣费倍率"><el-input v-model.number="modelForm.billing_multiplier" type="number" min="0.0001" step="0.01" /></el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="modelForm.status">
+              <el-option value="active" label="启用" />
+              <el-option value="disabled" label="停用" />
+            </el-select>
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="展示在 /models 顶部卡片中"><el-switch v-model="modelForm.featured" /></el-form-item>
+          <el-form-item class="md:col-span-2" label="备注"><el-input v-model="modelForm.notes" type="textarea" :rows="3" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'create-doc' || modal.type === 'edit-doc'" class="modal-body form-grid">
-          <label class="field">
-            <span>文档标题</span>
-            <input v-model="docForm.title" required placeholder="官方 API Base URL" />
-          </label>
-          <label class="field">
-            <span>Slug</span>
-            <input v-model="docForm.slug" required placeholder="api-base-url" />
-          </label>
-          <label class="field">
-            <span>左侧分组</span>
-            <input v-model="docForm.group_name" placeholder="快速开始" />
-          </label>
-          <label class="field">
-            <span>排序</span>
-            <input v-model.number="docForm.sort_order" type="number" />
-          </label>
-          <label class="field md:col-span-2">
-            <span>说明</span>
-            <input v-model="docForm.description" placeholder="展示在后台列表中的简短说明" />
-          </label>
-          <label class="field md:col-span-2">
-            <span>Markdown 内容</span>
-            <textarea v-model="docForm.content" class="markdown-editor" rows="18" placeholder="# 标题&#10;&#10;这里填写 Markdown 文档内容"></textarea>
-          </label>
-          <label class="toggle-line md:col-span-2"><input v-model="docForm.enabled" type="checkbox" />启用文档</label>
+          <el-form-item label="文档标题">
+            <el-input v-model="docForm.title" required placeholder="官方 API Base URL" />
+          </el-form-item>
+          <el-form-item label="Slug" required>
+            <el-input v-model="docForm.slug" placeholder="api-base-url" />
+          </el-form-item>
+          <el-form-item label="左侧分组">
+            <el-input v-model="docForm.group_name" placeholder="快速开始" />
+          </el-form-item>
+          <el-form-item label="排序">
+            <el-input-number v-model="docForm.sort_order" class="w-full" />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="说明">
+            <el-input v-model="docForm.description" placeholder="展示在后台列表中的简短说明" />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="Markdown 内容">
+            <el-input v-model="docForm.content" type="textarea" :rows="18" placeholder="# 标题&#10;&#10;这里填写 Markdown 文档内容" />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="启用文档"><el-switch v-model="docForm.enabled" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'create-announcement' || modal.type === 'edit-announcement'" class="modal-body form-grid">
-          <label class="field md:col-span-2">
-            <span>公告标题</span>
-            <input v-model="announcementForm.title" required placeholder="【2026-05-14】服务更新说明" />
-          </label>
-          <label class="field md:col-span-2">
-            <span>摘要</span>
-            <textarea v-model="announcementForm.summary" rows="3" placeholder="收起状态下展示的短内容，留空时自动使用正文前段"></textarea>
-          </label>
-          <label class="field md:col-span-2">
-            <span>公告正文</span>
-            <textarea v-model="announcementForm.content" class="markdown-editor announcement-editor" rows="8" required placeholder="支持换行展示。可填写更新说明、使用提醒、教程地址等内容。"></textarea>
-          </label>
-          <label class="field">
-            <span>链接文案</span>
-            <input v-model="announcementForm.link_text" placeholder="教程地址" />
-          </label>
-          <label class="field">
-            <span>链接地址</span>
-            <input v-model="announcementForm.link_url" placeholder="https://docs.example.com/..." />
-          </label>
-          <label class="field">
-            <span>发布时间</span>
-            <input v-model="announcementForm.published_at" type="datetime-local" />
-          </label>
-          <label class="field">
-            <span>排序</span>
-            <input v-model.number="announcementForm.sort_order" type="number" />
-          </label>
-          <label class="toggle-line"><input v-model="announcementForm.pinned" type="checkbox" />置顶公告</label>
-          <label class="toggle-line"><input v-model="announcementForm.enabled" type="checkbox" />启用公告</label>
+          <el-form-item class="md:col-span-2" label="公告标题">
+            <el-input v-model="announcementForm.title" required placeholder="【2026-05-14】服务更新说明" />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="摘要">
+            <el-input v-model="announcementForm.summary" type="textarea" :rows="3" placeholder="收起状态下展示的短内容，留空时自动使用正文前段" />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="公告正文">
+            <el-input v-model="announcementForm.content" type="textarea" :rows="8" placeholder="支持换行展示。可填写更新说明、使用提醒、教程地址等内容。" />
+          </el-form-item>
+          <el-form-item label="链接文案">
+            <el-input v-model="announcementForm.link_text" placeholder="教程地址" />
+          </el-form-item>
+          <el-form-item label="链接地址">
+            <el-input v-model="announcementForm.link_url" placeholder="https://docs.example.com/..." />
+          </el-form-item>
+          <el-form-item label="发布时间">
+            <el-input v-model="announcementForm.published_at" type="datetime-local" />
+          </el-form-item>
+          <el-form-item label="排序">
+            <el-input v-model.number="announcementForm.sort_order" type="number" />
+          </el-form-item>
+          <el-form-item label="置顶公告"><el-switch v-model="announcementForm.pinned" /></el-form-item>
+          <el-form-item label="启用公告"><el-switch v-model="announcementForm.enabled" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'edit-email-template'" class="modal-body form-grid">
-          <label class="field md:col-span-2">
-            <span>模板名称</span>
-            <input v-model="emailTemplateForm.name" required />
-          </label>
-          <label class="field md:col-span-2">
-            <span>说明</span>
-            <input v-model="emailTemplateForm.description" />
-          </label>
-          <label class="field md:col-span-2">
-            <span>邮件标题</span>
-            <input v-model="emailTemplateForm.subject" required placeholder="{site_title} 通知" />
-          </label>
-          <label class="field md:col-span-2">
-            <span>邮件内容 HTML</span>
-            <textarea v-model="emailTemplateForm.body" class="markdown-editor" rows="12" required placeholder="<p>{username}你好：</p>"></textarea>
-          </label>
-          <label class="toggle-line md:col-span-2"><input v-model="emailTemplateForm.enabled" type="checkbox" />启用模板</label>
+          <el-form-item class="md:col-span-2" label="模板名称">
+            <el-input v-model="emailTemplateForm.name" required />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="说明">
+            <el-input v-model="emailTemplateForm.description" />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="邮件标题">
+            <el-input v-model="emailTemplateForm.subject" required placeholder="{site_title} 通知" />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="邮件内容 HTML">
+            <el-input v-model="emailTemplateForm.body" type="textarea" :rows="12" placeholder="<p>{username}你好：</p>" />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="启用模板"><el-switch v-model="emailTemplateForm.enabled" /></el-form-item>
           <div class="template-variable-list md:col-span-2">
             <code v-for="item in emailTemplateVariables" :key="item">{{ item }}</code>
           </div>
         </div>
 
         <div v-if="modal.type === 'create-user' || modal.type === 'edit-user'" class="modal-body form-grid">
-          <label class="field"><span>用户名</span><input v-model="userForm.username" required /></label>
-          <label class="field"><span>邮箱</span><input v-model="userForm.email" type="email" required /></label>
-          <label class="field">
-            <span>{{ userForm.id ? '新密码' : '登录密码' }}</span>
-            <input v-model="userForm.password" type="password" :required="!userForm.id" minlength="8" :placeholder="userForm.id ? '留空不修改' : '至少 8 位'" />
-          </label>
-          <label class="field">
-            <span>角色</span>
-            <select v-model="userForm.role">
-              <option v-for="option in roleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>状态</span>
-            <select v-model="userForm.status">
-              <option v-for="option in statusOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>绑定套餐</span>
-            <select v-model="userForm.plan_id">
-              <option value="">不分配</option>
-              <option v-for="plan in plans" :key="plan.ID" :value="plan.ID">{{ plan.Name }}</option>
-            </select>
-          </label>
-          <label v-if="requiresUserUpstreamRebind(userForm)" class="field">
-            <span>重新绑定上游渠道</span>
-            <select v-model="userForm.channel_id" required>
-              <option value="">请选择渠道</option>
-              <option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}</option>
-            </select>
-          </label>
-          <label v-if="requiresUserUpstreamRebind(userForm)" class="field md:col-span-2">
-            <span>上游账号</span>
-            <input v-model="userForm.upstream_username" required placeholder="请输入上游账号" />
-          </label>
-          <label v-if="requiresUserUpstreamRebind(userForm)" class="field">
-            <span>上游密码</span>
-            <input v-model="userForm.upstream_password" type="text" required placeholder="请输入上游密码" />
-          </label>
-          <label v-if="requiresUserUpstreamRebind(userForm)" class="field">
-            <span>新的上游 API Key</span>
-            <input v-model="userForm.api_key" type="text" required placeholder="修改套餐后必须重新绑定" />
-          </label>
-          <label class="toggle-line md:col-span-2"><input v-model="userForm.email_verified" type="checkbox" />邮箱已验证</label>
+          <el-form-item label="用户名"><el-input v-model="userForm.username" required /></el-form-item>
+          <el-form-item label="邮箱"><el-input v-model="userForm.email" type="email" required /></el-form-item>
+          <el-form-item :label="userForm.id ? '新密码' : '登录密码'">
+            <el-input v-model="userForm.password" type="password" :required="!userForm.id" minlength="8" :placeholder="userForm.id ? '留空不修改' : '至少 8 位'" />
+          </el-form-item>
+          <el-form-item label="角色">
+            <el-select v-model="userForm.role">
+              <el-option v-for="option in roleOptions" :key="option.value" :value="option.value" :label="option.label" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="userForm.status">
+              <el-option v-for="option in statusOptions" :key="option.value" :value="option.value" :label="option.label" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="绑定套餐">
+            <el-select v-model="userForm.plan_id">
+              <el-option value="" label="不分配" />
+              <el-option v-for="plan in plans" :key="plan.ID" :value="plan.ID" :label="plan.Name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="requiresUserUpstreamRebind(userForm)" label="重新绑定上游渠道">
+            <el-select v-model="userForm.channel_id" required>
+              <el-option value="" label="请选择渠道" />
+              <el-option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID" :label="channel.Name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="requiresUserUpstreamRebind(userForm)" class="md:col-span-2" label="上游账号">
+            <el-input v-model="userForm.upstream_username" required placeholder="请输入上游账号" />
+          </el-form-item>
+          <el-form-item v-if="requiresUserUpstreamRebind(userForm)" label="上游密码">
+            <el-input v-model="userForm.upstream_password" type="text" required placeholder="请输入上游密码" />
+          </el-form-item>
+          <el-form-item v-if="requiresUserUpstreamRebind(userForm)" label="新的上游 API Key">
+            <el-input v-model="userForm.api_key" type="text" required placeholder="修改套餐后必须重新绑定" />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="邮箱已验证"><el-switch v-model="userForm.email_verified" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'edit-api-key'" class="modal-body form-grid">
-          <label class="field md:col-span-2">
-            <span>名称</span>
-            <input v-model="apiKeyForm.name" required placeholder="默认名称" />
-          </label>
-          <label class="field">
-            <span>状态</span>
-            <select v-model="apiKeyForm.status">
-              <option value="active">启用</option>
-              <option value="disabled">停用</option>
-            </select>
-          </label>
+          <el-form-item class="md:col-span-2" label="名称">
+            <el-input v-model="apiKeyForm.name" required placeholder="默认名称" />
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="apiKeyForm.status">
+              <el-option value="active" label="启用" />
+              <el-option value="disabled" label="停用" />
+            </el-select>
+          </el-form-item>
         </div>
 
         <div v-if="modal.type === 'user-upstream'" class="modal-body form-grid">
-          <label class="field"><span>用户</span><input :value="modal.payload?.user?.Email || '-'" readonly /></label>
-          <label class="field"><span>状态</span><input :value="statusLabel(modal.payload?.upstream?.Status || '-')" readonly /></label>
-          <label class="field"><span>上游渠道</span><input :value="modal.payload?.upstream?.Channel || '-'" readonly /></label>
-          <label class="field md:col-span-2"><span>API 地址</span><input :value="modal.payload?.upstream?.BaseURL || '-'" readonly /></label>
-          <label class="field"><span>上游账号</span><input :value="modal.payload?.upstream?.Username || '-'" readonly /></label>
-          <label class="field"><span>上游密码</span><input :value="modal.payload?.upstream?.Password || '-'" readonly /></label>
-          <label class="field md:col-span-2"><span>API Key</span><textarea :value="modal.payload?.upstream?.APIKey || '-'" rows="4" readonly></textarea></label>
-          <label class="field"><span>最后使用</span><input :value="formatDate(modal.payload?.upstream?.LastUsedAt)" readonly /></label>
-          <label class="field"><span>更新时间</span><input :value="formatDate(modal.payload?.upstream?.UpdatedAt)" readonly /></label>
+          <el-form-item label="用户"><el-input :model-value="modal.payload?.user?.Email || '-'" readonly /></el-form-item>
+          <el-form-item label="状态"><el-input :model-value="statusLabel(modal.payload?.upstream?.Status || '-')" readonly /></el-form-item>
+          <el-form-item label="上游渠道"><el-input :model-value="modal.payload?.upstream?.Channel || '-'" readonly /></el-form-item>
+          <el-form-item class="md:col-span-2" label="API 地址"><el-input :model-value="modal.payload?.upstream?.BaseURL || '-'" readonly /></el-form-item>
+          <el-form-item label="上游账号"><el-input :model-value="modal.payload?.upstream?.Username || '-'" readonly /></el-form-item>
+          <el-form-item label="上游密码"><el-input :model-value="modal.payload?.upstream?.Password || '-'" readonly /></el-form-item>
+          <el-form-item class="md:col-span-2" label="API Key"><el-input :model-value="modal.payload?.upstream?.APIKey || '-'" type="textarea" :rows="4" readonly /></el-form-item>
+          <el-form-item label="最后使用"><el-input :model-value="formatDate(modal.payload?.upstream?.LastUsedAt)" readonly /></el-form-item>
+          <el-form-item label="更新时间"><el-input :model-value="formatDate(modal.payload?.upstream?.UpdatedAt)" readonly /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'approve-order'" class="modal-body form-grid">
-          <label class="field"><span>订单 ID</span><input v-model="approve.orderId" readonly /></label>
+          <el-form-item label="订单 ID"><el-input v-model="approve.orderId" readonly /></el-form-item>
           <div v-if="modal.payload?.order?.UserPaymentNote" class="order-flow-note md:col-span-2">
             <strong>用户付款备注</strong>
             <span>{{ modal.payload.order.UserPaymentNote }}</span>
@@ -2713,49 +2532,49 @@ function submitModal() {
             <strong>公共套餐无需审核绑定上游</strong>
             <span>公共套餐在支付完成时会自动扣减公共渠道额度并开通，此处不需要填写上游账号、密码或 API Key。</span>
           </div>
-          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游渠道</span>
-            <select v-model="approve.channelId" required @change="syncApproveChannel">
-              <option value="">请选择渠道</option>
-              <option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}</option>
-            </select>
-          </label>
-          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游账号</span><input v-model="approve.username" required /></label>
-          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游密码</span><input v-model="approve.password" type="text" required /></label>
-          <label v-if="!approveOrderUsesPublicChannel()" class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="text" required /></label>
-          <label class="field md:col-span-2"><span>审核备注</span><textarea v-model="approve.adminNote" rows="3"></textarea></label>
+          <el-form-item v-if="!approveOrderUsesPublicChannel()" label="上游渠道">
+            <el-select v-model="approve.channelId" required @change="syncApproveChannel">
+              <el-option value="" label="请选择渠道" />
+              <el-option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID" :label="channel.Name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="!approveOrderUsesPublicChannel()" label="上游账号"><el-input v-model="approve.username" required /></el-form-item>
+          <el-form-item v-if="!approveOrderUsesPublicChannel()" label="上游密码"><el-input v-model="approve.password" type="text" required /></el-form-item>
+          <el-form-item v-if="!approveOrderUsesPublicChannel()" class="md:col-span-2" label="上游 API Key"><el-input v-model="approve.apiKey" type="text" required /></el-form-item>
+          <el-form-item class="md:col-span-2" label="审核备注"><el-input v-model="approve.adminNote" type="textarea" :rows="3" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'edit-order'" class="modal-body form-grid">
-          <label class="field"><span>订单 ID</span><input v-model="approve.orderId" readonly /></label>
+          <el-form-item label="订单 ID"><el-input v-model="approve.orderId" readonly /></el-form-item>
           <div v-if="modal.payload?.order?.UserPaymentNote" class="order-flow-note md:col-span-2">
             <strong>用户付款备注</strong>
             <span>{{ modal.payload.order.UserPaymentNote }}</span>
           </div>
-          <label class="field"><span>关联套餐</span>
-            <select v-model="approve.planId" :disabled="approve.status === 'approved'">
-              <option value="">不分配</option>
-              <option v-for="plan in plans" :key="plan.ID" :value="plan.ID">{{ plan.Name }}</option>
-            </select>
-          </label>
-          <label class="field"><span>金额（元）</span><input v-model.number="approve.amountRmb" type="number" min="0" step="0.01" /></label>
+          <el-form-item label="关联套餐">
+            <el-select v-model="approve.planId" :disabled="approve.status === 'approved'">
+              <el-option value="" label="不分配" />
+              <el-option v-for="plan in plans" :key="plan.ID" :value="plan.ID" :label="plan.Name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="金额（元）"><el-input v-model.number="approve.amountRmb" type="number" min="0" step="0.01" /></el-form-item>
           <div v-if="approveOrderUsesPublicChannel()" class="order-flow-note md:col-span-2">
             <strong>公共套餐使用已绑定的公共渠道</strong>
             <span>编辑公共套餐订单时不需要维护独立上游渠道、账号、密码或 API Key。</span>
           </div>
-          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游渠道</span>
-            <select v-model="approve.channelId" @change="syncApproveChannel">
-              <option value="">不修改</option>
-              <option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID">{{ channel.Name }}</option>
-            </select>
-          </label>
-          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游账号</span><input v-model="approve.username" placeholder="留空不修改" /></label>
-          <label v-if="!approveOrderUsesPublicChannel()" class="field"><span>上游密码</span><input v-model="approve.password" type="text" placeholder="留空不修改" /></label>
-          <label v-if="!approveOrderUsesPublicChannel()" class="field md:col-span-2"><span>上游 API Key</span><input v-model="approve.apiKey" type="text" placeholder="留空不修改" /></label>
-          <label class="field md:col-span-2"><span>审核备注</span><textarea v-model="approve.adminNote" rows="3"></textarea></label>
+          <el-form-item v-if="!approveOrderUsesPublicChannel()" label="上游渠道">
+            <el-select v-model="approve.channelId" @change="syncApproveChannel">
+              <el-option value="" label="不修改" />
+              <el-option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID" :label="channel.Name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="!approveOrderUsesPublicChannel()" label="上游账号"><el-input v-model="approve.username" placeholder="留空不修改" /></el-form-item>
+          <el-form-item v-if="!approveOrderUsesPublicChannel()" label="上游密码"><el-input v-model="approve.password" type="text" placeholder="留空不修改" /></el-form-item>
+          <el-form-item v-if="!approveOrderUsesPublicChannel()" class="md:col-span-2" label="上游 API Key"><el-input v-model="approve.apiKey" type="text" placeholder="留空不修改" /></el-form-item>
+          <el-form-item class="md:col-span-2" label="审核备注"><el-input v-model="approve.adminNote" type="textarea" :rows="3" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'reject-order'" class="modal-body">
-          <label class="field"><span>拒绝原因</span><textarea v-model="rejectForm.adminNote" rows="4" placeholder="请输入给内部留档的拒绝原因"></textarea></label>
+          <el-form-item label="拒绝原因"><el-input v-model="rejectForm.adminNote" type="textarea" :rows="4" placeholder="请输入给内部留档的拒绝原因" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'delete-plan'" class="modal-body confirm-copy">
@@ -2798,11 +2617,13 @@ function submitModal() {
           <p>{{ modal.payload?.key?.Name || '-' }}，删除后将立即失效。</p>
         </div>
 
+      </el-form>
+      <template #footer>
         <div class="modal-actions">
-          <button type="button" class="ghost-button" @click="closeModal">取消</button>
-          <button :class="modal.danger ? 'danger-solid-button' : 'primary-button'">{{ modal.actionLabel }}</button>
+          <el-button @click="closeModal">取消</el-button>
+          <el-button :type="modal.danger ? 'danger' : 'primary'" @click="submitModal">{{ modal.actionLabel }}</el-button>
         </div>
-      </form>
-    </div>
+      </template>
+    </el-dialog>
   </section>
 </template>

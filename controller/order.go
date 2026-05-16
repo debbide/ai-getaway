@@ -28,7 +28,10 @@ type OrderController struct {
 	cfg config.Config
 }
 
-const pendingPaymentTTL = 5 * time.Minute
+const (
+	onlinePaymentTTL = 5 * time.Minute
+	manualPaymentTTL = 2 * time.Hour
+)
 
 func NewOrderController(cfg config.Config, db *gorm.DB) *OrderController {
 	return &OrderController{db: db, cfg: cfg}
@@ -74,10 +77,27 @@ func (o *OrderController) Create(c *gin.Context) {
 		return
 	}
 	paymentMethod := normalizePaymentMethod(req.PaymentMethod)
+	if err := ensureSystemSettingColumns(o.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
+	setting := loadSettings(o.db)
+	if paymentMethod == model.PaymentMethodOnline && !setting.OnlinePaymentEnabled {
+		response.Error(c, 400, "online payment disabled")
+		return
+	}
+	if paymentMethod == model.PaymentMethodManual && !setting.ManualPaymentEnabled {
+		response.Error(c, 400, "manual payment disabled")
+		return
+	}
 
 	var plan model.Plan
 	if err := o.db.Preload("PublicChannel").Where("id = ? AND enabled = ?", req.PlanID, true).First(&plan).Error; err != nil {
 		response.Error(c, 404, "plan not found")
+		return
+	}
+	if plan.IsLottery {
+		response.Error(c, 400, "lottery plan cannot be purchased")
 		return
 	}
 	if plan.PlanType == model.PlanTypePublic && (plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents) {
@@ -202,6 +222,10 @@ func (o *OrderController) Pay(c *gin.Context) {
 		return
 	}
 	setting := loadSettings(o.db)
+	if !setting.OnlinePaymentEnabled {
+		response.Error(c, 400, "online payment disabled")
+		return
+	}
 	payURL, err := buildEpayURL(c, o.cfg, setting, order)
 	if err != nil {
 		response.Error(c, 400, err.Error())
@@ -218,6 +242,10 @@ func (o *OrderController) ManualPaymentInfo(c *gin.Context) {
 		return
 	}
 	setting := loadSettings(o.db)
+	if !setting.ManualPaymentEnabled {
+		response.Error(c, 400, "manual payment disabled")
+		return
+	}
 	response.OK(c, gin.H{
 		"manual_payment_qr_code": setting.ManualPaymentQRCode,
 	})
@@ -250,6 +278,10 @@ func (o *OrderController) SubmitManualPayment(c *gin.Context) {
 		return
 	}
 	setting := loadSettings(o.db)
+	if !setting.ManualPaymentEnabled {
+		response.Error(c, 400, "manual payment disabled")
+		return
+	}
 	if strings.TrimSpace(setting.ManualPaymentQRCode) == "" {
 		response.Error(c, 400, "manual payment qr code missing")
 		return
@@ -287,7 +319,11 @@ func (o *OrderController) MarkPaid(c *gin.Context) {
 		return
 	}
 	expirePendingPaymentOrder(o.db, &order)
-	if order.Status != model.OrderStatusPendingPayment && order.Status != model.OrderStatusPaymentTimeout {
+	if order.Status == model.OrderStatusPaymentTimeout {
+		response.Error(c, 409, "order payment timeout")
+		return
+	}
+	if order.Status != model.OrderStatusPendingPayment {
 		response.Error(c, 409, "order not pending payment")
 		return
 	}
@@ -297,6 +333,10 @@ func (o *OrderController) MarkPaid(c *gin.Context) {
 		return
 	}
 	setting := loadSettings(o.db)
+	if !setting.OnlinePaymentEnabled {
+		response.Error(c, 400, "online payment disabled")
+		return
+	}
 	payment, paid, err := queryEpayPaid(c, o.db, setting, order)
 	if err != nil {
 		response.Error(c, 400, err.Error())
@@ -348,6 +388,10 @@ func (o *OrderController) EpayNotify(c *gin.Context) {
 		c.String(404, "fail")
 		return
 	}
+	if expirePendingPaymentOrder(o.db, &order) || order.Status == model.OrderStatusPaymentTimeout {
+		c.String(200, "success")
+		return
+	}
 	payment, err := validateEpayPayment(setting, order, epayPaymentResultFromParams(params))
 	if err != nil {
 		markPaymentManualReview(o.db, &order, epayPaymentResultFromParams(params), err.Error())
@@ -362,20 +406,27 @@ func (o *OrderController) EpayNotify(c *gin.Context) {
 }
 
 func pendingPaymentExpiresAt(order model.Order) time.Time {
-	return order.CreatedAt.Add(pendingPaymentTTL)
+	if order.PaymentMethod == model.PaymentMethodManual {
+		return order.CreatedAt.Add(manualPaymentTTL)
+	}
+	return order.CreatedAt.Add(onlinePaymentTTL)
 }
 
 func expirePendingPaymentOrders(db *gorm.DB) {
 	db.Model(&model.Order{}).
-		Where("status = ? AND (payment_method IS NULL OR payment_method <> ?) AND created_at <= ?", model.OrderStatusPendingPayment, model.PaymentMethodManual, time.Now().Add(-pendingPaymentTTL)).
+		Where(
+			"status = ? AND ((payment_method = ? AND created_at <= ?) OR ((payment_method IS NULL OR payment_method <> ?) AND created_at <= ?))",
+			model.OrderStatusPendingPayment,
+			model.PaymentMethodManual,
+			time.Now().Add(-manualPaymentTTL),
+			model.PaymentMethodManual,
+			time.Now().Add(-onlinePaymentTTL),
+		).
 		Update("status", model.OrderStatusPaymentTimeout)
 }
 
 func expirePendingPaymentOrder(db *gorm.DB, order *model.Order) bool {
 	if order.Status != model.OrderStatusPendingPayment {
-		return false
-	}
-	if order.PaymentMethod == model.PaymentMethodManual {
 		return false
 	}
 	if time.Now().Before(pendingPaymentExpiresAt(*order)) {
@@ -487,15 +538,12 @@ func handlePaidOrderAlreadyProcessed(db *gorm.DB, order *model.Order, payment *e
 		return err
 	}
 	switch fresh.Status {
-	case model.OrderStatusPendingReview, model.OrderStatusApproved, model.OrderStatusPaidLate, model.OrderStatusManualReview:
+	case model.OrderStatusPendingReview, model.OrderStatusApproved, model.OrderStatusManualReview:
 		*order = fresh
 		return nil
 	case model.OrderStatusPaymentTimeout:
-		if err := markPaymentManualReview(db, &fresh, payment, "payment arrived after timeout"); err != nil {
-			return err
-		}
 		*order = fresh
-		return nil
+		return fmt.Errorf("order payment timeout")
 	default:
 		return fmt.Errorf("order not pending payment")
 	}
@@ -507,13 +555,10 @@ func markPaymentManualReview(db *gorm.DB, order *model.Order, payment *epayPayme
 	}
 	now := time.Now()
 	status := model.OrderStatusManualReview
-	if order.Status == model.OrderStatusPaymentTimeout {
-		status = model.OrderStatusPaidLate
-	}
 	updates := paymentOrderUpdates(status, payment, now)
 	updates["admin_note"] = strings.TrimSpace(reason)
 	result := db.Model(&model.Order{}).
-		Where("id = ? AND status IN ?", order.ID, []string{model.OrderStatusPendingPayment, model.OrderStatusPaymentTimeout}).
+		Where("id = ? AND status = ?", order.ID, model.OrderStatusPendingPayment).
 		Updates(updates)
 	if result.Error != nil {
 		return result.Error

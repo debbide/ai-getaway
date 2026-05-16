@@ -1,17 +1,30 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 
 const docs = ref([])
 const activeSlug = ref('')
 const loading = ref(false)
 const error = ref('')
+const searchKeyword = ref('')
 
-const activeDoc = computed(() => docs.value.find((doc) => doc.Slug === activeSlug.value) || docs.value[0] || null)
+const normalizedKeyword = computed(() => searchKeyword.value.trim().toLowerCase())
+const filteredDocs = computed(() => {
+  if (!normalizedKeyword.value) return docs.value
+  return docs.value.filter((doc) => {
+    const content = [doc.Title, doc.GroupName, doc.Slug, doc.Content].filter(Boolean).join(' ').toLowerCase()
+    return content.includes(normalizedKeyword.value)
+  })
+})
+const activeDoc = computed(() => {
+  const visibleActive = filteredDocs.value.find((doc) => doc.Slug === activeSlug.value)
+  return visibleActive || filteredDocs.value[0] || null
+})
 const groupedDocs = computed(() => {
   const groups = []
   const byName = new Map()
-  for (const doc of docs.value) {
+  for (const doc of filteredDocs.value) {
     const name = doc.GroupName || '配置文档'
     if (!byName.has(name)) {
       byName.set(name, { name, items: [] })
@@ -31,6 +44,16 @@ watch(activeDoc, (doc) => {
   if (window.location.pathname !== url) {
     window.history.replaceState({}, '', url)
   }
+})
+
+watch(searchKeyword, () => {
+  if (!activeDoc.value && filteredDocs.value[0]) {
+    activeSlug.value = filteredDocs.value[0].Slug
+  }
+})
+
+watch(error, (message) => {
+  if (message) ElMessage.error(message)
 })
 
 async function loadDocs() {
@@ -162,7 +185,11 @@ function escapeAttr(value) {
   <main class="docs-stage">
     <section class="docs-shell mx-auto max-w-7xl px-4 py-10 sm:px-6">
       <aside class="docs-sidebar">
-        <div class="docs-search">输入关键词...</div>
+        <label class="docs-search">
+          <span>搜索文档</span>
+          <input v-model="searchKeyword" type="search" placeholder="输入关键词..." autocomplete="off" />
+        </label>
+        <div v-if="filteredDocs.length === 0" class="docs-no-results">没有找到匹配文档</div>
         <div v-for="group in groupedDocs" :key="group.name" class="docs-nav-group">
           <strong>{{ group.name }}</strong>
           <button
@@ -183,7 +210,7 @@ function escapeAttr(value) {
 
       <article class="docs-content-panel">
         <div v-if="loading" class="docs-empty">文档加载中...</div>
-        <div v-else-if="error" class="alert alert-danger">{{ error }}</div>
+        <div v-else-if="error" class="docs-empty">文档暂时不可用</div>
         <div v-else-if="!activeDoc" class="docs-empty">暂无可用文档</div>
         <div v-else>
           <p class="section-kicker">Configuration</p>

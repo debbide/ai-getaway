@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 
 const emit = defineEmits(['navigate', 'start'])
@@ -32,6 +33,10 @@ const averageMultiplier = computed(() => {
 })
 
 onMounted(loadModels)
+
+watch(error, (message) => {
+  if (message) ElMessage.error(message)
+})
 
 async function loadModels() {
   loading.value = true
@@ -98,8 +103,8 @@ function selectProvider(provider) {
         <h1>模型列表</h1>
         <p>这里展示后台「模型管理」中已启用的模型，价格按实际扣费倍率计算，单位为每 1M Token。</p>
         <div class="models-actions">
-          <button class="hero-primary" type="button" @click="emit('start')">立即使用 <span>→</span></button>
-          <button class="hero-secondary" type="button" @click="emit('navigate', '/docs')">查看接入文档</button>
+          <el-button type="primary" size="large" @click="emit('start')">立即使用</el-button>
+          <el-button size="large" plain @click="emit('navigate', '/docs')">查看接入文档</el-button>
         </div>
       </div>
 
@@ -129,25 +134,18 @@ function selectProvider(provider) {
     </section>
 
     <section class="models-shell mx-auto max-w-7xl px-4 pb-14 sm:px-6">
-      <div v-if="error" class="alert alert-danger">{{ error }}</div>
-
       <div class="models-toolbar">
         <div>
           <p class="section-kicker">Available Models</p>
           <h2>可用模型</h2>
           <span>只展示状态为启用的后台模型配置。</span>
         </div>
-        <div class="models-filter">
-          <button
-            v-for="provider in providers"
-            :key="provider"
-            type="button"
-            :class="{ active: activeProvider === provider }"
-            @click="selectProvider(provider)"
-          >
-            {{ provider === 'all' ? '全部' : provider }}
-          </button>
-        </div>
+        <el-segmented
+          class="models-filter"
+          :model-value="activeProvider"
+          :options="providers.map((provider) => ({ label: provider === 'all' ? '全部' : provider, value: provider }))"
+          @update:model-value="selectProvider"
+        />
       </div>
 
       <div v-if="loading" class="models-empty">模型加载中...</div>
@@ -182,35 +180,36 @@ function selectProvider(provider) {
         </div>
 
         <div class="models-table-card">
-          <div class="table-wrap">
-            <table class="data-table models-table">
-              <thead>
-                <tr>
-                  <th>模型</th>
-                  <th>服务商</th>
-                  <th>输入 / 1M</th>
-                  <th>缓存读取 / 1M</th>
-                  <th>输出 / 1M</th>
-                  <th>倍率</th>
-                  <th>说明</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="item in filteredModels" :key="item.ID">
-                  <td class="model-name-cell">
+          <el-table :data="filteredModels" class="models-table" border>
+            <el-table-column label="模型" min-width="220">
+              <template #default="{ row: item }">
+                  <div class="model-name-cell">
                     <strong>{{ displayName(item) }}</strong>
                     <small>{{ modelName(item) }}</small>
-                  </td>
-                  <td><span class="status-badge">{{ providerName(item) }}</span></td>
-                  <td>{{ priceText(priceValue(item, 'InputUSDPerMillion')) }}</td>
-                  <td>{{ priceText(priceValue(item, 'CachedInputUSDPerMillion')) }}</td>
-                  <td>{{ priceText(priceValue(item, 'OutputUSDPerMillion')) }}</td>
-                  <td>{{ multiplier(item).toFixed(2) }}x</td>
-                  <td>{{ item.Notes || '标准 OpenAI 兼容调用' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+                  </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="服务商" min-width="120">
+              <template #default="{ row: item }">
+                <el-tag type="success">{{ providerName(item) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="输入 / 1M" min-width="130">
+              <template #default="{ row: item }">{{ priceText(priceValue(item, 'InputUSDPerMillion')) }}</template>
+            </el-table-column>
+            <el-table-column label="缓存读取 / 1M" min-width="150">
+              <template #default="{ row: item }">{{ priceText(priceValue(item, 'CachedInputUSDPerMillion')) }}</template>
+            </el-table-column>
+            <el-table-column label="输出 / 1M" min-width="130">
+              <template #default="{ row: item }">{{ priceText(priceValue(item, 'OutputUSDPerMillion')) }}</template>
+            </el-table-column>
+            <el-table-column label="倍率" min-width="100">
+              <template #default="{ row: item }">{{ multiplier(item).toFixed(2) }}x</template>
+            </el-table-column>
+            <el-table-column label="说明" min-width="220">
+              <template #default="{ row: item }">{{ item.Notes || '标准 OpenAI 兼容调用' }}</template>
+            </el-table-column>
+          </el-table>
         </div>
       </template>
     </section>

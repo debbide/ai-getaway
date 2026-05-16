@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
@@ -46,6 +47,10 @@ const quotaResetText = computed(() => {
 
 onMounted(loadAll)
 onBeforeUnmount(stopAutoRefresh)
+
+watch(error, (message) => {
+  if (message) ElMessage.error(message)
+})
 
 async function loadAll() {
   loading.value = true
@@ -257,8 +262,6 @@ function statusClass(code) {
       </div>
     </div>
 
-    <div v-if="error" class="alert alert-danger">{{ error }}</div>
-
     <div class="usage-stat-grid">
       <article class="usage-stat-card">
         <span>总请求数</span>
@@ -332,61 +335,41 @@ function statusClass(code) {
     </div>
 
     <section class="panel-surface usage-filter-card">
-      <label class="field">
-        <span>API 密钥</span>
-        <select v-model="filters.apiKeyId" @change="applyFilters">
-          <option value="">全部密钥</option>
-          <option v-for="key in keys" :key="key.id" :value="key.id">
-            {{ key.name }} / {{ key.key_masked || key.key_prefix }}
-          </option>
-        </select>
-      </label>
-      <label class="field">
-        <span>时间范围</span>
-        <select v-model="filters.range" @change="applyFilters">
-          <option value="24h">近 24 小时</option>
-          <option value="7d">近 7 天</option>
-          <option value="30d">近 30 天</option>
-          <option value="all">全部时间</option>
-        </select>
-      </label>
+      <el-form-item label="API 密钥">
+        <el-select v-model="filters.apiKeyId" class="w-full" @change="applyFilters">
+          <el-option label="全部密钥" value="" />
+          <el-option
+            v-for="key in keys"
+            :key="key.id"
+            :label="`${key.name} / ${key.key_masked || key.key_prefix}`"
+            :value="key.id"
+          />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="时间范围">
+        <el-select v-model="filters.range" class="w-full" @change="applyFilters">
+          <el-option label="近 24 小时" value="24h" />
+          <el-option label="近 7 天" value="7d" />
+          <el-option label="近 30 天" value="30d" />
+          <el-option label="全部时间" value="all" />
+        </el-select>
+      </el-form-item>
       <div class="usage-filter-actions">
-        <button
-          class="ghost-button usage-auto-refresh-button"
-          :class="{ active: autoRefresh }"
-          type="button"
-          @click="toggleAutoRefresh"
-        >
+        <el-button :type="autoRefresh ? 'success' : 'default'" plain @click="toggleAutoRefresh">
           <span class="usage-auto-refresh-icon" aria-hidden="true">↻</span>
           {{ autoRefresh ? '自动刷新中' : '自动刷新' }}
-        </button>
-        <button class="ghost-button" type="button" :disabled="loading" @click="refreshRecords">刷新</button>
-        <button class="ghost-button" type="button" :disabled="loading" @click="resetFilters">重置</button>
-        <button class="primary-button" type="button" :disabled="!records.length" @click="exportCsv">导出 CSV</button>
+        </el-button>
+        <el-button :loading="loading" @click="refreshRecords">刷新</el-button>
+        <el-button :disabled="loading" @click="resetFilters">重置</el-button>
+        <el-button type="primary" :disabled="!records.length" @click="exportCsv">导出 CSV</el-button>
       </div>
     </section>
 
     <section class="panel-surface usage-table-card">
-      <div class="table-wrap usage-table-wrap">
-        <table class="data-table usage-table">
-          <thead>
-            <tr>
-              <th>API 密钥</th>
-              <th>模型</th>
-              <th>端点</th>
-              <th>Token</th>
-              <th>费用</th>
-              <th>首 Token</th>
-              <th>耗时 / 状态</th>
-              <th>时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="!loading && !records.length">
-              <td colspan="8" class="usage-empty">暂无调用记录</td>
-            </tr>
-            <tr v-for="item in records" :key="item.id">
-              <td>
+      <div class="usage-table-wrap">
+        <el-table v-loading="loading" :data="records" class="usage-table" empty-text="暂无调用记录" border>
+          <el-table-column label="API 密钥" min-width="170">
+            <template #default="{ row: item }">
                 <div class="usage-main-value">
                   <strong>{{ item.api_key_name || maskKey(item) }}</strong>
                   <span class="usage-info-dot" tabindex="0">
@@ -394,19 +377,27 @@ function statusClass(code) {
                     <span class="usage-tooltip">密钥标识：{{ maskKey(item) }}</span>
                   </span>
                 </div>
-              </td>
-              <td>
+            </template>
+          </el-table-column>
+          <el-table-column label="模型" min-width="160">
+            <template #default="{ row: item }">
                 <strong>{{ item.model || '-' }}</strong>
                 <span class="usage-cell-sub">Medium</span>
-              </td>
-              <td class="usage-endpoint-cell">
+            </template>
+          </el-table-column>
+          <el-table-column label="端点" min-width="220">
+            <template #default="{ row: item }">
+              <div class="usage-endpoint-cell">
                 <code>{{ item.endpoint || item.path || '-' }}</code>
                 <span class="usage-cell-chips">
                   <span class="usage-chip">{{ requestTypeLabel(item.request_type) }}</span>
                   <span class="usage-chip muted">{{ billingModeLabel(item.billing_mode) }}</span>
                 </span>
-              </td>
-              <td>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="Token" min-width="150">
+            <template #default="{ row: item }">
                 <div class="usage-main-value">
                   <strong>{{ statToken(item.total_tokens) }}</strong>
                   <span class="usage-info-dot" tabindex="0">
@@ -416,8 +407,10 @@ function statusClass(code) {
                     </span>
                   </span>
                 </div>
-              </td>
-              <td>
+            </template>
+          </el-table-column>
+          <el-table-column label="费用" min-width="150">
+            <template #default="{ row: item }">
                 <div class="usage-main-value">
                   <strong class="usage-cost">{{ item.estimated_usd_micros ? usdMicros(item.estimated_usd_micros) : usd(item.estimated_usd_cents || 0) }}</strong>
                   <span class="usage-info-dot" tabindex="0">
@@ -435,24 +428,32 @@ function statusClass(code) {
                     </span>
                   </span>
                 </div>
-              </td>
-              <td>{{ latency(item.first_token_ms) }}</td>
-              <td>
+            </template>
+          </el-table-column>
+          <el-table-column label="首 Token" min-width="110">
+            <template #default="{ row: item }">{{ latency(item.first_token_ms) }}</template>
+          </el-table-column>
+          <el-table-column label="耗时 / 状态" min-width="130">
+            <template #default="{ row: item }">
                 <strong>{{ latency(item.latency_ms) }}</strong>
                 <span class="usage-status mt-1" :class="statusClass(item.status_code)">{{ item.status_code }}</span>
-              </td>
-              <td>{{ formatDateTime(item.created_at) }}</td>
-            </tr>
-          </tbody>
-        </table>
+            </template>
+          </el-table-column>
+          <el-table-column label="时间" min-width="160">
+            <template #default="{ row: item }">{{ formatDateTime(item.created_at) }}</template>
+          </el-table-column>
+        </el-table>
       </div>
       <div class="pagination-bar usage-pagination">
         <span>显示 {{ displayStart }} 至 {{ displayEnd }} 共 {{ total }} 条结果</span>
-        <div class="table-actions">
-          <button class="ghost-button small" :disabled="filters.page <= 1 || loading" @click="setPage(filters.page - 1)">上一页</button>
-          <span class="usage-page-number">{{ filters.page }} / {{ totalPages }}</span>
-          <button class="ghost-button small" :disabled="filters.page >= totalPages || loading" @click="setPage(filters.page + 1)">下一页</button>
-        </div>
+        <el-pagination
+          layout="prev, pager, next"
+          :current-page="filters.page"
+          :page-size="filters.pageSize"
+          :total="total"
+          :disabled="loading"
+          @current-change="setPage"
+        />
       </div>
     </section>
   </section>

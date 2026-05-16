@@ -1,5 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
@@ -15,16 +17,13 @@ const keys = ref([])
 const announcements = ref([])
 const announcementExpanded = ref(localStorage.getItem('announcementExpanded') !== 'false')
 const historyModalOpen = ref(false)
-const selectedPlan = ref('')
-const planTab = ref('subscription')
 const pendingPlainKey = ref('')
 const lastKeyMasked = ref('')
 const error = ref('')
 const notice = ref('')
-const copyToast = ref('')
 const copySuccessModalOpen = ref(false)
 const modalError = ref('')
-const loading = ref(false)
+const loading = reactive({ announcements: false, keys: false, orders: false, plan: false })
 const orderPage = ref(1)
 const nowMs = ref(Date.now())
 const orderPageSize = 5
@@ -86,9 +85,6 @@ const displayApiEndpoints = computed(() => parseApiEndpoints(props.apiEndpoints)
 const soloKey = computed(() => (keys.value.length ? keys.value[0] : null))
 const hasApiKey = computed(() => Boolean(soloKey.value))
 const currentAnnouncement = computed(() => announcements.value[0] || null)
-const subscriptionPlans = computed(() => props.plans.filter((plan) => plan.QuotaPeriod !== 'public' && plan.PlanType !== 'public'))
-const publicPlans = computed(() => props.plans.filter((plan) => plan.QuotaPeriod === 'public' || plan.PlanType === 'public'))
-const visiblePlans = computed(() => (planTab.value === 'public' ? publicPlans.value : subscriptionPlans.value))
 const historyAnnouncements = computed(() => announcements.value.slice(1))
 const announcementSummary = computed(() => {
   const item = currentAnnouncement.value
@@ -101,7 +97,7 @@ onMounted(() => {
   orderTimer = window.setInterval(() => {
     nowMs.value = Date.now()
     if (orders.value.some((order) => order.Status === 'pending_payment' && orderRemainingSeconds(order) <= 0)) {
-      loadAll()
+      loadOrders({ showLoading: false })
     }
   }, 1000)
 })
@@ -111,8 +107,15 @@ onBeforeUnmount(() => {
   stopPaymentPolling()
 })
 
+watch(modalError, (message) => {
+  if (message) showNotice(message, 'error')
+})
+
 async function loadAll() {
-  loading.value = true
+  loading.announcements = true
+  loading.keys = true
+  loading.orders = true
+  loading.plan = true
   error.value = ''
   try {
     const [orderRes, keyRes, announcementRes] = await Promise.all([api.get('/orders'), api.get('/keys'), api.get('/announcements')])
@@ -121,15 +124,18 @@ async function loadAll() {
     announcements.value = announcementRes.data || []
     if (orderPage.value > totalOrderPages.value) orderPage.value = totalOrderPages.value
     await auth.loadMe()
-    if (auth.meError) notice.value = auth.meError
+    if (auth.meError) showNotice(auth.meError, 'warning')
   } catch (err) {
     if (err.authExpired) {
-      error.value = err.message
+      showNotice(err.message, 'error')
     } else {
-      notice.value = err.message || '账号信息暂时不可用，请稍后刷新重试'
+      showNotice(err.message || '账号信息暂时不可用，请稍后刷新重试', 'warning')
     }
   } finally {
-    loading.value = false
+    loading.announcements = false
+    loading.keys = false
+    loading.orders = false
+    loading.plan = false
   }
 }
 
@@ -138,28 +144,55 @@ async function refreshDashboard() {
   await loadAll()
 }
 
-function setOrderPage(page) {
-  orderPage.value = Math.min(Math.max(1, page), totalOrderPages.value)
+async function loadOrders({ showLoading = true } = {}) {
+  if (showLoading) loading.orders = true
+  error.value = ''
+  try {
+    const orderRes = await api.get('/orders')
+    orders.value = orderRes.data || []
+    if (orderPage.value > totalOrderPages.value) orderPage.value = totalOrderPages.value
+  } catch (err) {
+    showNotice(err.message, err.authExpired ? 'error' : 'warning')
+  } finally {
+    if (showLoading) loading.orders = false
+  }
 }
 
-function openOrderModal(planId = selectedPlan.value) {
-  if (purchaseBlockedByActivePlan.value) {
-    notice.value = '当前套餐仍在有效期内，请待到期后再购买'
-    return
+async function refreshKeys() {
+  loading.keys = true
+  notice.value = ''
+  error.value = ''
+  try {
+    const keyRes = await api.get('/keys')
+    keys.value = keyRes.data || []
+  } catch (err) {
+    showNotice(err.message, err.authExpired ? 'error' : 'warning')
+  } finally {
+    loading.keys = false
   }
-  const targetPlan = props.plans.find((plan) => String(plan.ID) === String(planId || ''))
-  if (targetPlan && planSoldOut(targetPlan)) {
-    notice.value = '该活动套餐已售罄'
-    return
+}
+
+async function refreshOrders() {
+  notice.value = ''
+  await loadOrders()
+}
+
+async function refreshPlan() {
+  loading.plan = true
+  notice.value = ''
+  error.value = ''
+  try {
+    await auth.loadMe()
+    if (auth.meError) showNotice(auth.meError, 'warning')
+  } catch (err) {
+    showNotice(err.message, err.authExpired ? 'error' : 'warning')
+  } finally {
+    loading.plan = false
   }
-  orderForm.planId = planId || ''
-  orderForm.paymentMethod = 'online'
-  orderForm.order = null
-  orderForm.paymentUrl = ''
-  orderForm.paymentOpened = false
-  orderForm.manualQRCode = ''
-  orderForm.manualNote = accountPaymentNote()
-  showModal('create-order', '创建订单', '确认下单')
+}
+
+function setOrderPage(page) {
+  orderPage.value = Math.min(Math.max(1, page), totalOrderPages.value)
 }
 
 function openPayModal(order) {
@@ -198,42 +231,11 @@ async function enableKey(k) {
   notice.value = ''
   try {
     await api.patch(`/keys/${k.id}/enable`)
-    notice.value = 'API Key 已启用'
+    showNotice('API Key 已启用', 'success')
     await loadAll()
     window.dispatchEvent(new Event('app-data-updated'))
   } catch (err) {
-    error.value = err.message
-  }
-}
-
-async function createOrder() {
-  if (!orderForm.planId) {
-    modalError.value = '请选择套餐'
-    return
-  }
-  modalError.value = ''
-  try {
-    const res = await api.post('/orders', { plan_id: Number(orderForm.planId), payment_method: orderForm.paymentMethod })
-    orderForm.order = res.data.order
-    orderForm.paymentUrl = ''
-    orderForm.paymentOpened = false
-    orderForm.paymentMethod = orderForm.order.PaymentMethod || orderForm.paymentMethod
-    if (isManualPaymentOrder(orderForm.order)) {
-      modal.type = 'manual-pay-order'
-      modal.title = `人工支付订单 #${orderForm.order.ID}`
-      modal.actionLabel = '已扫码，提交审核'
-      notice.value = res.data.reused ? '已为你找到未支付订单，请继续人工支付' : '订单已创建，请扫码完成人工支付'
-      await loadManualPaymentInfo()
-    } else {
-      modal.type = 'pay-order'
-      modal.title = `支付订单 #${orderForm.order.ID}`
-      modal.actionLabel = '已完成支付'
-      notice.value = res.data.reused ? '已为你找到未支付订单，请继续支付' : '订单已创建，请完成支付'
-    }
-    await loadAll()
-    window.dispatchEvent(new Event('app-data-updated'))
-  } catch (err) {
-    modalError.value = err.message
+    showNotice(err.message, 'error')
   }
 }
 
@@ -271,7 +273,7 @@ async function submitManualPayment() {
     await api.post(`/orders/${orderForm.order.ID}/manual-payment`, {
       user_payment_note: orderForm.manualNote
     })
-    notice.value = '人工支付信息已提交，订单已进入待审核'
+    showNotice('人工支付信息已提交，订单已进入待审核', 'success')
     closeModal()
     await loadAll()
     window.dispatchEvent(new Event('app-data-updated'))
@@ -285,7 +287,7 @@ async function markPaid() {
   modalError.value = ''
   try {
     await api.patch(`/orders/${orderForm.order.ID}/paid`)
-    notice.value = '支付已确认，订单已进入待审核'
+    showNotice('支付已确认，订单已进入待审核', 'success')
     closeModal()
     await loadAll()
     window.dispatchEvent(new Event('app-data-updated'))
@@ -301,7 +303,7 @@ async function createKey() {
     const res = await api.post('/keys', { name: keyForm.name })
     pendingPlainKey.value = res.data.key
     lastKeyMasked.value = res.data.key_masked || ''
-    notice.value = 'API Key 已创建，请尽快复制完整密钥保存（界面仅显示掩码）'
+    showNotice('API Key 已创建，请尽快复制完整密钥保存（界面仅显示掩码）', 'success')
   })
 }
 
@@ -312,14 +314,14 @@ async function rotateKey() {
     const res = await api.post('/keys/rotate', { name: keyForm.name })
     pendingPlainKey.value = res.data.key
     lastKeyMasked.value = res.data.key_masked || ''
-    notice.value = '密钥已更新，旧 Key 立即失效，请复制新密钥保存'
+    showNotice('密钥已更新，旧 Key 立即失效，请复制新密钥保存', 'success')
   })
 }
 
 async function disableKey() {
   await runAction(async () => {
     await api.patch(`/keys/${modal.payload.key.id}/disable`)
-    notice.value = 'API Key 已禁用'
+    showNotice('API Key 已禁用', 'success')
   })
 }
 
@@ -336,9 +338,20 @@ async function runAction(action) {
     if (modal.open) {
       modalError.value = err.message
     } else {
-      error.value = err.message
+      showNotice(err.message, 'error')
     }
   }
+}
+
+function showNotice(message, type = 'success') {
+  if (!message) return
+  ElMessage({
+    message,
+    type,
+    grouping: true,
+    showClose: true,
+    duration: type === 'error' ? 3000 : 2200
+  })
 }
 
 function showModal(type, title, actionLabel, payload = null, danger = false) {
@@ -382,7 +395,6 @@ async function refreshPayingOrder() {
 
 function submitModal() {
   const actions = {
-    'create-order': createOrder,
     'pay-order': markPaid,
     'manual-pay-order': submitManualPayment,
     'create-key': createKey,
@@ -436,7 +448,8 @@ function announcementLines(item) {
 function orderExpiresAt(order) {
   const created = new Date(order?.CreatedAt || order?.created_at || '')
   if (Number.isNaN(created.getTime())) return null
-  return new Date(created.getTime() + 5 * 60 * 1000)
+  const ttlMs = isManualPaymentOrder(order) ? 2 * 60 * 60 * 1000 : 5 * 60 * 1000
+  return new Date(created.getTime() + ttlMs)
 }
 
 function orderRemainingSeconds(order) {
@@ -523,16 +536,12 @@ function defaultApiEndpoints() {
 }
 
 async function copyKey(text, showSuccessModal = false) {
-  copyToast.value = ''
   try {
     await navigator.clipboard.writeText(text)
     if (showSuccessModal) {
       copySuccessModalOpen.value = true
     } else {
-      copyToast.value = '已复制'
-      window.setTimeout(() => {
-        copyToast.value = ''
-      }, 2000)
+      showNotice('已复制', 'success')
     }
     if (pendingPlainKey.value && text === pendingPlainKey.value) {
       pendingPlainKey.value = ''
@@ -549,10 +558,7 @@ async function copyKey(text, showSuccessModal = false) {
     if (showSuccessModal) {
       copySuccessModalOpen.value = true
     } else {
-      copyToast.value = '已复制'
-      window.setTimeout(() => {
-        copyToast.value = ''
-      }, 2000)
+      showNotice('已复制', 'success')
     }
     if (pendingPlainKey.value && text === pendingPlainKey.value) {
       pendingPlainKey.value = ''
@@ -561,13 +567,12 @@ async function copyKey(text, showSuccessModal = false) {
 }
 
 async function copySecretFromServer() {
-  copyToast.value = ''
   error.value = ''
   try {
     const res = await api.get('/keys/secret')
     await copyKey(res.data.key, true)
   } catch (err) {
-    error.value = err.message
+    showNotice(err.message, 'error')
   }
 }
 
@@ -606,9 +611,6 @@ function statusLabel(value) {
       </div>
     </div>
 
-    <div v-if="error" class="alert alert-danger">{{ error }}</div>
-    <div v-if="notice" class="alert alert-success">{{ notice }}</div>
-    <div v-if="copyToast" class="alert alert-success">{{ copyToast }}</div>
     <div v-if="pendingPlainKey || lastKeyMasked" class="key-reveal">
       <span>密钥已就绪（下方仅掩码，完整内容请用按钮复制）</span>
       <code v-if="lastKeyMasked" class="api-key-code api-key-code--mask">{{ lastKeyMasked }}</code>
@@ -648,8 +650,8 @@ function statusLabel(value) {
                 <h3>API 密钥管理</h3>
               </div>
               <div class="toolbar-actions">
-                <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshDashboard">↻</button>
-                <button v-if="!hasApiKey" class="primary-button" @click="openKeyModal">创建 Key</button>
+                <el-button class="refresh-button" circle :icon="Refresh" :loading="loading.keys" aria-label="刷新" title="刷新" @click="refreshKeys" />
+                <el-button v-if="!hasApiKey" type="primary" @click="openKeyModal">创建 Key</el-button>
               </div>
             </div>
 
@@ -708,49 +710,6 @@ function statusLabel(value) {
             </div>
           </section>
 
-          <!-- 套餐购买 -->
-          <section class="panel-surface dashboard-card p-5">
-            <div class="section-head">
-              <div>
-                <p class="section-kicker">Pricing</p>
-                <h3>选择套餐</h3>
-              </div>
-              <button class="primary-button" :disabled="purchaseBlockedByActivePlan" @click="openOrderModal()">
-                {{ purchaseBlockedByActivePlan ? '等待当前套餐过期后购买' : '新建订单' }}
-              </button>
-            </div>
-
-            <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              <div class="settings-tabs plan-tabs sm:col-span-2 xl:col-span-3">
-                <button :class="{ active: planTab === 'subscription' }" @click="planTab = 'subscription'">订阅套餐</button>
-                <button :class="{ active: planTab === 'public' }" @click="planTab = 'public'">活动套餐</button>
-              </div>
-              <article
-                v-for="plan in visiblePlans"
-                :key="plan.ID"
-                class="select-plan-card"
-                :class="{ active: selectedPlan === String(plan.ID), disabled: purchaseBlockedByActivePlan || planSoldOut(plan) }"
-                @click="!purchaseBlockedByActivePlan && !planSoldOut(plan) && (selectedPlan = String(plan.ID))"
-              >
-                <div v-if="plan.BadgeText" class="plan-ribbon-inline">{{ plan.BadgeText }}</div>
-                <h4>{{ plan.Name }}</h4>
-                <p>{{ plan.Description || '暂无说明' }}</p>
-                <div>
-                  <strong>{{ money(plan.PriceCents) }}</strong>
-                  <span v-if="isPublicPlan(plan)">总额度 {{ totalPlanUsd(plan) }} · 公共剩余 {{ publicRemainingUsd(plan) }}</span>
-                  <span v-else>{{ plan.DurationDays }} 天 · {{ quotaPeriodText(plan) }} {{ usd(plan.SettlementUSDCents) }}</span>
-                </div>
-                <button
-                  class="ghost-button small"
-                  :disabled="purchaseBlockedByActivePlan || planSoldOut(plan)"
-                  @click.stop="openOrderModal(String(plan.ID))"
-                >
-                  {{ planSoldOut(plan) ? '售罄' : (purchaseBlockedByActivePlan ? '等待当前套餐过期后购买' : '选择并下单') }}
-                </button>
-              </article>
-            </div>
-          </section>
-
           <!-- 订单 -->
           <section class="panel-surface dashboard-card p-5">
             <div class="section-head">
@@ -758,45 +717,58 @@ function statusLabel(value) {
                 <p class="section-kicker">Orders</p>
                 <h3>订单记录</h3>
               </div>
-              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshDashboard">↻</button>
+              <el-button class="refresh-button" circle :icon="Refresh" :loading="loading.orders" aria-label="刷新" title="刷新" @click="refreshOrders" />
             </div>
 
-            <div class="mt-6 table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>订单</th>
-                    <th>套餐</th>
-                    <th>金额</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="order in pagedOrders" :key="order.ID">
-                    <td>#{{ order.ID }}</td>
-                    <td>{{ order.Plan?.Name || '-' }}</td>
-                    <td>{{ money(order.AmountCents) }}</td>
-                    <td>
-                      <span class="status-badge">{{ statusLabel(order.Status) }}</span>
+            <div class="mt-6">
+              <el-table :data="pagedOrders" border empty-text="暂无订单">
+                <el-table-column label="订单" width="90">
+                  <template #default="{ row: order }">#{{ order.ID }}</template>
+                </el-table-column>
+                <el-table-column label="套餐" min-width="140">
+                  <template #default="{ row: order }">{{ order.Plan?.Name || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="金额" width="110">
+                  <template #default="{ row: order }">{{ money(order.AmountCents) }}</template>
+                </el-table-column>
+                <el-table-column label="状态" min-width="150">
+                  <template #default="{ row: order }">
+                    <div class="order-status-cell">
+                      <el-tag>{{ statusLabel(order.Status) }}</el-tag>
+                      <el-popover
+                        v-if="order.Status === 'pending_review'"
+                        trigger="click"
+                        placement="top"
+                        width="240"
+                        content="后台审核需要 5-30 分钟，正在一对一开号中。"
+                      >
+                        <template #reference>
+                          <button type="button" class="order-review-tip" aria-label="查看审核说明">!</button>
+                        </template>
+                      </el-popover>
+                    </div>
                       <small v-if="order.Status === 'pending_payment'" class="order-countdown">剩余 {{ orderCountdown(order) }}</small>
-                    </td>
-                    <td>
-                      <button v-if="order.Status === 'pending_payment'" class="primary-button small" @click="openPayModal(order)">
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="140">
+                  <template #default="{ row: order }">
+                      <el-button v-if="order.Status === 'pending_payment'" type="primary" size="small" @click="openPayModal(order)">
                         {{ isManualPaymentOrder(order) ? '继续人工支付' : '继续支付' }}
-                      </button>
+                      </el-button>
                       <span v-else class="text-muted">-</span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+                  </template>
+                </el-table-column>
+              </el-table>
             </div>
             <div class="pagination-bar">
               <span>共 {{ orders.length }} 个订单，第 {{ Math.min(orderPage, totalOrderPages) }} / {{ totalOrderPages }} 页</span>
-              <div class="table-actions">
-                <button class="ghost-button small" :disabled="orderPage <= 1" @click="setOrderPage(orderPage - 1)">上一页</button>
-                <button class="ghost-button small" :disabled="orderPage >= totalOrderPages" @click="setOrderPage(orderPage + 1)">下一页</button>
-              </div>
+              <el-pagination
+                layout="prev, pager, next"
+                :current-page="orderPage"
+                :page-size="orderPageSize"
+                :total="orders.length"
+                @current-change="setOrderPage"
+              />
             </div>
           </section>
         </div>
@@ -832,7 +804,7 @@ function statusLabel(value) {
                 <h3>套餐管理</h3>
                 <p class="section-subtitle text-muted">订阅周期与额度</p>
               </div>
-              <button class="icon-button refresh-button" type="button" :disabled="loading" aria-label="刷新" title="刷新" @click="refreshDashboard">↻</button>
+              <el-button class="refresh-button" circle :icon="Refresh" :loading="loading.plan" aria-label="刷新" title="刷新" @click="refreshPlan" />
             </div>
 
             <div v-if="hasActiveSubscription" class="plan-snapshot-card">
@@ -932,15 +904,21 @@ function statusLabel(value) {
             </div>
 
             <div v-else class="plan-snapshot-card plan-snapshot-card--empty">
-              <div class="plan-snapshot-row">
-                <div class="plan-snapshot-icon plan-snapshot-icon--dim" aria-hidden="true">📋</div>
+              <div class="plan-snapshot-empty-hero">
+                <div class="plan-snapshot-icon plan-snapshot-icon--dim" aria-hidden="true">▣</div>
                 <div class="plan-snapshot-primary">
                   <div class="plan-snapshot-title-row">
                     <strong>暂无生效套餐</strong>
                   </div>
-                  <p class="text-muted plan-snapshot-empty-desc">支付并审核通过后，此处显示套餐信息与周期。</p>
+                  <p class="text-muted plan-snapshot-empty-desc">选择套餐并完成支付审核后，这里会显示额度、周期和到期时间。</p>
                 </div>
               </div>
+              <div class="plan-snapshot-empty-steps">
+                <span>选择套餐</span>
+                <span>完成支付</span>
+                <span>审核开通</span>
+              </div>
+              <el-button type="primary" class="plan-snapshot-empty-action" @click="$emit('navigate', '/plans')">去订购套餐</el-button>
             </div>
 
             <div class="plan-card-actions">
@@ -953,43 +931,8 @@ function statusLabel(value) {
       </div>
     </div>
 
-    <div v-if="modal.open" class="modal-backdrop" @click.self="closeModal">
-      <form class="modal-card" @submit.prevent="submitModal">
-        <div class="modal-head">
-          <h3>{{ modal.title }}</h3>
-          <button type="button" class="icon-button" @click="closeModal">×</button>
-        </div>
-
-        <div v-if="modal.type === 'create-order'" class="modal-body form-grid">
-          <label class="field md:col-span-2">
-            <span>选择套餐</span>
-            <select v-model="orderForm.planId" required>
-              <option value="">请选择套餐</option>
-              <option v-for="plan in visiblePlans" :key="plan.ID" :value="plan.ID" :disabled="planSoldOut(plan)">
-                {{ plan.Name }} / {{ money(plan.PriceCents) }} / {{ isPublicPlan(plan) ? `总额度 ${totalPlanUsd(plan)}` : `${plan.DurationDays} 天` }}{{ planSoldOut(plan) ? ' / 售罄' : '' }}
-              </option>
-            </select>
-          </label>
-          <div class="order-flow-note md:col-span-2">
-            <strong>选择支付方式</strong>
-            <div class="payment-method-options">
-              <label :class="{ active: orderForm.paymentMethod === 'online' }">
-                <input v-model="orderForm.paymentMethod" type="radio" value="online" />
-                <span>
-                  <b>在线支付</b>
-                  <small>跳转支付页面，支付后系统自动核验结果。</small>
-                </span>
-              </label>
-              <label :class="{ active: orderForm.paymentMethod === 'manual' }">
-                <input v-model="orderForm.paymentMethod" type="radio" value="manual" />
-                <span>
-                  <b>人工支付</b>
-                  <small>扫码转账并留言当前账号，可节省在线支付手续费。</small>
-                </span>
-              </label>
-            </div>
-          </div>
-        </div>
+    <el-dialog v-model="modal.open" :title="modal.title" width="560px" align-center @close="closeModal">
+      <el-form class="modal-card" label-position="top" @submit.prevent="submitModal">
 
         <div v-if="modal.type === 'pay-order'" class="modal-body">
           <div class="payment-panel">
@@ -998,9 +941,9 @@ function statusLabel(value) {
             <span v-if="orderForm.order?.Status === 'pending_payment'" class="payment-countdown">支付剩余时间：{{ orderCountdown(orderForm.order) }}</span>
             <span v-else-if="orderForm.order?.Status" class="payment-countdown">当前状态：{{ statusLabel(orderForm.order.Status) }}</span>
             <p>请在 5 分钟内点击“去支付”打开支付页面。完成支付后回到这里点击“已完成支付”，系统确认支付成功后才会进入待审核。</p>
-            <button type="button" class="primary-button" @click="startPayment">
+            <el-button type="primary" @click="startPayment">
               {{ orderForm.paymentOpened ? '重新打开支付页面' : '去支付' }}
-            </button>
+            </el-button>
           </div>
         </div>
 
@@ -1015,10 +958,9 @@ function statusLabel(value) {
             <div v-else class="manual-payment-empty">
               管理员尚未上传付款二维码，请联系站点支持。
             </div>
-            <label class="field">
-              <span>付款备注 / 当前账号</span>
-              <textarea v-model="orderForm.manualNote" rows="3" required placeholder="请填写当前账号邮箱、转账备注或其他便于核对的信息"></textarea>
-            </label>
+            <el-form-item label="付款备注 / 当前账号" required>
+              <el-input v-model="orderForm.manualNote" type="textarea" :rows="3" placeholder="请填写当前账号邮箱、转账备注或其他便于核对的信息" />
+            </el-form-item>
           </div>
         </div>
 
@@ -1027,10 +969,9 @@ function statusLabel(value) {
             <strong>将替换当前唯一密钥</strong>
             <span>确认后旧密钥立即失效，所有使用旧 Key 的客户端需同步更新。</span>
           </div>
-          <label class="field">
-            <span>Key 名称</span>
-            <input v-model="keyForm.name" required minlength="2" placeholder="生产环境 Key" />
-          </label>
+          <el-form-item label="Key 名称" required>
+            <el-input v-model="keyForm.name" minlength="2" placeholder="生产环境 Key" />
+          </el-form-item>
         </div>
 
         <div v-if="modal.type === 'disable-key'" class="modal-body confirm-copy">
@@ -1038,17 +979,14 @@ function statusLabel(value) {
           <p>禁用后该 Key 将不能继续调用网关接口。</p>
         </div>
 
-        <div v-if="modalError" class="modal-inline-error">
-          <strong>操作未完成</strong>
-          <span>{{ modalError }}</span>
-        </div>
-
+      </el-form>
+      <template #footer>
         <div class="modal-actions">
-          <button type="button" class="ghost-button" @click="closeModal">取消</button>
-          <button :class="modal.danger ? 'danger-solid-button' : 'primary-button'">{{ modal.actionLabel }}</button>
+          <el-button @click="closeModal">取消</el-button>
+          <el-button :type="modal.danger ? 'danger' : 'primary'" @click="submitModal">{{ modal.actionLabel }}</el-button>
         </div>
-      </form>
-    </div>
+      </template>
+    </el-dialog>
 
     <div v-if="copySuccessModalOpen" class="modal-backdrop" @click.self="closeCopySuccessModal">
       <div class="modal-card" role="dialog" aria-labelledby="copy-success-title">

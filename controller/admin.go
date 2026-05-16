@@ -40,10 +40,12 @@ type planRequest struct {
 	PlanType           string `json:"plan_type"`
 	QuotaPeriod        string `json:"quota_period"`
 	PublicChannelID    *uint  `json:"public_channel_id"`
-	PriceCents         int64  `json:"price_cents" binding:"required,min=1"`
+	PriceCents         int64  `json:"price_cents" binding:"min=0"`
 	SettlementUSDCents int64  `json:"settlement_usd_cents"`
 	DurationDays       int    `json:"duration_days"`
 	Description        string `json:"description"`
+	IsLottery          bool   `json:"is_lottery"`
+	LotteryURL         string `json:"lottery_url"`
 	Enabled            bool   `json:"enabled"`
 }
 
@@ -463,6 +465,8 @@ func (a *AdminController) CreatePlan(c *gin.Context) {
 		SettlementUSDCents: req.SettlementUSDCents,
 		DurationDays:       fallbackDurationDays(req),
 		Description:        req.Description,
+		IsLottery:          req.IsLottery,
+		LotteryURL:         strings.TrimSpace(req.LotteryURL),
 		Enabled:            req.Enabled,
 	}
 	if err := a.db.Create(&plan).Error; err != nil {
@@ -493,6 +497,8 @@ func (a *AdminController) UpdatePlan(c *gin.Context) {
 		"settlement_usd_cents": req.SettlementUSDCents,
 		"duration_days":        fallbackDurationDays(req),
 		"description":          req.Description,
+		"is_lottery":           req.IsLottery,
+		"lottery_url":          strings.TrimSpace(req.LotteryURL),
 		"enabled":              req.Enabled,
 	}
 	if err := a.db.Model(&model.Plan{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
@@ -915,6 +921,12 @@ func (a *AdminController) validatePlanRequest(req planRequest) error {
 	planType := fallbackPlanType(req.PlanType)
 	if req.SettlementUSDCents <= 0 {
 		return errors.New("settlement usd quota required")
+	}
+	if !req.IsLottery && req.PriceCents <= 0 {
+		return errors.New("plan price required")
+	}
+	if req.IsLottery && strings.TrimSpace(req.LotteryURL) == "" {
+		return errors.New("lottery url required")
 	}
 	if planType == model.PlanTypePublic {
 		if fallbackQuotaPeriod(req.QuotaPeriod) != model.QuotaPeriodPublic {

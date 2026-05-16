@@ -229,8 +229,8 @@ function categoryCount(id) {
           汇集中转站用户最常见的接入、账号、报错、扣费和客户端配置问题。先按下面的清单排查，仍不能解决时，把关键信息发给管理员会更快定位。
         </p>
         <div class="faq-actions">
-          <button class="hero-primary" type="button" @click="emit('start')">进入控制台 <span>→</span></button>
-          <button class="hero-secondary" type="button" @click="emit('navigate', '/docs')">查看教程</button>
+          <el-button type="primary" size="large" @click="emit('start')">进入控制台</el-button>
+          <el-button size="large" plain @click="emit('navigate', '/docs')">查看教程</el-button>
         </div>
       </div>
 
@@ -244,38 +244,35 @@ function categoryCount(id) {
 
     <section class="faq-shell mx-auto max-w-7xl px-4 pb-14 sm:px-6">
       <div class="faq-toolbar">
-        <label class="faq-search">
-          <span>搜索问题</span>
-          <input v-model="search" type="search" placeholder="输入 401、模型不存在、额度、Base URL..." />
-        </label>
-        <div class="faq-category-tabs" aria-label="FAQ 分类">
-          <button
-            v-for="category in categories"
-            :key="category.id"
-            type="button"
-            :class="{ active: activeCategory === category.id }"
-            @click="activeCategory = category.id"
-          >
-            {{ category.label }}
-            <small>{{ categoryCount(category.id) }}</small>
-          </button>
-        </div>
+        <el-form-item class="faq-search" label="搜索问题">
+          <el-input v-model="search" type="search" clearable placeholder="输入 401、模型不存在、额度、Base URL..." />
+        </el-form-item>
+        <el-segmented
+          class="faq-category-tabs"
+          :model-value="activeCategory"
+          :options="categories.map((category) => ({ label: `${category.label} ${categoryCount(category.id)}`, value: category.id }))"
+          @update:model-value="(value) => (activeCategory = value)"
+        />
       </div>
 
       <div class="faq-content-grid">
-        <article v-for="item in filteredItems" :key="item.question" class="faq-card">
-          <div class="faq-card-head">
-            <span>{{ categories.find((category) => category.id === item.category)?.label }}</span>
-            <h2>{{ item.question }}</h2>
-          </div>
-          <p>{{ item.answer }}</p>
-          <div class="faq-solution">
-            <strong>解决方案</strong>
-            <ol>
-              <li v-for="step in item.solution" :key="step">{{ step }}</li>
-            </ol>
-          </div>
-        </article>
+        <el-collapse v-if="filteredItems.length" class="faq-collapse">
+          <el-collapse-item v-for="item in filteredItems" :key="item.question" :title="item.question" :name="item.question">
+            <template #title>
+              <div class="faq-card-head">
+                <span>{{ categories.find((category) => category.id === item.category)?.label }}</span>
+                <h2>{{ item.question }}</h2>
+              </div>
+            </template>
+            <p>{{ item.answer }}</p>
+            <div class="faq-solution">
+              <strong>解决方案</strong>
+              <ol>
+                <li v-for="step in item.solution" :key="step">{{ step }}</li>
+              </ol>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
 
         <div v-if="!filteredItems.length" class="faq-empty">
           <strong>没有找到匹配问题</strong>
@@ -289,7 +286,7 @@ function categoryCount(id) {
           <h2>联系管理员时请附上这些信息</h2>
           <p>账号邮箱、API Key 前缀、模型 ID、请求时间、完整错误、客户端名称、是否流式请求，以及控制台使用记录里的耗时和 Token 信息。</p>
         </div>
-        <button class="primary-button" type="button" @click="emit('navigate', '/usage-records')">查看使用记录</button>
+        <el-button type="primary" @click="emit('navigate', '/usage-records')">查看使用记录</el-button>
       </section>
     </section>
   </main>

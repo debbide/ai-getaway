@@ -26,7 +26,9 @@ const defaultSettings = {
   pricing_title: '简单透明的定价',
   pricing_subtitle: '保质保量无降智不掺假',
   pricing_notice: '本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转',
-  allow_registration: true
+  allow_registration: true,
+  online_payment_enabled: true,
+  manual_payment_enabled: true
 }
 
 const auth = useAuthStore()
@@ -43,8 +45,20 @@ const passwordModalOpen = ref(false)
 const passwordSaving = ref(false)
 const passwordError = ref('')
 const passwordNotice = ref('')
-const pricingTab = ref('subscription')
+const pricingTab = ref('daily')
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+const orderModal = reactive({
+  open: false,
+  loading: false,
+  error: '',
+  plan: null,
+  paymentMethod: 'online',
+  order: null,
+  paymentUrl: '',
+  paymentOpened: false,
+  manualQRCode: '',
+  manualNote: ''
+})
 
 const isConsolePage = computed(() => currentPath.value === '/console')
 const isAdminPage = computed(() => currentPath.value === '/admin')
@@ -57,9 +71,20 @@ const navItems = computed(() => parseNavigation(publicSettings.value.navigation_
 const activeThemeLabel = computed(() => ({ light: '浅色', dark: '深色', system: '系统' })[themeMode.value] || '深色')
 const accountEmail = computed(() => auth.user?.email || '')
 const accountName = computed(() => auth.user?.username || accountEmail.value.split('@')[0] || '用户')
-const subscriptionPlans = computed(() => plans.value.filter((plan) => plan.QuotaPeriod !== 'public' && plan.PlanType !== 'public'))
-const publicPlans = computed(() => plans.value.filter((plan) => plan.QuotaPeriod === 'public' || plan.PlanType === 'public'))
-const visiblePricingPlans = computed(() => (pricingTab.value === 'public' ? publicPlans.value : subscriptionPlans.value))
+const dailyPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && plan.QuotaPeriod === 'daily' && plan.PlanType !== 'public'))
+const weeklyPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && plan.QuotaPeriod !== 'daily' && plan.QuotaPeriod !== 'public' && plan.PlanType !== 'public'))
+const publicPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && (plan.QuotaPeriod === 'public' || plan.PlanType === 'public')))
+const lotteryPlans = computed(() => plans.value.filter((plan) => isLotteryPlan(plan)))
+const onlinePaymentEnabled = computed(() => publicSettings.value.online_payment_enabled !== false)
+const manualPaymentEnabled = computed(() => publicSettings.value.manual_payment_enabled !== false)
+const hasEnabledPaymentMethod = computed(() => onlinePaymentEnabled.value || manualPaymentEnabled.value)
+const visiblePricingPlans = computed(() => {
+  if (pricingTab.value === 'daily') return dailyPlans.value
+  if (pricingTab.value === 'weekly') return weeklyPlans.value
+  if (pricingTab.value === 'public') return publicPlans.value
+  if (pricingTab.value === 'lottery') return lotteryPlans.value
+  return dailyPlans.value
+})
 const avatarText = computed(() => {
   const source = accountEmail.value || accountName.value || 'U'
   return source.slice(0, 2).toUpperCase()
@@ -262,6 +287,7 @@ function applyTheme() {
 }
 
 function priceRmb(plan) {
+  if (isLotteryPlan(plan)) return '抽奖'
   return ((plan.PriceCents || 0) / 100).toFixed((plan.PriceCents || 0) % 100 === 0 ? 0 : 1)
 }
 
@@ -270,6 +296,7 @@ function periodUsd(plan) {
 }
 
 function quotaPeriodLabel(plan) {
+  if (isLotteryPlan(plan)) return '抽奖套餐'
   if (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') return '公共套餐'
   return plan.QuotaPeriod === 'daily' ? '日限额度' : '周限额度'
 }
@@ -281,6 +308,7 @@ function totalUsd(plan) {
 }
 
 function planPeriod(plan) {
+  if (isLotteryPlan(plan)) return '活动'
   if (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') return '次'
   if ((plan.DurationDays || 0) <= 1) return '天'
   if ((plan.DurationDays || 0) >= 28) return '月'
@@ -288,7 +316,139 @@ function planPeriod(plan) {
 }
 
 function planSoldOut(plan) {
+  if (isLotteryPlan(plan)) return false
   return (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') && Number(plan.PublicChannel?.RemainingUSDCents || 0) < Number(plan.SettlementUSDCents || 0)
+}
+
+function isLotteryPlan(plan) {
+  return Boolean(plan?.IsLottery || plan?.is_lottery)
+}
+
+function openPlanAction(plan) {
+  if (isLotteryPlan(plan)) {
+    const url = String(plan?.LotteryURL || '').trim()
+    if (url) window.location.href = url
+    return
+  }
+  openPricingOrder(plan)
+}
+
+function openPricingOrder(plan) {
+  if (!auth.loggedIn) {
+    openAuth(publicSettings.value.allow_registration ? 'register' : 'login')
+    return
+  }
+  if (planSoldOut(plan)) return
+  const paymentMethod = onlinePaymentEnabled.value ? 'online' : (manualPaymentEnabled.value ? 'manual' : '')
+  Object.assign(orderModal, {
+    open: true,
+    loading: false,
+    error: paymentMethod ? '' : '当前没有可用的支付方式，请联系管理员',
+    plan,
+    paymentMethod,
+    order: null,
+    paymentUrl: '',
+    manualQRCode: '',
+    paymentOpened: false,
+    manualNote: accountPaymentNote()
+  })
+}
+
+function closeOrderModal() {
+  if (orderModal.loading) return
+  Object.assign(orderModal, {
+    open: false,
+    loading: false,
+    error: '',
+    plan: null,
+    paymentMethod: 'online',
+    order: null,
+    paymentUrl: '',
+    paymentOpened: false,
+    manualQRCode: '',
+    manualNote: ''
+  })
+}
+
+async function submitPlanOrder() {
+  if (!orderModal.plan?.ID) return
+  if (!hasEnabledPaymentMethod.value || !orderModal.paymentMethod) {
+    orderModal.error = '当前没有可用的支付方式，请联系管理员'
+    return
+  }
+  orderModal.loading = true
+  orderModal.error = ''
+  try {
+    const res = await api.post('/orders', {
+      plan_id: Number(orderModal.plan.ID),
+      payment_method: orderModal.paymentMethod
+    })
+    orderModal.order = res.data?.order
+    if (orderModal.paymentMethod === 'manual') {
+      await loadManualPaymentInfo()
+      return
+    }
+    await openOnlinePaymentWindow()
+  } catch (err) {
+    orderModal.error = err.message
+  } finally {
+    orderModal.loading = false
+  }
+}
+
+async function openOnlinePaymentWindow() {
+  if (!orderModal.order?.ID) return
+  const payRes = await api.post(`/orders/${orderModal.order.ID}/pay`)
+  orderModal.paymentUrl = payRes.data?.payment_url || ''
+  if (orderModal.paymentUrl) {
+    orderModal.paymentOpened = true
+    window.open(orderModal.paymentUrl, '_blank', 'noopener,noreferrer')
+  }
+}
+
+async function confirmOnlinePayment() {
+  if (!orderModal.order?.ID) return
+  orderModal.loading = true
+  orderModal.error = ''
+  try {
+    await api.patch(`/orders/${orderModal.order.ID}/paid`)
+    closeOrderModal()
+    navigate('/console')
+  } catch (err) {
+    orderModal.error = err.message
+  } finally {
+    orderModal.loading = false
+  }
+}
+
+async function loadManualPaymentInfo() {
+  const res = await api.get('/payment/manual')
+  orderModal.manualQRCode = res.data?.manual_payment_qr_code || ''
+}
+
+async function submitManualPayment() {
+  if (!orderModal.order?.ID) return
+  if (!String(orderModal.manualNote || '').trim()) {
+    orderModal.error = '请填写当前账号或转账留言，方便管理员核对'
+    return
+  }
+  orderModal.loading = true
+  orderModal.error = ''
+  try {
+    await api.post(`/orders/${orderModal.order.ID}/manual-payment`, {
+      user_payment_note: orderModal.manualNote
+    })
+    closeOrderModal()
+    navigate('/console')
+  } catch (err) {
+    orderModal.error = err.message
+  } finally {
+    orderModal.loading = false
+  }
+}
+
+function accountPaymentNote() {
+  return auth.user?.email || auth.user?.username || ''
 }
 
 function publicRemainingUsd(plan) {
@@ -445,8 +605,10 @@ function planSubtitle(index) {
 
         <p v-if="error" class="alert alert-danger mt-5">{{ error }}</p>
         <div class="pricing-tabs">
-          <button :class="{ active: pricingTab === 'subscription' }" @click="pricingTab = 'subscription'">订阅套餐</button>
+          <button :class="{ active: pricingTab === 'daily' }" @click="pricingTab = 'daily'">日套餐</button>
+          <button :class="{ active: pricingTab === 'weekly' }" @click="pricingTab = 'weekly'">周套餐</button>
           <button :class="{ active: pricingTab === 'public' }" @click="pricingTab = 'public'">活动套餐</button>
+          <button :class="{ active: pricingTab === 'lottery' }" @click="pricingTab = 'lottery'">抽奖套餐</button>
         </div>
         <div class="subscription-grid">
           <article
@@ -459,17 +621,17 @@ function planSubtitle(index) {
             <h2>{{ plan.Name }}</h2>
             <p>{{ plan.Description || planSubtitle(index) }}</p>
             <div class="subscription-price">
-              <strong>￥{{ priceRmb(plan) }}</strong>
+              <strong>{{ isLotteryPlan(plan) ? '抽奖' : `￥${priceRmb(plan)}` }}</strong>
               <span>/{{ planPeriod(plan) }}</span>
             </div>
             <div class="subscription-facts">
               <div><span class="fact-icon">▣</span><span>{{ quotaPeriodLabel(plan) }}：${{ plan.QuotaPeriod === 'public' ? totalUsd(plan) : periodUsd(plan) }}</span></div>
-              <div v-if="plan.QuotaPeriod === 'public'"><span class="fact-icon">□</span><span>公共渠道剩余：${{ publicRemainingUsd(plan) }}</span></div>
+              <div v-if="plan.QuotaPeriod === 'public' && !isLotteryPlan(plan)"><span class="fact-icon">□</span><span>公共渠道剩余：${{ publicRemainingUsd(plan) }}</span></div>
               <div v-else><span class="fact-icon">□</span><span>套餐时长：{{ plan.DurationDays }} 天</span></div>
               <div><span class="fact-icon">↗</span><span>总额度：约${{ totalUsd(plan) }}</span></div>
             </div>
-            <button class="subscription-action" :disabled="planSoldOut(plan)" @click="afterPrimaryAction">
-              {{ planSoldOut(plan) ? '售罄' : (auth.loggedIn ? '立即续费' : '立即订阅') }}
+            <button class="subscription-action" :disabled="planSoldOut(plan) || (isLotteryPlan(plan) && !plan.LotteryURL)" @click="openPlanAction(plan)">
+              {{ isLotteryPlan(plan) ? '参与抽奖' : (planSoldOut(plan) ? '售罄' : (auth.loggedIn ? '立即续费' : '立即订阅')) }}
             </button>
             <small>安全支付 · 透明价格</small>
           </article>
@@ -568,6 +730,81 @@ function planSubtitle(index) {
     </footer>
 
     <AuthModal v-model:open="authOpen" v-model:mode="authMode" :allow-registration="publicSettings.allow_registration" />
+
+    <Transition name="modal-fade">
+      <div v-if="orderModal.open" class="modal-backdrop" @click.self="closeOrderModal">
+        <form class="modal-card order-modal-card" @submit.prevent="orderModal.order && orderModal.paymentMethod === 'manual' ? submitManualPayment() : (orderModal.order && orderModal.paymentMethod === 'online' ? confirmOnlinePayment() : submitPlanOrder())">
+          <div class="modal-head order-modal-head">
+            <div>
+              <p class="section-kicker">Order</p>
+              <h2>{{ orderModal.order ? '完成支付' : '确认购买套餐' }}</h2>
+            </div>
+            <button type="button" class="icon-button" :disabled="orderModal.loading" @click="closeOrderModal">×</button>
+          </div>
+          <div class="modal-body order-modal-body">
+            <section v-if="orderModal.plan" class="order-summary-card">
+              <div>
+                <strong>{{ orderModal.plan.Name }}</strong>
+                <span>{{ quotaPeriodLabel(orderModal.plan) }}</span>
+              </div>
+              <dl>
+                <div><dt>价格</dt><dd>￥{{ priceRmb(orderModal.plan) }}</dd></div>
+                <div><dt>额度</dt><dd>${{ orderModal.plan.QuotaPeriod === 'public' ? totalUsd(orderModal.plan) : periodUsd(orderModal.plan) }}</dd></div>
+                <div v-if="orderModal.plan.QuotaPeriod !== 'public'"><dt>有效期</dt><dd>{{ orderModal.plan.DurationDays }} 天</dd></div>
+              </dl>
+            </section>
+
+            <section v-if="!orderModal.order" class="payment-method-field order-section-card">
+              <strong>选择支付方式</strong>
+              <div class="payment-method-options" role="radiogroup" aria-label="选择支付方式">
+                <button v-if="onlinePaymentEnabled" type="button" class="payment-method-option" :class="{ active: orderModal.paymentMethod === 'online' }" role="radio" :aria-checked="orderModal.paymentMethod === 'online'" @click="orderModal.paymentMethod = 'online'">
+                  <span>在线支付</span>
+                  <small>新窗口打开易支付页面，支付后回到这里确认。</small>
+                </button>
+                <button v-if="manualPaymentEnabled" type="button" class="payment-method-option" :class="{ active: orderModal.paymentMethod === 'manual' }" role="radio" :aria-checked="orderModal.paymentMethod === 'manual'" @click="orderModal.paymentMethod = 'manual'">
+                  <span>人工支付</span>
+                  <small>扫码转账并填写账号或备注，提交后等待管理员审核。</small>
+                </button>
+              </div>
+            </section>
+
+            <section v-if="orderModal.order && orderModal.paymentMethod === 'online'" class="order-section-card online-payment-panel">
+              <div class="online-payment-status">
+                <span class="online-payment-dot"></span>
+                <div>
+                  <strong>等待支付结果</strong>
+                  <p>支付页已在新窗口打开。完成支付后点击下方按钮查询结果。</p>
+                </div>
+              </div>
+              <div class="online-payment-actions">
+                <button type="button" class="ghost-button" :disabled="orderModal.loading" @click="openOnlinePaymentWindow">重新打开支付页</button>
+                <button class="primary-button" :disabled="orderModal.loading">{{ orderModal.loading ? '查询中...' : '我已完成支付' }}</button>
+              </div>
+            </section>
+
+            <section v-if="orderModal.order && orderModal.paymentMethod === 'manual'" class="order-section-card manual-payment-panel">
+              <strong>人工支付订单 #{{ orderModal.order.ID }}</strong>
+              <div v-if="orderModal.manualQRCode" class="manual-payment-qr">
+                <img :src="orderModal.manualQRCode" alt="人工支付付款二维码" />
+              </div>
+              <div v-else class="manual-payment-empty">管理员尚未配置人工支付二维码，请联系站点支持。</div>
+              <label class="password-field">
+                <span>当前账号或转账留言</span>
+                <textarea v-model="orderModal.manualNote" rows="3" placeholder="请填写当前账号邮箱、转账备注或其他便于核对的信息"></textarea>
+              </label>
+            </section>
+
+            <p v-if="orderModal.error" class="modal-inline-error">{{ orderModal.error }}</p>
+          </div>
+          <div class="modal-actions order-modal-actions">
+            <button type="button" class="ghost-button" :disabled="orderModal.loading" @click="closeOrderModal">{{ orderModal.order && orderModal.paymentMethod === 'online' ? '稍后处理' : '取消' }}</button>
+            <button v-if="!orderModal.order || orderModal.paymentMethod === 'manual'" class="primary-button" :disabled="orderModal.loading || !orderModal.paymentMethod || (orderModal.order && orderModal.paymentMethod === 'manual' && !orderModal.manualQRCode)">
+              {{ orderModal.loading ? '提交中...' : (orderModal.order && orderModal.paymentMethod === 'manual' ? '提交审核' : '确认下单') }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </Transition>
 
     <Transition name="modal-fade">
       <div v-if="passwordModalOpen" class="modal-backdrop password-backdrop" @click.self="closePasswordModal">

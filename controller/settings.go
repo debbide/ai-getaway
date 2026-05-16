@@ -46,6 +46,8 @@ type updateSettingsRequest struct {
 	EpayNotifyURL                  string `json:"epay_notify_url"`
 	EpayReturnURL                  string `json:"epay_return_url"`
 	EpaySubmitURL                  string `json:"epay_submit_url"`
+	OnlinePaymentEnabled           bool   `json:"online_payment_enabled"`
+	ManualPaymentEnabled           bool   `json:"manual_payment_enabled"`
 	ManualPaymentQRCode            string `json:"manual_payment_qr_code"`
 }
 
@@ -67,14 +69,16 @@ func (s *SettingsController) Public(c *gin.Context) {
 	}
 	setting := loadSettings(s.db)
 	response.OK(c, gin.H{
-		"site_title":         setting.SiteTitle,
-		"contact_email":      setting.ContactEmail,
-		"api_endpoints":      setting.APIEndpoints,
-		"navigation_items":   setting.NavigationItems,
-		"pricing_title":      setting.PricingTitle,
-		"pricing_subtitle":   setting.PricingSubtitle,
-		"pricing_notice":     setting.PricingNotice,
-		"allow_registration": setting.AllowRegistration,
+		"site_title":             setting.SiteTitle,
+		"contact_email":          setting.ContactEmail,
+		"api_endpoints":          setting.APIEndpoints,
+		"navigation_items":       setting.NavigationItems,
+		"pricing_title":          setting.PricingTitle,
+		"pricing_subtitle":       setting.PricingSubtitle,
+		"pricing_notice":         setting.PricingNotice,
+		"allow_registration":     setting.AllowRegistration,
+		"online_payment_enabled": setting.OnlinePaymentEnabled,
+		"manual_payment_enabled": setting.ManualPaymentEnabled,
 	})
 }
 
@@ -84,8 +88,13 @@ func (s *SettingsController) ManualPayment(c *gin.Context) {
 		return
 	}
 	setting := loadSettings(s.db)
+	if !setting.ManualPaymentEnabled {
+		response.Error(c, 400, "manual payment disabled")
+		return
+	}
 	response.OK(c, gin.H{
 		"manual_payment_qr_code": setting.ManualPaymentQRCode,
+		"manual_payment_enabled": setting.ManualPaymentEnabled,
 	})
 }
 
@@ -120,6 +129,8 @@ func (s *SettingsController) Get(c *gin.Context) {
 		"epay_notify_url":                   setting.EpayNotifyURL,
 		"epay_return_url":                   setting.EpayReturnURL,
 		"epay_submit_url":                   setting.EpaySubmitURL,
+		"online_payment_enabled":            setting.OnlinePaymentEnabled,
+		"manual_payment_enabled":            setting.ManualPaymentEnabled,
 		"epay_key_configured":               setting.EpayKey != "",
 		"manual_payment_qr_code":            setting.ManualPaymentQRCode,
 	})
@@ -160,6 +171,8 @@ func (s *SettingsController) Update(c *gin.Context) {
 		"epay_notify_url":                   req.EpayNotifyURL,
 		"epay_return_url":                   req.EpayReturnURL,
 		"epay_submit_url":                   req.EpaySubmitURL,
+		"online_payment_enabled":            req.OnlinePaymentEnabled,
+		"manual_payment_enabled":            req.ManualPaymentEnabled,
 		"manual_payment_qr_code":            req.ManualPaymentQRCode,
 	}
 	if req.SMTPPassword != "" {
@@ -229,6 +242,8 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 		"epay_notify_url":                   "VARCHAR(512)",
 		"epay_return_url":                   "VARCHAR(512)",
 		"epay_submit_url":                   "VARCHAR(512)",
+		"online_payment_enabled":            "BOOLEAN DEFAULT TRUE",
+		"manual_payment_enabled":            "BOOLEAN DEFAULT TRUE",
 		"manual_payment_qr_code":            "LONGTEXT",
 		"order_payment_admin_email_enabled": "BOOLEAN DEFAULT FALSE",
 		"order_approved_user_email_enabled": "BOOLEAN DEFAULT FALSE",
