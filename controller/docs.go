@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 
 	"ai-gateway/model"
@@ -36,9 +37,42 @@ func (d *DocsController) PublicList(c *gin.Context) {
 }
 
 func (d *DocsController) AdminList(c *gin.Context) {
+	page, pageSize := 1, 10
+	if value, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page", "1"))); err == nil && value > 0 {
+		page = value
+	}
+	if value, err := strconv.Atoi(strings.TrimSpace(c.Query("page_size"))); err == nil && value > 0 {
+		pageSize = value
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	query := d.db.Model(&model.DocPage{})
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("title LIKE ? OR slug LIKE ? OR group_name LIKE ? OR description LIKE ? OR CAST(id AS CHAR) LIKE ?", like, like, like, like, like)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("enabled = ?", status == "enabled")
+	}
+	if group := strings.TrimSpace(c.Query("group_name")); group != "" {
+		query = query.Where("group_name LIKE ?", "%"+group+"%")
+	}
+
+	var total int64
+	query.Count(&total)
 	var docs []model.DocPage
-	d.db.Order("sort_order asc, id asc").Find(&docs)
-	response.OK(c, docs)
+	query.Order("sort_order asc, id asc").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&docs)
+	response.OK(c, gin.H{
+		"items":     docs,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
 }
 
 func (d *DocsController) Create(c *gin.Context) {

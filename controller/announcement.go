@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,9 +43,39 @@ func (a *AnnouncementController) PublicList(c *gin.Context) {
 }
 
 func (a *AnnouncementController) AdminList(c *gin.Context) {
+	page, pageSize := 1, 10
+	if value, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page", "1"))); err == nil && value > 0 {
+		page = value
+	}
+	if value, err := strconv.Atoi(strings.TrimSpace(c.Query("page_size"))); err == nil && value > 0 {
+		pageSize = value
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	query := a.db.Model(&model.Announcement{})
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("title LIKE ? OR summary LIKE ? OR content LIKE ? OR CAST(id AS CHAR) LIKE ?", like, like, like, like)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("enabled = ?", status == "enabled")
+	}
+
+	var total int64
+	query.Count(&total)
 	var items []model.Announcement
-	a.db.Order("pinned desc, published_at desc, id desc").Find(&items)
-	response.OK(c, items)
+	query.Order("pinned desc, published_at desc, id desc").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&items)
+	response.OK(c, gin.H{
+		"items":     items,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
 }
 
 func (a *AnnouncementController) Create(c *gin.Context) {

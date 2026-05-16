@@ -83,6 +83,8 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			admin.POST("/orders/:id/complete-payment", adminController.CompleteOrderPayment)
 			admin.POST("/orders/:id/approve", adminController.ApproveOrder)
 			admin.POST("/orders/:id/reject", adminController.RejectOrder)
+			admin.POST("/orders/:id/close", adminController.CloseOrder)
+			admin.DELETE("/orders/:id", adminController.DeleteOrder)
 			admin.GET("/plans", adminController.Plans)
 			admin.POST("/plans", adminController.CreatePlan)
 			admin.PUT("/plans/:id", adminController.UpdatePlan)

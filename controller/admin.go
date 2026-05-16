@@ -3,6 +3,7 @@ package controller
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +108,10 @@ type rejectOrderRequest struct {
 	AdminNote string `json:"admin_note"`
 }
 
+type closeOrderRequest struct {
+	AdminNote string `json:"admin_note"`
+}
+
 type updateOrderRequest struct {
 	ChannelID   uint   `json:"channel_id"`
 	Channel     string `json:"channel"`
@@ -184,6 +189,32 @@ type adminPublicChannelResponse struct {
 	UpdatedAt         time.Time  `json:"UpdatedAt"`
 }
 
+type paginatedResponse struct {
+	Items    interface{} `json:"items"`
+	Total    int64       `json:"total"`
+	Page     int         `json:"page"`
+	PageSize int         `json:"page_size"`
+}
+
+func parsePageParams(c *gin.Context, defaultPageSize int) (int, int) {
+	page, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page", "1")))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("page_size")))
+	if pageSize <= 0 {
+		pageSize = defaultPageSize
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+	return page, pageSize
+}
+
+func applyPagination(query *gorm.DB, page, pageSize int) *gorm.DB {
+	return query.Offset((page - 1) * pageSize).Limit(pageSize)
+}
+
 func (a *AdminController) Users(c *gin.Context) {
 	query := a.db.Preload("Plan")
 	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
@@ -204,8 +235,12 @@ func (a *AdminController) Users(c *gin.Context) {
 		}
 	}
 
+	page, pageSize := parsePageParams(c, 10)
+	var total int64
+	query.Model(&model.User{}).Count(&total)
+
 	var users []model.User
-	query.Order("id desc").Find(&users)
+	applyPagination(query, page, pageSize).Order("id desc").Find(&users)
 
 	userIDs := make([]uint, 0, len(users))
 	for _, user := range users {
@@ -229,7 +264,12 @@ func (a *AdminController) Users(c *gin.Context) {
 		}
 		items = append(items, item)
 	}
-	response.OK(c, items)
+	response.OK(c, paginatedResponse{
+		Items:    items,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
 }
 
 func (a *AdminController) UserUpstream(c *gin.Context) {
@@ -409,8 +449,29 @@ func (a *AdminController) DeleteUser(c *gin.Context) {
 
 func (a *AdminController) Orders(c *gin.Context) {
 	expirePendingPaymentOrders(a.db)
+	query := a.db.Model(&model.Order{}).Preload("User").Preload("Plan")
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Joins("LEFT JOIN users ON users.id = orders.user_id").
+			Joins("LEFT JOIN plans ON plans.id = orders.plan_id").
+			Where("CAST(orders.id AS CHAR) LIKE ? OR CAST(orders.user_id AS CHAR) LIKE ? OR users.username LIKE ? OR users.email LIKE ? OR plans.name LIKE ? OR orders.payment_ref LIKE ?", like, like, like, like, like, like)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("orders.status = ?", status)
+	}
+	if planID := strings.TrimSpace(c.Query("plan_id")); planID != "" {
+		query = query.Where("orders.plan_id = ?", planID)
+	}
+	if paymentMethod := strings.TrimSpace(c.Query("payment_method")); paymentMethod != "" {
+		query = query.Where("orders.payment_method = ?", paymentMethod)
+	}
+
+	page, pageSize := parsePageParams(c, 10)
+	var total int64
+	query.Count(&total)
+
 	var orders []model.Order
-	a.db.Preload("User").Preload("Plan").Order("id desc").Find(&orders)
+	applyPagination(query, page, pageSize).Order("orders.id desc").Find(&orders)
 
 	userIDs := make([]uint, 0, len(orders))
 	for _, order := range orders {
@@ -434,13 +495,37 @@ func (a *AdminController) Orders(c *gin.Context) {
 		}
 		items = append(items, item)
 	}
-	response.OK(c, items)
+	response.OK(c, paginatedResponse{
+		Items:    items,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
 }
 
 func (a *AdminController) Plans(c *gin.Context) {
+	query := a.db.Model(&model.Plan{}).Preload("PublicChannel")
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("name LIKE ? OR code LIKE ? OR description LIKE ?", like, like, like)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("enabled = ?", status == "enabled")
+	}
+	if planType := strings.TrimSpace(c.Query("plan_type")); planType != "" {
+		query = query.Where("plan_type = ?", planType)
+	}
+	page, pageSize := parsePageParams(c, 10)
+	var total int64
+	query.Count(&total)
 	var plans []model.Plan
-	a.db.Preload("PublicChannel").Order("price_cents asc").Find(&plans)
-	response.OK(c, plans)
+	applyPagination(query, page, pageSize).Order("price_cents asc").Find(&plans)
+	response.OK(c, paginatedResponse{
+		Items:    plans,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
 }
 
 func (a *AdminController) CreatePlan(c *gin.Context) {
@@ -718,6 +803,58 @@ func (a *AdminController) RejectOrder(c *gin.Context) {
 	response.OK(c, nil)
 }
 
+func (a *AdminController) CloseOrder(c *gin.Context) {
+	var req closeOrderRequest
+	_ = c.ShouldBindJSON(&req)
+	note := strings.TrimSpace(req.AdminNote)
+	if note == "" {
+		note = "管理员关闭订单"
+	}
+
+	var order model.Order
+	if err := a.db.First(&order, c.Param("id")).Error; err != nil {
+		response.Error(c, 404, "order not found")
+		return
+	}
+
+	updates := map[string]interface{}{
+		"admin_note": note,
+	}
+	switch order.Status {
+	case model.OrderStatusPendingPayment:
+		updates["status"] = model.OrderStatusPaymentTimeout
+	case model.OrderStatusPendingReview, model.OrderStatusManualReview, model.OrderStatusPaidLate:
+		updates["status"] = model.OrderStatusRejected
+	default:
+		response.Error(c, 409, "order not closable")
+		return
+	}
+
+	if err := a.db.Model(&model.Order{}).Where("id = ?", order.ID).Updates(updates).Error; err != nil {
+		response.Error(c, 500, "failed to close order")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) DeleteOrder(c *gin.Context) {
+	var order model.Order
+	if err := a.db.First(&order, c.Param("id")).Error; err != nil {
+		response.Error(c, 404, "order not found")
+		return
+	}
+	if order.Status == model.OrderStatusApproved {
+		response.Error(c, 409, "approved order cannot be deleted")
+		return
+	}
+	result := a.db.Delete(&model.Order{}, order.ID)
+	if result.Error != nil {
+		response.Error(c, 500, "failed to delete order")
+		return
+	}
+	response.OK(c, nil)
+}
+
 func (a *AdminController) UpdateOrder(c *gin.Context) {
 	var req updateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -972,9 +1109,26 @@ func fallbackModelPricingStatus(value string) string {
 }
 
 func (a *AdminController) Upstreams(c *gin.Context) {
+	query := a.db.Model(&model.UpstreamAccount{}).Preload("User")
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Joins("LEFT JOIN users ON users.id = upstream_accounts.user_id").
+			Where("upstream_accounts.channel LIKE ? OR upstream_accounts.base_url LIKE ? OR upstream_accounts.username LIKE ? OR users.username LIKE ? OR users.email LIKE ? OR CAST(upstream_accounts.id AS CHAR) LIKE ?", like, like, like, like, like, like)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("upstream_accounts.status = ?", status)
+	}
+	page, pageSize := parsePageParams(c, 10)
+	var total int64
+	query.Count(&total)
 	var upstreams []model.UpstreamAccount
-	a.db.Preload("User").Order("id desc").Find(&upstreams)
-	response.OK(c, upstreams)
+	applyPagination(query, page, pageSize).Order("upstream_accounts.id desc").Find(&upstreams)
+	response.OK(c, paginatedResponse{
+		Items:    upstreams,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
 }
 
 func mapAdminUpstream(upstream model.UpstreamAccount) *adminUpstreamResponse {
@@ -1009,19 +1163,51 @@ func mapAdminPublicChannel(channel model.PublicChannel) adminPublicChannelRespon
 }
 
 func (a *AdminController) UpstreamChannels(c *gin.Context) {
+	query := a.db.Model(&model.UpstreamChannel{})
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("name LIKE ? OR base_url LIKE ? OR CAST(id AS CHAR) LIKE ?", like, like, like)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("enabled = ?", status == "enabled")
+	}
+	page, pageSize := parsePageParams(c, 10)
+	var total int64
+	query.Count(&total)
 	var channels []model.UpstreamChannel
-	a.db.Order("id desc").Find(&channels)
-	response.OK(c, channels)
+	applyPagination(query, page, pageSize).Order("id desc").Find(&channels)
+	response.OK(c, paginatedResponse{
+		Items:    channels,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
 }
 
 func (a *AdminController) PublicChannels(c *gin.Context) {
+	query := a.db.Model(&model.PublicChannel{})
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("name LIKE ? OR base_url LIKE ? OR CAST(id AS CHAR) LIKE ?", like, like, like)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("enabled = ?", status == "enabled")
+	}
+	page, pageSize := parsePageParams(c, 10)
+	var total int64
+	query.Count(&total)
 	var channels []model.PublicChannel
-	a.db.Order("id desc").Find(&channels)
+	applyPagination(query, page, pageSize).Order("id desc").Find(&channels)
 	items := make([]adminPublicChannelResponse, 0, len(channels))
 	for _, channel := range channels {
 		items = append(items, mapAdminPublicChannel(channel))
 	}
-	response.OK(c, items)
+	response.OK(c, paginatedResponse{
+		Items:    items,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
 }
 
 func (a *AdminController) ModelPricings(c *gin.Context) {

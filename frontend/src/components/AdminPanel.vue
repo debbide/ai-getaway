@@ -87,6 +87,24 @@ const docForm = reactive(emptyDoc())
 const announcementForm = reactive(emptyAnnouncement())
 const emailTemplateForm = reactive(emptyEmailTemplate())
 const userSearch = reactive({ keyword: '', role: '', status: '', plan: '' })
+const planSearch = reactive({ keyword: '', status: '', planType: '' })
+const orderSearch = reactive({ keyword: '', status: '', planId: '', paymentMethod: '' })
+const channelSearch = reactive({ keyword: '', status: '' })
+const publicChannelSearch = reactive({ keyword: '', status: '' })
+const apiKeySearch = reactive({ keyword: '', status: '' })
+const announcementSearch = reactive({ keyword: '', status: '' })
+const docSearch = reactive({ keyword: '', status: '', groupName: '' })
+const pagination = reactive({
+  plans: { page: 1, pageSize: 10 },
+  orders: { page: 1, pageSize: 10 },
+  models: { page: 1, pageSize: 10 },
+  upstreamChannels: { page: 1, pageSize: 10 },
+  publicChannels: { page: 1, pageSize: 10 },
+  users: { page: 1, pageSize: 10 },
+  apiKeys: { page: 1, pageSize: 10 },
+  announcements: { page: 1, pageSize: 10 },
+  docs: { page: 1, pageSize: 10 }
+})
 const settings = reactive({
   site_title: '',
   contact_email: '',
@@ -145,10 +163,96 @@ const filteredUsers = computed(() => {
     return matchesKeyword && matchesRole && matchesStatus && matchesPlan
   })
 })
-const filteredApiKeys = computed(() => apiKeys.value)
+const filteredPlans = computed(() => {
+  const keyword = String(planSearch.keyword || '').trim().toLowerCase()
+  const status = String(planSearch.status || '')
+  const planType = String(planSearch.planType || '')
+  return plans.value.filter((plan) => {
+    const matchesKeyword = !keyword || [plan.Name, plan.Code, plan.Description, plan.ID].some((value) => String(value || '').toLowerCase().includes(keyword))
+    const matchesStatus = !status || (status === 'enabled' ? Boolean(plan.Enabled) : !plan.Enabled)
+    const currentType = isPublicPlan(plan) ? 'public' : 'subscription'
+    const matchesType = !planType || currentType === planType
+    return matchesKeyword && matchesStatus && matchesType
+  })
+})
+const filteredOrders = computed(() => {
+  const keyword = String(orderSearch.keyword || '').trim().toLowerCase()
+  const status = String(orderSearch.status || '')
+  const planId = String(orderSearch.planId || '')
+  const paymentMethod = String(orderSearch.paymentMethod || '')
+  return orders.value.filter((order) => {
+    const matchesKeyword = !keyword || [order.ID, order.UserID, order.PaymentRef, order.User?.Username, order.User?.Email, order.Plan?.Name].some((value) => String(value || '').toLowerCase().includes(keyword))
+    const matchesStatus = !status || order.Status === status
+    const matchesPlan = !planId || String(order.PlanID || order.Plan?.ID || '') === planId
+    const matchesPaymentMethod = !paymentMethod || order.PaymentMethod === paymentMethod
+    return matchesKeyword && matchesStatus && matchesPlan && matchesPaymentMethod
+  })
+})
+const filteredUpstreamChannels = computed(() => {
+  const keyword = String(channelSearch.keyword || '').trim().toLowerCase()
+  const status = String(channelSearch.status || '')
+  return channels.value.filter((channel) => {
+    const matchesKeyword = !keyword || [channel.ID, channel.Name, channel.BaseURL].some((value) => String(value || '').toLowerCase().includes(keyword))
+    const matchesStatus = !status || (status === 'enabled' ? Boolean(channel.Enabled) : !channel.Enabled)
+    return matchesKeyword && matchesStatus
+  })
+})
+const filteredPublicChannels = computed(() => {
+  const keyword = String(publicChannelSearch.keyword || '').trim().toLowerCase()
+  const status = String(publicChannelSearch.status || '')
+  return publicChannels.value.filter((channel) => {
+    const matchesKeyword = !keyword || [channel.ID, channel.Name, channel.BaseURL].some((value) => String(value || '').toLowerCase().includes(keyword))
+    const matchesStatus = !status || (status === 'enabled' ? Boolean(channel.Enabled) : !channel.Enabled)
+    return matchesKeyword && matchesStatus
+  })
+})
+const filteredApiKeys = computed(() => {
+  const keyword = String(apiKeySearch.keyword || '').trim().toLowerCase()
+  const status = String(apiKeySearch.status || '')
+  return apiKeys.value.filter((key) => {
+    const matchesKeyword = !keyword || [key.ID, key.Name, key.KeyPrefix, key.User?.Username, key.User?.Email].some((value) => String(value || '').toLowerCase().includes(keyword))
+    const matchesStatus = !status || key.Status === status
+    return matchesKeyword && matchesStatus
+  })
+})
+const filteredAnnouncements = computed(() => {
+  const keyword = String(announcementSearch.keyword || '').trim().toLowerCase()
+  const status = String(announcementSearch.status || '')
+  return announcements.value.filter((item) => {
+    const matchesKeyword = !keyword || [item.ID, item.Title, item.Summary, item.Content].some((value) => String(value || '').toLowerCase().includes(keyword))
+    const matchesStatus = !status || (status === 'enabled' ? Boolean(item.Enabled) : !item.Enabled)
+    return matchesKeyword && matchesStatus
+  })
+})
+const filteredDocs = computed(() => {
+  const keyword = String(docSearch.keyword || '').trim().toLowerCase()
+  const status = String(docSearch.status || '')
+  const groupName = String(docSearch.groupName || '').trim().toLowerCase()
+  return docs.value.filter((doc) => {
+    const matchesKeyword = !keyword || [doc.ID, doc.Title, doc.Slug, doc.Description].some((value) => String(value || '').toLowerCase().includes(keyword))
+    const matchesStatus = !status || (status === 'enabled' ? Boolean(doc.Enabled) : !doc.Enabled)
+    const matchesGroup = !groupName || String(doc.GroupName || '').toLowerCase().includes(groupName)
+    return matchesKeyword && matchesStatus && matchesGroup
+  })
+})
+const pagedPlans = computed(() => paginateItems(filteredPlans.value, pagination.plans))
+const pagedOrders = computed(() => paginateItems(filteredOrders.value, pagination.orders))
+const pagedModels = computed(() => paginateItems(models.value, pagination.models))
+const pagedUsers = computed(() => paginateItems(filteredUsers.value, pagination.users))
+const pagedApiKeys = computed(() => paginateItems(filteredApiKeys.value, pagination.apiKeys))
+const pagedAnnouncements = computed(() => paginateItems(filteredAnnouncements.value, pagination.announcements))
+const pagedDocs = computed(() => paginateItems(filteredDocs.value, pagination.docs))
+const pagedUpstreamChannels = computed(() => paginateItems(filteredUpstreamChannels.value, pagination.upstreamChannels))
+const pagedPublicChannels = computed(() => paginateItems(filteredPublicChannels.value, pagination.publicChannels))
 
 function responseData(result, fallback) {
   return result.status === 'fulfilled' ? result.value.data : fallback
+}
+
+function unwrapListData(payload, fallback = []) {
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload?.items)) return payload.items
+  return fallback
 }
 
 function collectLoadErrors(results) {
@@ -163,6 +267,7 @@ onMounted(async () => {
 watch(
   () => [userSearch.keyword, userSearch.role, userSearch.status, userSearch.plan],
   () => {
+    resetPager('users')
     if (active.value !== 'users') return
     if (userSearchTimer) clearTimeout(userSearchTimer)
     userSearchTimer = setTimeout(() => {
@@ -347,16 +452,16 @@ async function loadAll() {
     const modelData = responseData(modelsRes, { items: [], official_source: '' })
     const templateData = responseData(emailTemplatesRes, { items: [], variables: [] })
     stats.value = responseData(statsRes, {})
-    orders.value = responseData(ordersRes, [])
-    users.value = responseData(usersRes, [])
-    plans.value = responseData(plansRes, [])
+    orders.value = unwrapListData(responseData(ordersRes, []))
+    users.value = unwrapListData(responseData(usersRes, []))
+    plans.value = unwrapListData(responseData(plansRes, []))
     models.value = modelData?.items || []
     modelSource.value = modelData?.official_source || ''
-    channels.value = responseData(channelsRes, [])
-    publicChannels.value = responseData(publicChannelsRes, [])
-    apiKeys.value = responseData(keysRes, [])
-    docs.value = responseData(docsRes, [])
-    announcements.value = responseData(announcementsRes, [])
+    channels.value = unwrapListData(responseData(channelsRes, []))
+    publicChannels.value = unwrapListData(responseData(publicChannelsRes, []))
+    apiKeys.value = unwrapListData(responseData(keysRes, []))
+    docs.value = unwrapListData(responseData(docsRes, []))
+    announcements.value = unwrapListData(responseData(announcementsRes, []))
     emailTemplates.value = templateData?.items || []
     emailTemplateVariables.value = templateData?.variables || []
     Object.assign(settings, responseData(settingsRes, {}), { smtp_password: '', epay_key: '' })
@@ -442,9 +547,9 @@ async function loadOverviewData() {
     api.get('/admin/plans')
   ])
   stats.value = statsRes.data || {}
-  orders.value = ordersRes.data || []
-  users.value = usersRes.data || []
-  plans.value = plansRes.data || []
+  orders.value = unwrapListData(ordersRes.data || [])
+  users.value = unwrapListData(usersRes.data || [])
+  plans.value = unwrapListData(plansRes.data || [])
 }
 
 async function loadPlansData() {
@@ -452,8 +557,8 @@ async function loadPlansData() {
     api.get('/admin/plans'),
     api.get('/admin/public-channels')
   ])
-  plans.value = plansRes.data || []
-  publicChannels.value = publicChannelsRes.data || []
+  plans.value = unwrapListData(plansRes.data || [])
+  publicChannels.value = unwrapListData(publicChannelsRes.data || [])
 }
 
 async function loadOrdersData() {
@@ -462,9 +567,9 @@ async function loadOrdersData() {
     api.get('/admin/plans'),
     api.get('/admin/upstream-channels')
   ])
-  orders.value = ordersRes.data || []
-  plans.value = plansRes.data || []
-  channels.value = channelsRes.data || []
+  orders.value = unwrapListData(ordersRes.data || [])
+  plans.value = unwrapListData(plansRes.data || [])
+  channels.value = unwrapListData(channelsRes.data || [])
 }
 
 async function loadModelsData() {
@@ -478,8 +583,8 @@ async function loadChannelsData() {
     api.get('/admin/upstream-channels'),
     api.get('/admin/public-channels')
   ])
-  channels.value = channelsRes.data || []
-  publicChannels.value = publicChannelsRes.data || []
+  channels.value = unwrapListData(channelsRes.data || [])
+  publicChannels.value = unwrapListData(publicChannelsRes.data || [])
 }
 
 async function loadUsersData() {
@@ -489,20 +594,20 @@ async function loadUsersData() {
     api.get('/admin/upstream-channels'),
     api.get('/admin/keys')
   ])
-  users.value = usersRes.data || []
-  plans.value = plansRes.data || []
-  channels.value = channelsRes.data || []
-  apiKeys.value = keysRes.data || []
+  users.value = unwrapListData(usersRes.data || [])
+  plans.value = unwrapListData(plansRes.data || [])
+  channels.value = unwrapListData(channelsRes.data || [])
+  apiKeys.value = unwrapListData(keysRes.data || [])
 }
 
 async function loadAnnouncementsData() {
   const res = await api.get('/admin/announcements')
-  announcements.value = res.data || []
+  announcements.value = unwrapListData(res.data || [])
 }
 
 async function loadDocsData() {
   const res = await api.get('/admin/docs')
-  docs.value = res.data || []
+  docs.value = unwrapListData(res.data || [])
 }
 
 async function loadEmailTemplatesData() {
@@ -1072,6 +1177,28 @@ async function rejectOrder() {
   })
 }
 
+function confirmCloseOrder(order) {
+  showModal('close-order', `关闭订单 #${order.ID}`, '确认关闭', { order }, true)
+}
+
+async function closeOrder() {
+  await runAction(async () => {
+    await api.post(`/admin/orders/${modal.payload.order.ID}/close`, { admin_note: '管理员关闭订单' })
+    notice.value = '订单已关闭'
+  })
+}
+
+function confirmDeleteOrder(order) {
+  showModal('delete-order', `删除订单 #${order.ID}`, '确认删除', { order }, true)
+}
+
+async function deleteOrder() {
+  await runAction(async () => {
+    await api.delete(`/admin/orders/${modal.payload.order.ID}`)
+    notice.value = '订单已删除'
+  })
+}
+
 async function saveSettings() {
   syncAPIEndpointSetting()
   await runAction(async () => {
@@ -1326,6 +1453,26 @@ function normalizePlan(plan) {
     lottery_url: plan.lottery_url.trim(),
     enabled: Boolean(plan.enabled)
   }
+}
+
+function paginateItems(items, pager) {
+  const page = Math.max(1, Number(pager.page || 1))
+  const pageSize = Math.max(1, Number(pager.pageSize || 10))
+  const start = (page - 1) * pageSize
+  return items.slice(start, start + pageSize)
+}
+
+function handlePageChange(key, page) {
+  pagination[key].page = page
+}
+
+function handlePageSizeChange(key, pageSize) {
+  pagination[key].pageSize = pageSize
+  pagination[key].page = 1
+}
+
+function resetPager(key) {
+  pagination[key].page = 1
 }
 
 function normalizePublicChannel(channel) {
@@ -1590,7 +1737,9 @@ function submitModal() {
     'delete-api-key': deleteApiKey,
     'approve-order': approveOrder,
     'reject-order': rejectOrder,
-    'edit-order': editOrder
+    'edit-order': editOrder,
+    'close-order': closeOrder,
+    'delete-order': deleteOrder
   }
   actions[modal.type]?.()
 }
@@ -1721,7 +1870,7 @@ function submitModal() {
             <div>
               <p class="section-kicker">Pricing</p>
               <h2>套餐管理</h2>
-              <span>{{ enabledPlans }} 个启用套餐，{{ plans.length }} 个总套餐</span>
+              <span>{{ enabledPlans }} 个启用套餐，{{ filteredPlans.length }} 个筛选结果</span>
             </div>
             <div class="toolbar-actions">
               <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
@@ -1729,9 +1878,31 @@ function submitModal() {
             </div>
           </div>
 
+          <section class="panel-surface p-4">
+            <el-form class="form-grid user-filter-grid" label-position="top">
+              <el-form-item label="搜索">
+                <el-input v-model="planSearch.keyword" clearable placeholder="套餐名 / 编码 / 描述 / ID" @input="resetPager('plans')" />
+              </el-form-item>
+              <el-form-item label="状态">
+                <el-select v-model="planSearch.status" clearable placeholder="全部" @change="resetPager('plans')">
+                  <el-option label="全部" value="" />
+                  <el-option label="已启用" value="enabled" />
+                  <el-option label="已停用" value="disabled" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="类型">
+                <el-select v-model="planSearch.planType" clearable placeholder="全部" @change="resetPager('plans')">
+                  <el-option label="全部" value="" />
+                  <el-option label="订阅套餐" value="subscription" />
+                  <el-option label="公共套餐" value="public" />
+                </el-select>
+              </el-form-item>
+            </el-form>
+          </section>
+
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <el-table :data="plans" border>
+              <el-table :data="pagedPlans" border>
                 <el-table-column label="套餐" min-width="240">
                   <template #default="{ row: plan }">
                     <div class="model-cell">
@@ -1782,6 +1953,18 @@ function submitModal() {
                 </el-table-column>
               </el-table>
             </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.plans.page"
+                :page-size="pagination.plans.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="filteredPlans.length"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('plans', $event)"
+                @size-change="handlePageSizeChange('plans', $event)"
+              />
+            </div>
           </section>
         </div>
 
@@ -1790,14 +1973,41 @@ function submitModal() {
             <div>
               <p class="section-kicker">Review</p>
               <h2>审核管理</h2>
-              <span>订单审核、绑定上游账号和驳回原因都在弹窗内完成</span>
+              <span>订单审核、搜索、关闭和删除都在这里处理</span>
             </div>
             <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
           </div>
 
+          <section class="panel-surface p-4">
+            <el-form class="form-grid user-filter-grid" label-position="top">
+              <el-form-item label="搜索">
+                <el-input v-model="orderSearch.keyword" clearable placeholder="订单号 / 用户 / 邮箱 / 支付单号" @input="resetPager('orders')" />
+              </el-form-item>
+              <el-form-item label="状态">
+                <el-select v-model="orderSearch.status" clearable placeholder="全部" @change="resetPager('orders')">
+                  <el-option label="全部" value="" />
+                  <el-option v-for="(label, value) in orderStatusMap" :key="value" :label="label" :value="value" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="套餐">
+                <el-select v-model="orderSearch.planId" clearable filterable placeholder="全部" @change="resetPager('orders')">
+                  <el-option label="全部" value="" />
+                  <el-option v-for="plan in plans" :key="plan.ID" :label="plan.Name" :value="String(plan.ID)" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="支付方式">
+                <el-select v-model="orderSearch.paymentMethod" clearable placeholder="全部" @change="resetPager('orders')">
+                  <el-option label="全部" value="" />
+                  <el-option label="在线支付" value="online" />
+                  <el-option label="人工支付" value="manual" />
+                </el-select>
+              </el-form-item>
+            </el-form>
+          </section>
+
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <el-table :data="orders" border>
+              <el-table :data="pagedOrders" border>
                 <el-table-column label="订单" width="90">
                   <template #default="{ row: order }">#{{ order.ID }}</template>
                 </el-table-column>
@@ -1819,17 +2029,31 @@ function submitModal() {
                 <el-table-column label="状态" width="130">
                   <template #default="{ row: order }"><el-tag>{{ statusLabel(order.Status) }}</el-tag></template>
                 </el-table-column>
-                <el-table-column label="操作" min-width="260">
+                <el-table-column label="操作" min-width="360">
                   <template #default="{ row: order }">
                     <div class="table-actions">
                       <el-button size="small" @click="openEditOrderModal(order)">编辑</el-button>
                       <el-button type="primary" size="small" :disabled="order.Status !== 'pending_payment'" @click="completeOrderPayment(order)">完成支付</el-button>
                       <el-button size="small" :disabled="!reviewableOrderStatuses.includes(order.Status)" @click="openApproveModal(order)">审核</el-button>
                       <el-button type="danger" size="small" :disabled="!reviewableOrderStatuses.includes(order.Status)" @click="openRejectModal(order)">拒绝</el-button>
+                      <el-button type="warning" size="small" :disabled="order.Status === 'approved' || order.Status === 'rejected' || order.Status === 'payment_timeout'" @click="confirmCloseOrder(order)">关闭</el-button>
+                      <el-button type="danger" plain size="small" :disabled="order.Status === 'approved'" @click="confirmDeleteOrder(order)">删除</el-button>
                     </div>
                   </template>
                 </el-table-column>
               </el-table>
+            </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.orders.page"
+                :page-size="pagination.orders.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="filteredOrders.length"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('orders', $event)"
+                @size-change="handlePageSizeChange('orders', $event)"
+              />
             </div>
           </section>
         </div>
@@ -1839,7 +2063,7 @@ function submitModal() {
             <div>
               <p class="section-kicker">Model Billing</p>
               <h2>模型管理</h2>
-              <span>{{ enabledModels }} 个启用模型，用户扣费按这里的单价和倍率计算</span>
+              <span>{{ enabledModels }} 个启用模型，{{ models.length }} 个总模型</span>
             </div>
             <div class="toolbar-actions">
               <el-button :loading="loading" @click="syncOfficialModels">同步官方倍率</el-button>
@@ -1850,7 +2074,7 @@ function submitModal() {
 
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <el-table :data="models" class="model-pricing-table" border>
+              <el-table :data="pagedModels" class="model-pricing-table" border>
                 <el-table-column label="模型" min-width="210"><template #default="{ row: item }"><div class="model-cell"><strong>{{ item.ModelName }}</strong><small>{{ item.DisplayName || item.Provider || '-' }}</small></div></template></el-table-column>
                 <el-table-column label="输入单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'InputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.InputUSDPerMillion) }}</small></div></template></el-table-column>
                 <el-table-column label="缓存读取" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'CachedInputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.CachedInputUSDPerMillion) }}</small></div></template></el-table-column>
@@ -1861,6 +2085,18 @@ function submitModal() {
                 <el-table-column label="同步时间" min-width="150"><template #default="{ row: item }">{{ formatSyncTime(item.OfficialSyncedAt) }}</template></el-table-column>
                 <el-table-column label="操作" width="150"><template #default="{ row: item }"><div class="table-actions"><el-button size="small" @click="openModelModal(item)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteModel(item)">删除</el-button></div></template></el-table-column>
               </el-table>
+            </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.models.page"
+                :page-size="pagination.models.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="models.length"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('models', $event)"
+                @size-change="handlePageSizeChange('models', $event)"
+              />
             </div>
           </section>
 
@@ -1881,7 +2117,7 @@ function submitModal() {
             <div>
               <p class="section-kicker">Channels</p>
               <h2>渠道管理</h2>
-              <span>普通渠道 {{ enabledChannels }}/{{ channels.length }}，公共渠道 {{ enabledPublicChannels }}/{{ publicChannels.length }}</span>
+              <span>普通渠道 {{ enabledChannels }}/{{ filteredUpstreamChannels.length }}，公共渠道 {{ enabledPublicChannels }}/{{ filteredPublicChannels.length }}</span>
             </div>
             <div class="toolbar-actions">
               <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
@@ -1900,25 +2136,77 @@ function submitModal() {
           />
 
           <section v-if="channelsTab === 'upstream'" class="panel-surface overflow-hidden">
+            <div class="p-4 border-b border-slate-100">
+              <el-form class="form-grid user-filter-grid" label-position="top">
+                <el-form-item label="搜索">
+                  <el-input v-model="channelSearch.keyword" clearable placeholder="名称 / 地址 / ID" @input="resetPager('upstreamChannels')" />
+                </el-form-item>
+                <el-form-item label="状态">
+                  <el-select v-model="channelSearch.status" clearable placeholder="全部" @change="resetPager('upstreamChannels')">
+                    <el-option label="全部" value="" />
+                    <el-option label="已启用" value="enabled" />
+                    <el-option label="已停用" value="disabled" />
+                  </el-select>
+                </el-form-item>
+              </el-form>
+            </div>
             <div class="table-wrap">
-              <el-table :data="channels" border>
+              <el-table :data="pagedUpstreamChannels" border>
                 <el-table-column label="渠道名称" min-width="160" prop="Name" />
                 <el-table-column label="API 地址" min-width="260" prop="BaseURL" />
                 <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled ? 'success' : 'info'">{{ channel.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="150"><template #default="{ row: channel }"><div class="table-actions"><el-button size="small" @click="openChannelModal(channel)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteChannel(channel)">删除</el-button></div></template></el-table-column>
               </el-table>
             </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.upstreamChannels.page"
+                :page-size="pagination.upstreamChannels.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="filteredUpstreamChannels.length"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('upstreamChannels', $event)"
+                @size-change="handlePageSizeChange('upstreamChannels', $event)"
+              />
+            </div>
           </section>
 
           <section v-else class="panel-surface overflow-hidden">
+            <div class="p-4 border-b border-slate-100">
+              <el-form class="form-grid user-filter-grid" label-position="top">
+                <el-form-item label="搜索">
+                  <el-input v-model="publicChannelSearch.keyword" clearable placeholder="名称 / 地址 / ID" @input="resetPager('publicChannels')" />
+                </el-form-item>
+                <el-form-item label="状态">
+                  <el-select v-model="publicChannelSearch.status" clearable placeholder="全部" @change="resetPager('publicChannels')">
+                    <el-option label="全部" value="" />
+                    <el-option label="已启用" value="enabled" />
+                    <el-option label="已停用" value="disabled" />
+                  </el-select>
+                </el-form-item>
+              </el-form>
+            </div>
             <div class="table-wrap">
-              <el-table :data="publicChannels" border>
+              <el-table :data="pagedPublicChannels" border>
                 <el-table-column label="渠道名称" min-width="160" prop="Name" />
                 <el-table-column label="API 地址" min-width="260" prop="BaseURL" />
                 <el-table-column label="剩余额度 / 总额度" min-width="160"><template #default="{ row: channel }">{{ channelQuotaText(channel) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled && channel.RemainingUSDCents > 0 ? 'success' : 'info'">{{ channel.RemainingUSDCents <= 0 ? '售罄' : (channel.Enabled ? '已启用' : '已停用') }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="150"><template #default="{ row: channel }"><div class="table-actions"><el-button size="small" @click="openPublicChannelModal(channel)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeletePublicChannel(channel)">删除</el-button></div></template></el-table-column>
               </el-table>
+            </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.publicChannels.page"
+                :page-size="pagination.publicChannels.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="filteredPublicChannels.length"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('publicChannels', $event)"
+                @size-change="handlePageSizeChange('publicChannels', $event)"
+              />
             </div>
           </section>
         </div>
@@ -1973,7 +2261,7 @@ function submitModal() {
 
           <section v-if="usersTab === 'users'" class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <el-table :data="filteredUsers" border>
+              <el-table :data="pagedUsers" border>
                 <el-table-column label="用户" min-width="220"><template #default="{ row: user }"><strong>{{ user.Email }}</strong><small>{{ user.Username }}</small></template></el-table-column>
                 <el-table-column label="角色" width="110"><template #default="{ row: user }">{{ roleLabel(user.Role) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: user }"><el-tag>{{ statusLabel(user.Status) }}</el-tag></template></el-table-column>
@@ -1982,11 +2270,37 @@ function submitModal() {
                 <el-table-column label="操作" width="190"><template #default="{ row: user }"><div class="table-actions"><el-button size="small" @click="openUserModal(user)">编辑</el-button><el-button size="small" @click="openUserUpstreamModal(user)">渠道</el-button><el-button type="danger" size="small" @click="confirmDeleteUser(user)">删除</el-button></div></template></el-table-column>
               </el-table>
             </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.users.page"
+                :page-size="pagination.users.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="filteredUsers.length"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('users', $event)"
+                @size-change="handlePageSizeChange('users', $event)"
+              />
+            </div>
           </section>
 
           <section v-if="usersTab === 'api-keys'" class="panel-surface overflow-hidden">
+            <div class="p-4 border-b border-slate-100">
+              <el-form class="form-grid user-filter-grid" label-position="top">
+                <el-form-item label="搜索">
+                  <el-input v-model="apiKeySearch.keyword" clearable placeholder="用户 / 名称 / 前缀 / ID" @input="resetPager('apiKeys')" />
+                </el-form-item>
+                <el-form-item label="状态">
+                  <el-select v-model="apiKeySearch.status" clearable placeholder="全部" @change="resetPager('apiKeys')">
+                    <el-option label="全部" value="" />
+                    <el-option label="已启用" value="active" />
+                    <el-option label="已停用" value="disabled" />
+                  </el-select>
+                </el-form-item>
+              </el-form>
+            </div>
             <div class="table-wrap">
-              <el-table :data="filteredApiKeys" border>
+              <el-table :data="pagedApiKeys" border>
                 <el-table-column label="用户" min-width="220"><template #default="{ row: key }">{{ key.User?.Email || key.User?.Username || '-' }}</template></el-table-column>
                 <el-table-column label="名称" min-width="140" prop="Name" />
                 <el-table-column label="前缀" min-width="120"><template #default="{ row: key }">{{ apiKeyPrefix(key.KeyPrefix) }}</template></el-table-column>
@@ -1994,6 +2308,18 @@ function submitModal() {
                 <el-table-column label="更新时间" min-width="160"><template #default="{ row: key }">{{ formatDate(key.UpdatedAt || key.CreatedAt) }}</template></el-table-column>
                 <el-table-column label="操作" width="200"><template #default="{ row: key }"><div class="table-actions"><el-button size="small" @click="openApiKeyModal(key)">编辑</el-button><el-button size="small" @click="toggleApiKeyStatus(key)">{{ key.Status === 'active' ? '停用' : '启用' }}</el-button><el-button type="danger" size="small" @click="confirmDeleteApiKey(key)">删除</el-button></div></template></el-table-column>
               </el-table>
+            </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.apiKeys.page"
+                :page-size="pagination.apiKeys.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="filteredApiKeys.length"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('apiKeys', $event)"
+                @size-change="handlePageSizeChange('apiKeys', $event)"
+              />
             </div>
           </section>
         </div>
@@ -2003,7 +2329,7 @@ function submitModal() {
             <div>
               <p class="section-kicker">Announcements</p>
               <h2>公告管理</h2>
-              <span>{{ enabledAnnouncements }} 条启用公告，{{ announcements.length }} 条总公告。用户控制台默认展示最新启用公告。</span>
+              <span>{{ enabledAnnouncements }} 条启用公告，{{ filteredAnnouncements.length }} 条筛选结果。用户控制台默认展示最新启用公告。</span>
             </div>
             <div class="toolbar-actions">
               <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
@@ -2011,15 +2337,42 @@ function submitModal() {
             </div>
           </div>
 
+          <section class="panel-surface p-4">
+            <el-form class="form-grid user-filter-grid" label-position="top">
+              <el-form-item label="搜索">
+                <el-input v-model="announcementSearch.keyword" clearable placeholder="标题 / 摘要 / 内容 / ID" @input="resetPager('announcements')" />
+              </el-form-item>
+              <el-form-item label="状态">
+                <el-select v-model="announcementSearch.status" clearable placeholder="全部" @change="resetPager('announcements')">
+                  <el-option label="全部" value="" />
+                  <el-option label="已启用" value="enabled" />
+                  <el-option label="已停用" value="disabled" />
+                </el-select>
+              </el-form-item>
+            </el-form>
+          </section>
+
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <el-table :data="announcements" border>
+              <el-table :data="pagedAnnouncements" border>
                 <el-table-column label="公告" min-width="260"><template #default="{ row: item }"><strong>{{ item.Title }}</strong><small>{{ item.Summary || item.Content }}</small></template></el-table-column>
                 <el-table-column label="发布时间" min-width="160"><template #default="{ row: item }">{{ formatDate(item.PublishedAt || item.CreatedAt) }}</template></el-table-column>
                 <el-table-column label="排序" width="90" prop="SortOrder" />
                 <el-table-column label="状态" width="150"><template #default="{ row: item }"><el-tag :type="item.Enabled ? 'success' : 'info'">{{ item.Enabled ? '已启用' : '已停用' }}</el-tag><el-tag v-if="item.Pinned" class="ml-1">置顶</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="150"><template #default="{ row: item }"><div class="table-actions"><el-button size="small" @click="openAnnouncementModal(item)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteAnnouncement(item)">删除</el-button></div></template></el-table-column>
               </el-table>
+            </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.announcements.page"
+                :page-size="pagination.announcements.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="filteredAnnouncements.length"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('announcements', $event)"
+                @size-change="handlePageSizeChange('announcements', $event)"
+              />
             </div>
           </section>
         </div>
@@ -2029,7 +2382,7 @@ function submitModal() {
             <div>
               <p class="section-kicker">Docs</p>
               <h2>配置文档</h2>
-              <span>{{ enabledDocs }} 篇启用文档，{{ docs.length }} 篇总文档。左侧导航、排序和内容都可在这里维护。</span>
+              <span>{{ enabledDocs }} 篇启用文档，{{ filteredDocs.length }} 篇筛选结果。左侧导航、排序和内容都可在这里维护。</span>
             </div>
             <div class="toolbar-actions">
               <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
@@ -2037,9 +2390,27 @@ function submitModal() {
             </div>
           </div>
 
+          <section class="panel-surface p-4">
+            <el-form class="form-grid user-filter-grid" label-position="top">
+              <el-form-item label="搜索">
+                <el-input v-model="docSearch.keyword" clearable placeholder="标题 / Slug / 描述 / ID" @input="resetPager('docs')" />
+              </el-form-item>
+              <el-form-item label="分组">
+                <el-input v-model="docSearch.groupName" clearable placeholder="分组名" @input="resetPager('docs')" />
+              </el-form-item>
+              <el-form-item label="状态">
+                <el-select v-model="docSearch.status" clearable placeholder="全部" @change="resetPager('docs')">
+                  <el-option label="全部" value="" />
+                  <el-option label="已启用" value="enabled" />
+                  <el-option label="已停用" value="disabled" />
+                </el-select>
+              </el-form-item>
+            </el-form>
+          </section>
+
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <el-table :data="docs" border>
+              <el-table :data="pagedDocs" border>
                 <el-table-column label="文档" min-width="240"><template #default="{ row: doc }"><strong>{{ doc.Title }}</strong><small>{{ doc.Description || '暂无说明' }}</small></template></el-table-column>
                 <el-table-column label="分组" min-width="120"><template #default="{ row: doc }">{{ doc.GroupName || '-' }}</template></el-table-column>
                 <el-table-column label="Slug" min-width="150"><template #default="{ row: doc }"><code>{{ doc.Slug }}</code></template></el-table-column>
@@ -2047,6 +2418,18 @@ function submitModal() {
                 <el-table-column label="状态" width="110"><template #default="{ row: doc }"><el-tag :type="doc.Enabled ? 'success' : 'info'">{{ doc.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="150"><template #default="{ row: doc }"><div class="table-actions"><el-button size="small" @click="openDocModal(doc)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteDoc(doc)">删除</el-button></div></template></el-table-column>
               </el-table>
+            </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.docs.page"
+                :page-size="pagination.docs.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="filteredDocs.length"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('docs', $event)"
+                @size-change="handlePageSizeChange('docs', $event)"
+              />
             </div>
           </section>
         </div>
@@ -2575,6 +2958,16 @@ function submitModal() {
 
         <div v-if="modal.type === 'reject-order'" class="modal-body">
           <el-form-item label="拒绝原因"><el-input v-model="rejectForm.adminNote" type="textarea" :rows="4" placeholder="请输入给内部留档的拒绝原因" /></el-form-item>
+        </div>
+
+        <div v-if="modal.type === 'close-order'" class="modal-body confirm-copy">
+          <strong>确定关闭订单 #{{ modal.payload?.order?.ID }} 吗？</strong>
+          <p>未支付订单会标记为支付超时，待审核订单会标记为已拒绝。</p>
+        </div>
+
+        <div v-if="modal.type === 'delete-order'" class="modal-body confirm-copy">
+          <strong>确定删除订单 #{{ modal.payload?.order?.ID }} 吗？</strong>
+          <p>删除后无法恢复，已通过订单不允许删除。</p>
         </div>
 
         <div v-if="modal.type === 'delete-plan'" class="modal-body confirm-copy">

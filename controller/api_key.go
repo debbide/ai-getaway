@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -299,9 +300,40 @@ func (a *APIKeyController) Enable(c *gin.Context) {
 }
 
 func (a *APIKeyController) AdminList(c *gin.Context) {
+	page, pageSize := 1, 10
+	if value, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page", "1"))); err == nil && value > 0 {
+		page = value
+	}
+	if value, err := strconv.Atoi(strings.TrimSpace(c.Query("page_size"))); err == nil && value > 0 {
+		pageSize = value
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	query := a.db.Model(&model.APIKey{}).Preload("User")
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Joins("LEFT JOIN users ON users.id = api_keys.user_id").
+			Where("api_keys.name LIKE ? OR api_keys.key_prefix LIKE ? OR users.username LIKE ? OR users.email LIKE ? OR CAST(api_keys.id AS CHAR) LIKE ?", like, like, like, like, like)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("api_keys.status = ?", status)
+	}
+
+	var total int64
+	query.Count(&total)
 	var keys []model.APIKey
-	a.db.Preload("User").Order("id desc").Find(&keys)
-	response.OK(c, keys)
+	query.Order("api_keys.id desc").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&keys)
+	response.OK(c, gin.H{
+		"items":     keys,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
 }
 
 func (a *APIKeyController) AdminUpdate(c *gin.Context) {
