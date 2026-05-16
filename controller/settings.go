@@ -49,6 +49,8 @@ type updateSettingsRequest struct {
 	OnlinePaymentEnabled           bool   `json:"online_payment_enabled"`
 	ManualPaymentEnabled           bool   `json:"manual_payment_enabled"`
 	ManualPaymentQRCode            string `json:"manual_payment_qr_code"`
+	MockAPIOnlineEnabled           bool   `json:"mock_api_online_enabled"`
+	MockAPIOnlineBase              int    `json:"mock_api_online_base"`
 }
 
 type testSMTPRequest struct {
@@ -79,6 +81,8 @@ func (s *SettingsController) Public(c *gin.Context) {
 		"allow_registration":     setting.AllowRegistration,
 		"online_payment_enabled": setting.OnlinePaymentEnabled,
 		"manual_payment_enabled": setting.ManualPaymentEnabled,
+		"mock_api_online_enabled": setting.MockAPIOnlineEnabled,
+		"mock_api_online_base":    normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase),
 	})
 }
 
@@ -133,6 +137,8 @@ func (s *SettingsController) Get(c *gin.Context) {
 		"manual_payment_enabled":            setting.ManualPaymentEnabled,
 		"epay_key_configured":               setting.EpayKey != "",
 		"manual_payment_qr_code":            setting.ManualPaymentQRCode,
+		"mock_api_online_enabled":           setting.MockAPIOnlineEnabled,
+		"mock_api_online_base":              normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase),
 	})
 }
 
@@ -174,6 +180,8 @@ func (s *SettingsController) Update(c *gin.Context) {
 		"online_payment_enabled":            req.OnlinePaymentEnabled,
 		"manual_payment_enabled":            req.ManualPaymentEnabled,
 		"manual_payment_qr_code":            req.ManualPaymentQRCode,
+		"mock_api_online_enabled":           req.MockAPIOnlineEnabled,
+		"mock_api_online_base":              normalizeMockAPIOnlineBase(req.MockAPIOnlineBase),
 	}
 	if req.SMTPPassword != "" {
 		updates["smtp_password"] = req.SMTPPassword
@@ -245,6 +253,8 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 		"online_payment_enabled":            "BOOLEAN DEFAULT TRUE",
 		"manual_payment_enabled":            "BOOLEAN DEFAULT TRUE",
 		"manual_payment_qr_code":            "LONGTEXT",
+		"mock_api_online_enabled":           "BOOLEAN DEFAULT FALSE",
+		"mock_api_online_base":              "INT DEFAULT 0",
 		"order_payment_admin_email_enabled": "BOOLEAN DEFAULT FALSE",
 		"order_approved_user_email_enabled": "BOOLEAN DEFAULT FALSE",
 		"subscription_expire_email_enabled": "BOOLEAN DEFAULT FALSE",
@@ -360,6 +370,7 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 	if setting.SubscriptionExpireRemindDays <= 0 {
 		setting.SubscriptionExpireRemindDays = 3
 	}
+	setting.MockAPIOnlineBase = normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase)
 	return setting
 }
 
@@ -369,6 +380,16 @@ func normalizeRemindDays(value int) int {
 	}
 	if value > 365 {
 		return 365
+	}
+	return value
+}
+
+func normalizeMockAPIOnlineBase(value int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > 1000000 {
+		return 1000000
 	}
 	return value
 }

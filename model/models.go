@@ -242,6 +242,8 @@ type SystemSetting struct {
 	OnlinePaymentEnabled           bool   `gorm:"default:true"`
 	ManualPaymentEnabled           bool   `gorm:"default:true"`
 	ManualPaymentQRCode            string `gorm:"type:longtext"`
+	MockAPIOnlineEnabled           bool   `gorm:"default:false"`
+	MockAPIOnlineBase              int    `gorm:"default:0"`
 }
 
 type EmailTemplate struct {

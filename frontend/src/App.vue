@@ -29,7 +29,9 @@ const defaultSettings = {
   pricing_notice: '本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转',
   allow_registration: true,
   online_payment_enabled: true,
-  manual_payment_enabled: true
+  manual_payment_enabled: true,
+  mock_api_online_enabled: false,
+  mock_api_online_base: 0
 }
 const manualPaymentConfirmMessage = '请确认已成功支付，恶意创建人工支付订单且未支付的用户将会遭到封禁处理，请知悉。'
 
@@ -49,6 +51,9 @@ const passwordError = ref('')
 const passwordNotice = ref('')
 const pricingTab = ref('daily')
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+const apiOnlineWidgetCollapsed = ref(localStorage.getItem('apiOnlineWidgetCollapsed') === '1')
+const apiOnlineCount = ref(0)
+let apiOnlineTimer = null
 const orderModal = reactive({
   open: false,
   loading: false,
@@ -79,6 +84,8 @@ const publicPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(p
 const lotteryPlans = computed(() => plans.value.filter((plan) => isLotteryPlan(plan)))
 const onlinePaymentEnabled = computed(() => publicSettings.value.online_payment_enabled !== false)
 const manualPaymentEnabled = computed(() => publicSettings.value.manual_payment_enabled !== false)
+const mockAPIOnlineEnabled = computed(() => publicSettings.value.mock_api_online_enabled === true)
+const mockAPIOnlineBase = computed(() => Math.max(0, Number(publicSettings.value.mock_api_online_base || 0)))
 const hasEnabledPaymentMethod = computed(() => onlinePaymentEnabled.value || manualPaymentEnabled.value)
 const visiblePricingPlans = computed(() => {
   if (pricingTab.value === 'daily') return dailyPlans.value
@@ -101,17 +108,26 @@ onMounted(async () => {
   await auth.loadMe()
   await loadPublicSettings()
   await loadPlans()
+  syncMockAPIOnlineWidget()
 })
 
 watch(currentPath, () => {
   refreshAppData()
 })
 
+watch(
+  () => [publicSettings.value.mock_api_online_enabled, publicSettings.value.mock_api_online_base],
+  () => {
+    syncMockAPIOnlineWidget()
+  }
+)
+
 onBeforeUnmount(() => {
   window.removeEventListener('popstate', syncPath)
   window.removeEventListener('app-data-updated', refreshAppData)
   window.removeEventListener('auth-expired', handleAuthExpired)
   window.matchMedia?.('(prefers-color-scheme: dark)').removeEventListener?.('change', applyTheme)
+  stopMockAPIOnlineTicker()
 })
 
 async function loadPlans() {
@@ -135,6 +151,145 @@ async function loadPublicSettings() {
 
 async function refreshAppData() {
   await Promise.allSettled([loadPublicSettings(), loadPlans(), auth.loadMe()])
+}
+
+function toggleAPIOnlineWidget() {
+  apiOnlineWidgetCollapsed.value = !apiOnlineWidgetCollapsed.value
+  localStorage.setItem('apiOnlineWidgetCollapsed', apiOnlineWidgetCollapsed.value ? '1' : '0')
+}
+
+function syncMockAPIOnlineWidget() {
+  if (!mockAPIOnlineEnabled.value) {
+    stopMockAPIOnlineTicker()
+    apiOnlineCount.value = 0
+    return
+  }
+  if (apiOnlineCount.value < currentMockAPIOnlineFloor()) {
+    apiOnlineCount.value = computeMockAPIOnlineBaseline()
+  }
+  startMockAPIOnlineTicker()
+}
+
+function startMockAPIOnlineTicker() {
+  stopMockAPIOnlineTicker()
+  tickMockAPIOnlineCount()
+}
+
+function stopMockAPIOnlineTicker() {
+  if (!apiOnlineTimer) return
+  clearTimeout(apiOnlineTimer)
+  apiOnlineTimer = null
+}
+
+function scheduleMockAPIOnlineTick() {
+  const delay = 3200 + Math.floor(Math.random() * 5200)
+  apiOnlineTimer = setTimeout(tickMockAPIOnlineCount, delay)
+}
+
+function tickMockAPIOnlineCount() {
+  if (!mockAPIOnlineEnabled.value) {
+    apiOnlineCount.value = 0
+    stopMockAPIOnlineTicker()
+    return
+  }
+
+  const floor = currentMockAPIOnlineFloor()
+  const baseline = computeMockAPIOnlineBaseline()
+  const steps = [-2, -1, 1, 3]
+  const drift = baseline - apiOnlineCount.value
+  let delta = steps[Math.floor(Math.random() * steps.length)]
+
+  if (drift >= 18) {
+    delta = Math.random() < 0.7 ? 3 : 1
+  } else if (drift >= 8) {
+    delta = Math.random() < 0.65 ? 1 : 3
+  } else if (drift <= -18) {
+    delta = Math.random() < 0.7 ? -2 : -1
+  } else if (drift <= -8) {
+    delta = Math.random() < 0.65 ? -1 : -2
+  } else if (Math.random() < 0.18) {
+    delta = drift >= 0 ? 1 : -1
+  }
+
+  const next = Math.max(floor, apiOnlineCount.value + delta)
+  const upperCap = Math.max(floor + 6, baseline + 18)
+  apiOnlineCount.value = Math.min(next, upperCap)
+  scheduleMockAPIOnlineTick()
+}
+
+function computeMockAPIOnlineBaseline() {
+  const base = mockAPIOnlineBase.value
+  const phase = apiOnlinePhase()
+  if (phase === 'night') {
+    return 1 + Math.floor(Math.random() * 5)
+  }
+  if (base <= 0) return 0
+
+  const now = new Date()
+  const day = now.getDay()
+  const hour = now.getHours()
+  const minute = now.getMinutes()
+  const totalMinutes = hour * 60 + minute
+  const weekday = day >= 1 && day <= 5
+  const peak = weekday && totalMinutes >= 13 * 60 && totalMinutes <= 17 * 60 + 30
+
+  let offset = 0
+  if (peak) {
+    offset = Math.max(6, Math.round(base * 0.18)) + Math.floor(Math.random() * 8)
+  } else if (weekday && totalMinutes >= 9 * 60 && totalMinutes <= 12 * 60) {
+    offset = Math.max(3, Math.round(base * 0.1)) + Math.floor(Math.random() * 5)
+  } else if (weekday && totalMinutes >= 19 * 60 && totalMinutes < 22 * 60) {
+    offset = Math.max(2, Math.round(base * 0.08)) + Math.floor(Math.random() * 4)
+  } else {
+    offset = Math.floor(Math.random() * 4)
+  }
+
+  return base + offset
+}
+
+function currentMockAPIOnlineFloor() {
+  const phase = apiOnlinePhase()
+  const base = mockAPIOnlineBase.value
+  if (phase === 'night') return 1
+  if (base <= 0) return 0
+  if (phase === 'peak') return Math.max(1, base - Math.max(3, Math.round(base * 0.06)))
+  if (phase === 'busy') return Math.max(1, base - Math.max(4, Math.round(base * 0.08)))
+  return Math.max(1, base - Math.max(5, Math.round(base * 0.12)))
+}
+
+function apiOnlineDisplayCount() {
+  return Math.max(currentMockAPIOnlineFloor(), apiOnlineCount.value).toLocaleString('zh-CN')
+}
+
+function apiOnlinePhase() {
+  const now = new Date()
+  const day = now.getDay()
+  const hour = now.getHours()
+  const minute = now.getMinutes()
+  const totalMinutes = hour * 60 + minute
+  const weekday = day >= 1 && day <= 5
+  if (weekday && totalMinutes >= 13 * 60 && totalMinutes <= 17 * 60 + 30) return 'peak'
+  if (weekday && totalMinutes >= 9 * 60 && totalMinutes <= 12 * 60) return 'busy'
+  if (totalMinutes >= 22 * 60 || totalMinutes <= 6 * 60) return 'night'
+  if (weekday && totalMinutes >= 19 * 60 && totalMinutes < 22 * 60) return 'steady'
+  return 'steady'
+}
+
+function apiOnlineStatusLabel() {
+  return {
+    peak: '高峰期',
+    busy: '繁忙中',
+    steady: '平稳中',
+    night: '夜间'
+  }[apiOnlinePhase()] || '平稳中'
+}
+
+function apiOnlineIndicatorClass() {
+  const count = Math.max(currentMockAPIOnlineFloor(), apiOnlineCount.value)
+  if (count >= 1000) return 'critical'
+  const phase = apiOnlinePhase()
+  if (phase === 'peak' || phase === 'busy') return 'busy'
+  return 'normal'
 }
 
 function handleAuthExpired() {
@@ -746,6 +901,23 @@ function planSubtitle(index) {
       <span>{{ publicSettings.site_title || '星空AI' }}</span>
       <span>联系邮箱：{{ publicSettings.contact_email || 'support@example.com' }}</span>
     </footer>
+
+    <Transition name="account-menu">
+      <div v-if="mockAPIOnlineEnabled" class="api-online-widget" :class="{ collapsed: apiOnlineWidgetCollapsed }">
+        <button type="button" class="api-online-toggle" @click="toggleAPIOnlineWidget">
+          <span class="api-online-dot" :class="apiOnlineIndicatorClass()"></span>
+          <strong v-if="!apiOnlineWidgetCollapsed">在线 API 人数</strong>
+          <strong v-else>API</strong>
+          <span class="api-online-chevron">{{ apiOnlineWidgetCollapsed ? '＋' : '－' }}</span>
+        </button>
+        <div v-if="!apiOnlineWidgetCollapsed" class="api-online-body">
+          <div class="api-online-summary">
+            <span class="api-online-badge" :class="`phase-${apiOnlineIndicatorClass()}`">{{ apiOnlineStatusLabel() }}</span>
+            <strong>{{ apiOnlineDisplayCount() }}</strong>
+          </div>
+        </div>
+      </div>
+    </Transition>
 
     <AuthModal v-model:open="authOpen" v-model:mode="authMode" :allow-registration="publicSettings.allow_registration" />
 

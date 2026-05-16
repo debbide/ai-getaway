@@ -132,6 +132,8 @@ const settings = reactive({
   epay_submit_url: '',
   online_payment_enabled: true,
   manual_payment_enabled: true,
+  mock_api_online_enabled: false,
+  mock_api_online_base: 0,
   manual_payment_qr_code: '',
   smtp_password_configured: false,
   epay_key_configured: false,
@@ -2572,6 +2574,12 @@ function submitModal() {
               </el-form-item>
               <el-form-item class="md:col-span-2" label="允许新用户注册">
                 <el-switch v-model="settings.allow_registration" />
+              </el-form-item>
+              <el-form-item label="模拟在线API人数">
+                <el-switch v-model="settings.mock_api_online_enabled" />
+              </el-form-item>
+              <el-form-item label="起始模拟在线人数">
+                <el-input-number v-model="settings.mock_api_online_base" :min="0" :max="1000000" class="w-full" />
               </el-form-item>
             </div>
           </section>
