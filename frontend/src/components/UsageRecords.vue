@@ -372,10 +372,9 @@ function statusClass(code) {
             <template #default="{ row: item }">
                 <div class="usage-main-value">
                   <strong>{{ item.api_key_name || maskKey(item) }}</strong>
-                  <span class="usage-info-dot" tabindex="0">
-                    !
-                    <span class="usage-tooltip">密钥标识：{{ maskKey(item) }}</span>
-                  </span>
+                  <el-tooltip placement="top" :content="`密钥标识：${maskKey(item)}`">
+                    <span class="usage-info-dot" tabindex="0">!</span>
+                  </el-tooltip>
                 </div>
             </template>
           </el-table-column>
@@ -400,12 +399,12 @@ function statusClass(code) {
             <template #default="{ row: item }">
                 <div class="usage-main-value">
                   <strong>{{ statToken(item.total_tokens) }}</strong>
-                  <span class="usage-info-dot" tabindex="0">
-                    !
-                    <span class="usage-tooltip">
-                      输入 {{ statToken(billableInputTokens(item)) }} / 输出 {{ statToken(item.completion_tokens) }} / 缓存 {{ statToken(item.cached_input_tokens) }}
-                    </span>
-                  </span>
+                  <el-tooltip
+                    placement="top"
+                    :content="`输入 ${statToken(billableInputTokens(item))} / 输出 ${statToken(item.completion_tokens)} / 缓存 ${statToken(item.cached_input_tokens)}`"
+                  >
+                    <span class="usage-info-dot" tabindex="0">!</span>
+                  </el-tooltip>
                 </div>
             </template>
           </el-table-column>
@@ -413,9 +412,9 @@ function statusClass(code) {
             <template #default="{ row: item }">
                 <div class="usage-main-value">
                   <strong class="usage-cost">{{ item.estimated_usd_micros ? usdMicros(item.estimated_usd_micros) : usd(item.estimated_usd_cents || 0) }}</strong>
-                  <span class="usage-info-dot" tabindex="0">
-                    !
-                    <span class="usage-tooltip usage-tooltip-wide">
+                  <el-tooltip placement="top" popper-class="usage-cost-popper">
+                    <template #content>
+                      <span class="usage-tooltip-content usage-tooltip-wide">
                       <span class="usage-tip-title">费用明细</span>
                       <span class="usage-tip-grid">
                         <span>输入</span><b>{{ usdMicros(item.input_usd_micros) }}</b>
@@ -425,8 +424,10 @@ function statusClass(code) {
                         <span>来源</span><b>{{ billingSourceLabel(item.billing_source) }}</b>
                       </span>
                       <span class="usage-tip-rate">{{ modelUnit(item.input_usd_per_million) }} 输入 / {{ modelUnit(item.output_usd_per_million) }} 输出</span>
-                    </span>
-                  </span>
+                      </span>
+                    </template>
+                    <span class="usage-info-dot" tabindex="0">!</span>
+                  </el-tooltip>
                 </div>
             </template>
           </el-table-column>

@@ -4009,6 +4009,11 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb {
   max-width: 280px;
 }
 
+.usage-tooltip-content {
+  display: block;
+  text-align: left;
+}
+
 .usage-info-dot:hover .usage-tooltip,
 .usage-info-dot:focus .usage-tooltip {
   opacity: 1;
