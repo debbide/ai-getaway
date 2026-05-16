@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { api } from './api/client'
 import { useAuthStore } from './stores/auth'
 import AuthModal from './components/AuthModal.vue'
@@ -30,6 +31,7 @@ const defaultSettings = {
   online_payment_enabled: true,
   manual_payment_enabled: true
 }
+const manualPaymentConfirmMessage = '请确认已成功支付，恶意创建人工支付订单且未支付的用户将会遭到封禁处理，请知悉。'
 
 const auth = useAuthStore()
 const plans = ref([])
@@ -291,6 +293,19 @@ function priceRmb(plan) {
   return ((plan.PriceCents || 0) / 100).toFixed((plan.PriceCents || 0) % 100 === 0 ? 0 : 1)
 }
 
+async function confirmManualPaymentSubmission() {
+  try {
+    await ElMessageBox.confirm(manualPaymentConfirmMessage, '确认人工支付', {
+      confirmButtonText: '确认已支付',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 function periodUsd(plan) {
   return ((plan.SettlementUSDCents || 0) / 100).toFixed((plan.SettlementUSDCents || 0) % 100 === 0 ? 0 : 2)
 }
@@ -354,8 +369,8 @@ function openPricingOrder(plan) {
   })
 }
 
-function closeOrderModal() {
-  if (orderModal.loading) return
+function closeOrderModal({ force = false } = {}) {
+  if (orderModal.loading && !force) return
   Object.assign(orderModal, {
     open: false,
     loading: false,
@@ -412,8 +427,9 @@ async function confirmOnlinePayment() {
   orderModal.error = ''
   try {
     await api.patch(`/orders/${orderModal.order.ID}/paid`)
-    closeOrderModal()
     navigate('/console')
+    await nextTick()
+    closeOrderModal({ force: true })
   } catch (err) {
     orderModal.error = err.message
   } finally {
@@ -432,14 +448,16 @@ async function submitManualPayment() {
     orderModal.error = '请填写当前账号或转账留言，方便管理员核对'
     return
   }
+  if (!(await confirmManualPaymentSubmission())) return
   orderModal.loading = true
   orderModal.error = ''
   try {
     await api.post(`/orders/${orderModal.order.ID}/manual-payment`, {
       user_payment_note: orderModal.manualNote
     })
-    closeOrderModal()
     navigate('/console')
+    await nextTick()
+    closeOrderModal({ force: true })
   } catch (err) {
     orderModal.error = err.message
   } finally {

@@ -115,27 +115,16 @@ func (o *OrderController) Create(c *gin.Context) {
 			response.Error(c, 409, "order already waiting review")
 			return
 		}
-		if existing.PaymentMethod != paymentMethod && existing.PaymentURLGeneratedAt == nil {
-			if err := o.db.Model(&existing).Updates(map[string]interface{}{
-				"payment_method":           paymentMethod,
-				"user_payment_note":        "",
-				"payment_channel":          "",
-				"paid_amount_cents":        0,
-				"paid_at":                  nil,
-				"provider_trade_no":        nil,
-				"payment_raw":              "",
-				"payment_url_generated_at": nil,
-			}).Error; err != nil {
+		if updates, changed := pendingOrderPaymentMethodUpdates(existing, paymentMethod, ctxUser.ID); changed {
+			if err := o.db.Model(&existing).Updates(updates).Error; err != nil {
+				response.Error(c, 500, "failed to create order")
+				return
+			}
+			if err := o.db.Preload("Plan").First(&existing, existing.ID).Error; err != nil {
 				response.Error(c, 500, "failed to create order")
 				return
 			}
 			existing.PaymentMethod = paymentMethod
-			existing.UserPaymentNote = ""
-			existing.PaymentChannel = ""
-			existing.PaidAmountCents = 0
-			existing.PaidAt = nil
-			existing.ProviderTradeNo = nil
-			existing.PaymentRaw = ""
 		}
 		response.OK(c, gin.H{"order": existing, "reused": true})
 		return
@@ -169,6 +158,29 @@ func normalizePaymentMethod(value string) string {
 	default:
 		return model.PaymentMethodOnline
 	}
+}
+
+func pendingOrderPaymentMethodUpdates(order model.Order, paymentMethod string, userID uint) (map[string]interface{}, bool) {
+	if order.PaymentMethod == paymentMethod {
+		return nil, false
+	}
+	if order.PaymentURLGeneratedAt != nil && paymentMethod != model.PaymentMethodManual {
+		return nil, false
+	}
+	updates := map[string]interface{}{
+		"payment_method":           paymentMethod,
+		"user_payment_note":        "",
+		"payment_channel":          "",
+		"paid_amount_cents":        0,
+		"paid_at":                  nil,
+		"provider_trade_no":        nil,
+		"payment_raw":              "",
+		"payment_url_generated_at": nil,
+	}
+	if order.PaymentURLGeneratedAt != nil {
+		updates["payment_ref"] = fmt.Sprintf("ORDER%d%d", userID, time.Now().UnixNano())
+	}
+	return updates, true
 }
 
 func activeSubscriptionBlocksNewOrder(db *gorm.DB, user model.User) bool {

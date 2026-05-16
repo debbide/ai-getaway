@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
@@ -32,6 +32,7 @@ let paymentPollTimer = null
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', payload: null, danger: false })
 const orderForm = reactive({ planId: '', paymentMethod: 'online', order: null, paymentUrl: '', paymentOpened: false, manualQRCode: '', manualNote: '' })
 const keyForm = reactive({ name: 'Default' })
+const manualPaymentConfirmMessage = '请确认已成功支付，恶意创建人工支付订单且未支付的用户将会遭到封禁处理，请知悉。'
 
 const totalOrderPages = computed(() => Math.max(1, Math.ceil(orders.value.length / orderPageSize)))
 const pagedOrders = computed(() => {
@@ -267,6 +268,15 @@ async function submitManualPayment() {
   modalError.value = ''
   if (!String(orderForm.manualNote || '').trim()) {
     modalError.value = '请填写当前账号或留言，方便管理员核对付款'
+    return
+  }
+  try {
+    await ElMessageBox.confirm(manualPaymentConfirmMessage, '确认人工支付', {
+      confirmButtonText: '确认已支付',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+  } catch {
     return
   }
   try {
