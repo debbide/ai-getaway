@@ -31,6 +31,10 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 			publicChannel := publicChannelValue.(model.PublicChannel)
 			upstreamBaseURL = publicChannel.BaseURL
 			upstreamAPIKey = publicChannel.APIKey
+		} else if poolAccountValue, ok := c.Get("pool_account"); ok {
+			poolAccount := poolAccountValue.(model.PollingPoolAccount)
+			upstreamBaseURL = poolAccount.BaseURL
+			upstreamAPIKey = poolAccount.APIKey
 		} else {
 			upstreamAccount := c.MustGet("upstream").(model.UpstreamAccount)
 			upstreamBaseURL = upstreamAccount.BaseURL
@@ -45,6 +49,10 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 
 		start := time.Now()
 		requestInfo := parseRequestInfo(c.Request)
+		protocol := model.ProtocolGPT
+		if value, ok := c.Get("protocol"); ok {
+			protocol = service.NormalizeProtocol(value.(string))
+		}
 		proxy := httputil.NewSingleHostReverseProxy(target)
 		originalDirector := proxy.Director
 		proxy.Director = func(req *http.Request) {
@@ -52,7 +60,12 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 			req.URL.Path = c.Request.URL.Path
 			req.URL.RawQuery = c.Request.URL.RawQuery
 			req.Host = target.Host
-			req.Header.Set("Authorization", "Bearer "+upstreamAPIKey)
+			if protocol == model.ProtocolClaude {
+				req.Header.Set("X-API-Key", upstreamAPIKey)
+				req.Header.Set("Authorization", "Bearer "+upstreamAPIKey)
+			} else {
+				req.Header.Set("Authorization", "Bearer "+upstreamAPIKey)
+			}
 			req.Header.Set("X-Forwarded-User-ID", intToString(apiKey.UserID))
 			req.Header.Del("Accept-Encoding")
 		}
@@ -295,6 +308,8 @@ func requestType(path string, stream bool) string {
 		return "stream"
 	}
 	switch {
+	case strings.Contains(endpoint, "messages"):
+		return "claude"
 	case strings.Contains(endpoint, "responses"):
 		return "responses"
 	case strings.Contains(endpoint, "chat/completions"):

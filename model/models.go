@@ -48,6 +48,9 @@ const (
 	QuotaPeriodDaily  = "daily"
 	QuotaPeriodWeekly = "weekly"
 	QuotaPeriodPublic = "public"
+
+	ProtocolGPT    = "gpt"
+	ProtocolClaude = "claude"
 )
 
 type User struct {
@@ -73,6 +76,8 @@ type Plan struct {
 	QuotaPeriod        string `gorm:"size:16;default:weekly;index"`
 	PublicChannelID    *uint  `gorm:"index"`
 	PublicChannel      *PublicChannel
+	PollingPoolID      *uint `gorm:"index"`
+	PollingPool        *PollingPool
 	PriceCents         int64  `gorm:"not null"`
 	SettlementUSDCents int64  `gorm:"default:0"`
 	DurationDays       int    `gorm:"not null"`
@@ -111,22 +116,26 @@ type Order struct {
 
 type UpstreamAccount struct {
 	gorm.Model
-	UserID     uint `gorm:"uniqueIndex;not null"`
-	User       User
-	Channel    string `gorm:"size:64;not null"`
-	BaseURL    string `gorm:"size:255;not null"`
-	Username   string `gorm:"size:128"`
-	Password   string `gorm:"size:255" json:"-"`
-	APIKey     string `gorm:"size:512;not null" json:"-"`
-	Status     string `gorm:"size:32;default:active;index"`
-	LastUsedAt *time.Time
+	UserID         uint `gorm:"uniqueIndex;not null"`
+	User           User
+	Channel        string `gorm:"size:64;not null"`
+	BaseURL        string `gorm:"size:255;not null"`
+	Username       string `gorm:"size:128"`
+	Password       string `gorm:"size:255" json:"-"`
+	APIKey         string `gorm:"size:512;not null" json:"-"`
+	SupportsGPT    bool   `gorm:"default:true"`
+	SupportsClaude bool   `gorm:"default:false"`
+	Status         string `gorm:"size:32;default:active;index"`
+	LastUsedAt     *time.Time
 }
 
 type UpstreamChannel struct {
 	gorm.Model
-	Name    string `gorm:"size:64;uniqueIndex;not null"`
-	BaseURL string `gorm:"size:255;not null"`
-	Enabled bool   `gorm:"default:true;index"`
+	Name           string `gorm:"size:64;uniqueIndex;not null"`
+	BaseURL        string `gorm:"size:255;not null"`
+	SupportsGPT    bool   `gorm:"default:true"`
+	SupportsClaude bool   `gorm:"default:false"`
+	Enabled        bool   `gorm:"default:true;index"`
 }
 
 type PublicChannel struct {
@@ -134,9 +143,34 @@ type PublicChannel struct {
 	Name              string `gorm:"size:64;uniqueIndex;not null"`
 	BaseURL           string `gorm:"size:255;not null"`
 	APIKey            string `gorm:"size:512;not null" json:"-"`
+	SupportsGPT       bool   `gorm:"default:true"`
+	SupportsClaude    bool   `gorm:"default:false"`
 	TotalUSDCents     int64  `gorm:"default:0"`
 	RemainingUSDCents int64  `gorm:"default:0;index"`
 	Enabled           bool   `gorm:"default:true;index"`
+	LastUsedAt        *time.Time
+}
+
+type PollingPool struct {
+	gorm.Model
+	Name           string `gorm:"size:64;uniqueIndex;not null"`
+	SupportsGPT    bool   `gorm:"default:true"`
+	SupportsClaude bool   `gorm:"default:false"`
+	Enabled        bool   `gorm:"default:true;index"`
+	Accounts       []PollingPoolAccount
+}
+
+type PollingPoolAccount struct {
+	gorm.Model
+	PollingPoolID     uint `gorm:"index;not null"`
+	PollingPool       PollingPool
+	Name              string `gorm:"size:64;not null"`
+	BaseURL           string `gorm:"size:255;not null"`
+	APIKey            string `gorm:"size:512;not null" json:"-"`
+	TotalUSDCents     int64  `gorm:"default:0"`
+	RemainingUSDCents int64  `gorm:"default:0;index"`
+	Enabled           bool   `gorm:"default:true;index"`
+	SortOrder         int    `gorm:"default:0;index"`
 	LastUsedAt        *time.Time
 }
 

@@ -22,6 +22,10 @@ const lastKeyMasked = ref('')
 const error = ref('')
 const notice = ref('')
 const copySuccessModalOpen = ref(false)
+const useKeyModalOpen = ref(false)
+const keyUsageTab = ref('claude')
+const claudeOSTab = ref('powershell')
+const usagePlainKey = ref('')
 const modalError = ref('')
 const loading = reactive({ announcements: false, keys: false, orders: false, plan: false })
 const orderPage = ref(1)
@@ -82,6 +86,8 @@ const quotaResetText = computed(() => {
   return `${quotaPeriodUnit(auth.user?.plan)}额度重置：${formatDateTime(quotaUsage.value.window_end)}`
 })
 const displayApiEndpoints = computed(() => parseApiEndpoints(props.apiEndpoints))
+const apiBaseURL = computed(() => window.location.origin)
+const apiV1BaseURL = computed(() => `${apiBaseURL.value}/v1`)
 
 const soloKey = computed(() => (keys.value.length ? keys.value[0] : null))
 const hasApiKey = computed(() => Boolean(soloKey.value))
@@ -586,6 +592,61 @@ async function copySecretFromServer() {
   }
 }
 
+async function openUseKeyModal() {
+  error.value = ''
+  try {
+    const res = await api.get('/keys/secret')
+    usagePlainKey.value = res.data.key || ''
+    useKeyModalOpen.value = true
+  } catch (err) {
+    showNotice(err.message, 'error')
+  }
+}
+
+function closeUseKeyModal() {
+  useKeyModalOpen.value = false
+}
+
+function claudeSnippet(kind) {
+  const base = apiBaseURL.value
+  const key = usagePlainKey.value
+  if (kind === 'cmd') {
+    return `set ANTHROPIC_BASE_URL=${base}\nset ANTHROPIC_AUTH_TOKEN=${key}\nset CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
+  }
+  if (kind === 'powershell') {
+    return `$env:ANTHROPIC_BASE_URL="${base}"\n$env:ANTHROPIC_AUTH_TOKEN="${key}"\n$env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"`
+  }
+  return `export ANTHROPIC_BASE_URL="${base}"\nexport ANTHROPIC_AUTH_TOKEN="${key}"\nexport CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
+}
+
+const claudeVSCodeSnippet = computed(() => JSON.stringify({
+  'claude-code.env': {
+    ANTHROPIC_BASE_URL: apiBaseURL.value,
+    ANTHROPIC_AUTH_TOKEN: usagePlainKey.value,
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    CLAUDE_CODE_ATTRIBUTION_HEADER: '0'
+  }
+}, null, 2))
+
+const openCodeSnippet = computed(() => JSON.stringify({
+  provider: {
+    anthropic: {
+      options: {
+        baseURL: apiV1BaseURL.value,
+        apiKey: usagePlainKey.value
+      },
+      npm: '@ai-sdk/anthropic'
+    }
+  },
+  $schema: 'https://opencode.ai/config.json'
+}, null, 2))
+
+const codexConfigSnippet = computed(() => `model_provider = "codexxkai"\nmodel = "gpt-5.2"\nmodel_reasoning_effort = "high"\ndisable_response_storage = false\n\n[model_providers.codexxkai]\nname = "codexxkai"\nbase_url = "${apiV1BaseURL.value}"\nwire_api = "responses"\nrequires_openai_auth = true\nweb_search = "live"`)
+
+const codexAuthSnippet = computed(() => JSON.stringify({
+  OPENAI_API_KEY: usagePlainKey.value
+}, null, 2))
+
 function closeCopySuccessModal() {
   copySuccessModalOpen.value = false
 }
@@ -704,6 +765,14 @@ function statusLabel(value) {
                 <div class="api-key-strip">
                   <code class="api-key-code api-key-code--mask">{{ soloKey.key_masked || soloKey.key_prefix + '···' }}</code>
                   <div class="api-key-strip-actions">
+                    <button
+                      type="button"
+                      class="primary-button small"
+                      :disabled="!soloKey.can_copy"
+                      @click="openUseKeyModal"
+                    >
+                      使用密钥
+                    </button>
                     <button
                       type="button"
                       class="ghost-button small"
@@ -1009,6 +1078,55 @@ function statusLabel(value) {
         </div>
         <div class="modal-actions">
           <button type="button" class="primary-button" @click="closeCopySuccessModal">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="useKeyModalOpen" class="modal-backdrop" @click.self="closeUseKeyModal">
+      <div class="modal-card key-usage-modal" role="dialog" aria-labelledby="key-usage-title">
+        <div class="modal-head">
+          <h3 id="key-usage-title">使用密钥</h3>
+          <button type="button" class="icon-button" aria-label="关闭" @click="closeUseKeyModal">×</button>
+        </div>
+        <div class="key-usage-summary">
+          <div><span>API 地址</span><code>{{ apiBaseURL }}</code></div>
+          <div><span>API Key</span><code>{{ usagePlainKey }}</code></div>
+        </div>
+        <div class="key-usage-tabs">
+          <button type="button" :class="{ active: keyUsageTab === 'claude' }" @click="keyUsageTab = 'claude'">Claude Code</button>
+          <button type="button" :class="{ active: keyUsageTab === 'opencode' }" @click="keyUsageTab = 'opencode'">OpenCode</button>
+          <button type="button" :class="{ active: keyUsageTab === 'codex' }" @click="keyUsageTab = 'codex'">Codex</button>
+        </div>
+        <div v-if="keyUsageTab === 'claude'" class="key-usage-body">
+          <div class="key-usage-tabs key-usage-tabs--small">
+            <button type="button" :class="{ active: claudeOSTab === 'shell' }" @click="claudeOSTab = 'shell'">macOS/Linux</button>
+            <button type="button" :class="{ active: claudeOSTab === 'cmd' }" @click="claudeOSTab = 'cmd'">Windows CMD</button>
+            <button type="button" :class="{ active: claudeOSTab === 'powershell' }" @click="claudeOSTab = 'powershell'">PowerShell</button>
+          </div>
+          <div class="snippet-card">
+            <div><strong>终端环境变量</strong><button type="button" class="ghost-button small" @click="copyKey(claudeSnippet(claudeOSTab))">复制</button></div>
+            <pre><code>{{ claudeSnippet(claudeOSTab) }}</code></pre>
+          </div>
+          <div class="snippet-card">
+            <div><strong>VSCode settings.json</strong><button type="button" class="ghost-button small" @click="copyKey(claudeVSCodeSnippet)">复制</button></div>
+            <pre><code>{{ claudeVSCodeSnippet }}</code></pre>
+          </div>
+        </div>
+        <div v-else-if="keyUsageTab === 'opencode'" class="key-usage-body">
+          <div class="snippet-card">
+            <div><strong>opencode.json</strong><button type="button" class="ghost-button small" @click="copyKey(openCodeSnippet)">复制</button></div>
+            <pre><code>{{ openCodeSnippet }}</code></pre>
+          </div>
+        </div>
+        <div v-else class="key-usage-body">
+          <div class="snippet-card">
+            <div><strong>config.toml</strong><button type="button" class="ghost-button small" @click="copyKey(codexConfigSnippet)">复制</button></div>
+            <pre><code>{{ codexConfigSnippet }}</code></pre>
+          </div>
+          <div class="snippet-card">
+            <div><strong>auth.json</strong><button type="button" class="ghost-button small" @click="copyKey(codexAuthSnippet)">复制</button></div>
+            <pre><code>{{ codexAuthSnippet }}</code></pre>
+          </div>
         </div>
       </div>
     </div>

@@ -29,7 +29,7 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 		}
 
 		var apiKey model.APIKey
-		if err := db.Preload("User").Preload("User.Plan").Where("key_hash = ? AND status = ?", utils.HashToken(token), model.APIKeyStatusActive).First(&apiKey).Error; err != nil {
+		if err := db.Preload("User").Preload("User.Plan.PublicChannel").Preload("User.Plan.PollingPool.Accounts").Where("key_hash = ? AND status = ?", utils.HashToken(token), model.APIKeyStatusActive).First(&apiKey).Error; err != nil {
 			response.Error(c, 401, "invalid api key")
 			c.Abort()
 			return
@@ -62,23 +62,53 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 		}
 
 		now := time.Now()
+		protocol := requestProtocol(c)
 		db.Model(&apiKey).Updates(map[string]interface{}{"last_used_at": &now})
 
 		c.Set("api_key", apiKey)
+		c.Set("protocol", protocol)
 		if apiKey.User.Plan != nil && apiKey.User.Plan.PlanType == model.PlanTypePublic {
-			var publicChannel model.PublicChannel
-			if apiKey.User.Plan.PublicChannelID == nil ||
-				db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *apiKey.User.Plan.PublicChannelID, true).First(&publicChannel).Error != nil {
+			if !service.PlanChannelSupportsProtocol(apiKey.User.Plan, protocol) {
+				response.Error(c, 403, "protocol not supported by plan")
+				c.Abort()
+				return
+			}
+			if apiKey.User.Plan.PublicChannelID != nil {
+				var publicChannel model.PublicChannel
+				if db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *apiKey.User.Plan.PublicChannelID, true).First(&publicChannel).Error != nil ||
+					!service.SupportsProtocol(publicChannel.SupportsGPT, publicChannel.SupportsClaude, protocol) {
+					response.Error(c, 403, "public channel sold out")
+					c.Abort()
+					return
+				}
+				db.Model(&publicChannel).Updates(map[string]interface{}{"last_used_at": &now})
+				c.Set("public_channel", publicChannel)
+			} else if apiKey.User.Plan.PollingPoolID != nil {
+				var poolAccount model.PollingPoolAccount
+				if db.Joins("JOIN polling_pools ON polling_pools.id = polling_pool_accounts.polling_pool_id").
+					Where("polling_pool_accounts.polling_pool_id = ? AND polling_pool_accounts.enabled = ? AND polling_pool_accounts.remaining_usd_cents > 0 AND polling_pools.enabled = ?", *apiKey.User.Plan.PollingPoolID, true, true).
+					Order("polling_pool_accounts.sort_order asc, polling_pool_accounts.id asc").
+					First(&poolAccount).Error != nil {
+					response.Error(c, 403, "public channel sold out")
+					c.Abort()
+					return
+				}
+				db.Model(&poolAccount).Updates(map[string]interface{}{"last_used_at": &now})
+				c.Set("pool_account", poolAccount)
+			} else {
 				response.Error(c, 403, "public channel sold out")
 				c.Abort()
 				return
 			}
-			db.Model(&publicChannel).Updates(map[string]interface{}{"last_used_at": &now})
-			c.Set("public_channel", publicChannel)
 		} else {
 			var upstream model.UpstreamAccount
 			if err := db.Where("user_id = ? AND status = ?", apiKey.UserID, model.UpstreamStatusActive).First(&upstream).Error; err != nil {
 				response.Error(c, 403, "no active upstream account bound")
+				c.Abort()
+				return
+			}
+			if !service.SupportsProtocol(upstream.SupportsGPT, upstream.SupportsClaude, protocol) {
+				response.Error(c, 403, "protocol not supported by upstream")
 				c.Abort()
 				return
 			}
@@ -87,6 +117,14 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func requestProtocol(c *gin.Context) string {
+	path := strings.ToLower(c.Request.URL.Path)
+	if strings.Contains(path, "/messages") || c.GetHeader("Anthropic-Version") != "" || c.GetHeader("Anthropic-Beta") != "" {
+		return model.ProtocolClaude
+	}
+	return model.ProtocolGPT
 }
 
 func allowPlanQuota(db *gorm.DB, user model.User) bool {

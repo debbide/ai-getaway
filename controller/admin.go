@@ -41,6 +41,7 @@ type planRequest struct {
 	PlanType           string `json:"plan_type"`
 	QuotaPeriod        string `json:"quota_period"`
 	PublicChannelID    *uint  `json:"public_channel_id"`
+	PollingPoolID      *uint  `json:"polling_pool_id"`
 	PriceCents         int64  `json:"price_cents" binding:"min=0"`
 	SettlementUSDCents int64  `json:"settlement_usd_cents"`
 	DurationDays       int    `json:"duration_days"`
@@ -127,18 +128,41 @@ type updateOrderRequest struct {
 }
 
 type upstreamChannelRequest struct {
-	Name    string `json:"name" binding:"required,min=2,max=64"`
-	BaseURL string `json:"base_url" binding:"required,url"`
-	Enabled bool   `json:"enabled"`
+	Name           string `json:"name" binding:"required,min=2,max=64"`
+	BaseURL        string `json:"base_url" binding:"required,url"`
+	SupportsGPT    bool   `json:"supports_gpt"`
+	SupportsClaude bool   `json:"supports_claude"`
+	Enabled        bool   `json:"enabled"`
 }
 
 type publicChannelRequest struct {
 	Name              string `json:"name" binding:"required,min=2,max=64"`
 	BaseURL           string `json:"base_url" binding:"required,url"`
 	APIKey            string `json:"api_key"`
+	SupportsGPT       bool   `json:"supports_gpt"`
+	SupportsClaude    bool   `json:"supports_claude"`
 	TotalUSDCents     int64  `json:"total_usd_cents" binding:"min=0"`
 	RemainingUSDCents int64  `json:"remaining_usd_cents" binding:"min=0"`
 	Enabled           bool   `json:"enabled"`
+}
+
+type pollingPoolRequest struct {
+	Name           string                      `json:"name" binding:"required,min=2,max=64"`
+	SupportsGPT    bool                        `json:"supports_gpt"`
+	SupportsClaude bool                        `json:"supports_claude"`
+	Enabled        bool                        `json:"enabled"`
+	Accounts       []pollingPoolAccountRequest `json:"accounts"`
+}
+
+type pollingPoolAccountRequest struct {
+	ID                uint   `json:"id"`
+	Name              string `json:"name"`
+	BaseURL           string `json:"base_url"`
+	APIKey            string `json:"api_key"`
+	TotalUSDCents     int64  `json:"total_usd_cents"`
+	RemainingUSDCents int64  `json:"remaining_usd_cents"`
+	Enabled           bool   `json:"enabled"`
+	SortOrder         int    `json:"sort_order"`
 }
 
 type modelPricingRequest struct {
@@ -165,17 +189,19 @@ type adminUserResponse struct {
 }
 
 type adminUpstreamResponse struct {
-	ID         uint       `json:"ID"`
-	UserID     uint       `json:"UserID"`
-	Channel    string     `json:"Channel"`
-	BaseURL    string     `json:"BaseURL"`
-	Username   string     `json:"Username"`
-	Password   string     `json:"Password"`
-	APIKey     string     `json:"APIKey"`
-	Status     string     `json:"Status"`
-	LastUsedAt *time.Time `json:"LastUsedAt"`
-	CreatedAt  time.Time  `json:"CreatedAt"`
-	UpdatedAt  time.Time  `json:"UpdatedAt"`
+	ID             uint       `json:"ID"`
+	UserID         uint       `json:"UserID"`
+	Channel        string     `json:"Channel"`
+	BaseURL        string     `json:"BaseURL"`
+	Username       string     `json:"Username"`
+	Password       string     `json:"Password"`
+	APIKey         string     `json:"APIKey"`
+	SupportsGPT    bool       `json:"SupportsGPT"`
+	SupportsClaude bool       `json:"SupportsClaude"`
+	Status         string     `json:"Status"`
+	LastUsedAt     *time.Time `json:"LastUsedAt"`
+	CreatedAt      time.Time  `json:"CreatedAt"`
+	UpdatedAt      time.Time  `json:"UpdatedAt"`
 }
 
 type adminPublicChannelResponse struct {
@@ -183,9 +209,38 @@ type adminPublicChannelResponse struct {
 	Name              string     `json:"Name"`
 	BaseURL           string     `json:"BaseURL"`
 	APIKey            string     `json:"APIKey"`
+	SupportsGPT       bool       `json:"SupportsGPT"`
+	SupportsClaude    bool       `json:"SupportsClaude"`
 	TotalUSDCents     int64      `json:"TotalUSDCents"`
 	RemainingUSDCents int64      `json:"RemainingUSDCents"`
 	Enabled           bool       `json:"Enabled"`
+	LastUsedAt        *time.Time `json:"LastUsedAt"`
+	CreatedAt         time.Time  `json:"CreatedAt"`
+	UpdatedAt         time.Time  `json:"UpdatedAt"`
+}
+
+type adminPollingPoolResponse struct {
+	ID                uint                              `json:"ID"`
+	Name              string                            `json:"Name"`
+	SupportsGPT       bool                              `json:"SupportsGPT"`
+	SupportsClaude    bool                              `json:"SupportsClaude"`
+	Enabled           bool                              `json:"Enabled"`
+	TotalUSDCents     int64                             `json:"TotalUSDCents"`
+	RemainingUSDCents int64                             `json:"RemainingUSDCents"`
+	Accounts          []adminPollingPoolAccountResponse `json:"Accounts"`
+	CreatedAt         time.Time                         `json:"CreatedAt"`
+	UpdatedAt         time.Time                         `json:"UpdatedAt"`
+}
+
+type adminPollingPoolAccountResponse struct {
+	ID                uint       `json:"ID"`
+	Name              string     `json:"Name"`
+	BaseURL           string     `json:"BaseURL"`
+	APIKey            string     `json:"APIKey"`
+	TotalUSDCents     int64      `json:"TotalUSDCents"`
+	RemainingUSDCents int64      `json:"RemainingUSDCents"`
+	Enabled           bool       `json:"Enabled"`
+	SortOrder         int        `json:"SortOrder"`
 	LastUsedAt        *time.Time `json:"LastUsedAt"`
 	CreatedAt         time.Time  `json:"CreatedAt"`
 	UpdatedAt         time.Time  `json:"UpdatedAt"`
@@ -426,12 +481,14 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		}
 		if err := a.db.Where(model.UpstreamAccount{UserID: user.ID}).
 			Assign(map[string]interface{}{
-				"channel":  selectedChannel.Name,
-				"base_url": selectedChannel.BaseURL,
-				"username": req.UpstreamUsername,
-				"password": req.UpstreamPassword,
-				"api_key":  req.APIKey,
-				"status":   model.UpstreamStatusActive,
+				"channel":         selectedChannel.Name,
+				"base_url":        selectedChannel.BaseURL,
+				"username":        req.UpstreamUsername,
+				"password":        req.UpstreamPassword,
+				"api_key":         req.APIKey,
+				"supports_gpt":    selectedChannel.SupportsGPT,
+				"supports_claude": selectedChannel.SupportsClaude,
+				"status":          model.UpstreamStatusActive,
 			}).
 			FirstOrCreate(&upstream).Error; err != nil {
 			response.Error(c, 500, "failed to update user")
@@ -506,7 +563,7 @@ func (a *AdminController) Orders(c *gin.Context) {
 }
 
 func (a *AdminController) Plans(c *gin.Context) {
-	query := a.db.Model(&model.Plan{}).Preload("PublicChannel")
+	query := a.db.Model(&model.Plan{}).Preload("PublicChannel").Preload("PollingPool.Accounts")
 	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
 		like := "%" + keyword + "%"
 		query = query.Where("name LIKE ? OR code LIKE ? OR description LIKE ?", like, like, like)
@@ -560,6 +617,7 @@ func (a *AdminController) CreatePlan(c *gin.Context) {
 		PlanType:           fallbackPlanType(req.PlanType),
 		QuotaPeriod:        fallbackQuotaPeriod(req.QuotaPeriod),
 		PublicChannelID:    normalizedPublicChannelID(req),
+		PollingPoolID:      normalizedPollingPoolID(req),
 		PriceCents:         req.PriceCents,
 		SettlementUSDCents: req.SettlementUSDCents,
 		DurationDays:       fallbackDurationDays(req),
@@ -594,6 +652,7 @@ func (a *AdminController) UpdatePlan(c *gin.Context) {
 		"plan_type":            fallbackPlanType(req.PlanType),
 		"quota_period":         fallbackQuotaPeriod(req.QuotaPeriod),
 		"public_channel_id":    normalizedPublicChannelID(req),
+		"polling_pool_id":      normalizedPollingPoolID(req),
 		"price_cents":          req.PriceCents,
 		"settlement_usd_cents": req.SettlementUSDCents,
 		"duration_days":        fallbackDurationDays(req),
@@ -673,13 +732,21 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 		}
 
 		upstream := model.UpstreamAccount{
-			UserID:   order.UserID,
-			Channel:  req.Channel,
-			BaseURL:  req.BaseURL,
-			Username: req.Username,
-			Password: req.Password,
-			APIKey:   req.APIKey,
-			Status:   model.UpstreamStatusActive,
+			UserID:         order.UserID,
+			Channel:        req.Channel,
+			BaseURL:        req.BaseURL,
+			Username:       req.Username,
+			Password:       req.Password,
+			APIKey:         req.APIKey,
+			SupportsGPT:    true,
+			SupportsClaude: false,
+			Status:         model.UpstreamStatusActive,
+		}
+		if req.ChannelID > 0 {
+			if channel, err := a.loadUpstreamChannel(req.ChannelID); err == nil {
+				upstream.SupportsGPT = channel.SupportsGPT
+				upstream.SupportsClaude = channel.SupportsClaude
+			}
 		}
 		return tx.Where(model.UpstreamAccount{UserID: order.UserID}).Assign(upstream).FirstOrCreate(&upstream).Error
 	})
@@ -746,7 +813,7 @@ func approvePublicPaidOrder(db *gorm.DB, order *model.Order, approvedByID *uint)
 	now := time.Now()
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var plan model.Plan
-		if err := tx.Preload("PublicChannel").First(&plan, order.PlanID).Error; err != nil {
+		if err := tx.Preload("PublicChannel").Preload("PollingPool.Accounts").First(&plan, order.PlanID).Error; err != nil {
 			return err
 		}
 		updates := map[string]interface{}{
@@ -765,17 +832,8 @@ func approvePublicPaidOrder(db *gorm.DB, order *model.Order, approvedByID *uint)
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		if plan.PublicChannelID == nil || plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents {
-			return errors.New("public plan sold out")
-		}
-		result = tx.Model(&model.PublicChannel{}).
-			Where("id = ? AND remaining_usd_cents >= ?", *plan.PublicChannelID, plan.SettlementUSDCents).
-			Update("remaining_usd_cents", gorm.Expr("remaining_usd_cents - ?", plan.SettlementUSDCents))
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return errors.New("public plan sold out")
+		if err := service.DeductPlanChannelQuota(tx, plan); err != nil {
+			return err
 		}
 		return applyApprovedSubscription(tx, order, plan, now)
 	})
@@ -929,6 +987,7 @@ func (a *AdminController) UpdateOrder(c *gin.Context) {
 		}
 		updates["amount_cents"] = *req.AmountCents
 	}
+	upstreamUpdates := map[string]interface{}{}
 	if req.ChannelID > 0 {
 		channel, err := a.loadUpstreamChannel(req.ChannelID)
 		if err != nil {
@@ -937,9 +996,10 @@ func (a *AdminController) UpdateOrder(c *gin.Context) {
 		}
 		req.Channel = channel.Name
 		req.BaseURL = channel.BaseURL
+		upstreamUpdates["supports_gpt"] = channel.SupportsGPT
+		upstreamUpdates["supports_claude"] = channel.SupportsClaude
 	}
 
-	upstreamUpdates := map[string]interface{}{}
 	if req.Channel != "" {
 		upstreamUpdates["channel"] = req.Channel
 	}
@@ -1091,10 +1151,17 @@ func fallbackDurationDays(req planRequest) int {
 }
 
 func normalizedPublicChannelID(req planRequest) *uint {
-	if fallbackPlanType(req.PlanType) != model.PlanTypePublic || req.PublicChannelID == nil || *req.PublicChannelID == 0 {
+	if fallbackPlanType(req.PlanType) != model.PlanTypePublic || req.PollingPoolID != nil && *req.PollingPoolID > 0 || req.PublicChannelID == nil || *req.PublicChannelID == 0 {
 		return nil
 	}
 	return req.PublicChannelID
+}
+
+func normalizedPollingPoolID(req planRequest) *uint {
+	if fallbackPlanType(req.PlanType) != model.PlanTypePublic || req.PollingPoolID == nil || *req.PollingPoolID == 0 {
+		return nil
+	}
+	return req.PollingPoolID
 }
 
 func normalizedFreePerUserLimit(req planRequest) int {
@@ -1129,12 +1196,21 @@ func (a *AdminController) validatePlanRequest(req planRequest) error {
 		if fallbackQuotaPeriod(req.QuotaPeriod) != model.QuotaPeriodPublic {
 			return errors.New("public plan quota period required")
 		}
-		if req.PublicChannelID == nil || *req.PublicChannelID == 0 {
-			return errors.New("public channel required")
+		hasPublicChannel := req.PublicChannelID != nil && *req.PublicChannelID > 0
+		hasPollingPool := req.PollingPoolID != nil && *req.PollingPoolID > 0
+		if hasPublicChannel == hasPollingPool {
+			return errors.New("public channel or polling pool required")
 		}
-		var channel model.PublicChannel
-		if err := a.db.Where("id = ? AND enabled = ?", *req.PublicChannelID, true).First(&channel).Error; err != nil {
-			return errors.New("public channel not found")
+		if hasPublicChannel {
+			var channel model.PublicChannel
+			if err := a.db.Where("id = ? AND enabled = ?", *req.PublicChannelID, true).First(&channel).Error; err != nil {
+				return errors.New("public channel not found")
+			}
+		} else {
+			var pool model.PollingPool
+			if err := a.db.Where("id = ? AND enabled = ?", *req.PollingPoolID, true).First(&pool).Error; err != nil {
+				return errors.New("polling pool not found")
+			}
 		}
 		return nil
 	}
@@ -1193,17 +1269,19 @@ func (a *AdminController) Upstreams(c *gin.Context) {
 
 func mapAdminUpstream(upstream model.UpstreamAccount) *adminUpstreamResponse {
 	return &adminUpstreamResponse{
-		ID:         upstream.ID,
-		UserID:     upstream.UserID,
-		Channel:    upstream.Channel,
-		BaseURL:    upstream.BaseURL,
-		Username:   upstream.Username,
-		Password:   upstream.Password,
-		APIKey:     upstream.APIKey,
-		Status:     upstream.Status,
-		LastUsedAt: upstream.LastUsedAt,
-		CreatedAt:  upstream.CreatedAt,
-		UpdatedAt:  upstream.UpdatedAt,
+		ID:             upstream.ID,
+		UserID:         upstream.UserID,
+		Channel:        upstream.Channel,
+		BaseURL:        upstream.BaseURL,
+		Username:       upstream.Username,
+		Password:       upstream.Password,
+		APIKey:         upstream.APIKey,
+		SupportsGPT:    upstream.SupportsGPT,
+		SupportsClaude: upstream.SupportsClaude,
+		Status:         upstream.Status,
+		LastUsedAt:     upstream.LastUsedAt,
+		CreatedAt:      upstream.CreatedAt,
+		UpdatedAt:      upstream.UpdatedAt,
 	}
 }
 
@@ -1213,12 +1291,51 @@ func mapAdminPublicChannel(channel model.PublicChannel) adminPublicChannelRespon
 		Name:              channel.Name,
 		BaseURL:           channel.BaseURL,
 		APIKey:            channel.APIKey,
+		SupportsGPT:       channel.SupportsGPT,
+		SupportsClaude:    channel.SupportsClaude,
 		TotalUSDCents:     channel.TotalUSDCents,
 		RemainingUSDCents: channel.RemainingUSDCents,
 		Enabled:           channel.Enabled,
 		LastUsedAt:        channel.LastUsedAt,
 		CreatedAt:         channel.CreatedAt,
 		UpdatedAt:         channel.UpdatedAt,
+	}
+}
+
+func mapAdminPollingPool(pool model.PollingPool) adminPollingPoolResponse {
+	items := make([]adminPollingPoolAccountResponse, 0, len(pool.Accounts))
+	var total int64
+	var remaining int64
+	for _, account := range pool.Accounts {
+		total += account.TotalUSDCents
+		if account.Enabled {
+			remaining += account.RemainingUSDCents
+		}
+		items = append(items, adminPollingPoolAccountResponse{
+			ID:                account.ID,
+			Name:              account.Name,
+			BaseURL:           account.BaseURL,
+			APIKey:            account.APIKey,
+			TotalUSDCents:     account.TotalUSDCents,
+			RemainingUSDCents: account.RemainingUSDCents,
+			Enabled:           account.Enabled,
+			SortOrder:         account.SortOrder,
+			LastUsedAt:        account.LastUsedAt,
+			CreatedAt:         account.CreatedAt,
+			UpdatedAt:         account.UpdatedAt,
+		})
+	}
+	return adminPollingPoolResponse{
+		ID:                pool.ID,
+		Name:              pool.Name,
+		SupportsGPT:       pool.SupportsGPT,
+		SupportsClaude:    pool.SupportsClaude,
+		Enabled:           pool.Enabled,
+		TotalUSDCents:     total,
+		RemainingUSDCents: remaining,
+		Accounts:          items,
+		CreatedAt:         pool.CreatedAt,
+		UpdatedAt:         pool.UpdatedAt,
 	}
 }
 
@@ -1261,6 +1378,34 @@ func (a *AdminController) PublicChannels(c *gin.Context) {
 	items := make([]adminPublicChannelResponse, 0, len(channels))
 	for _, channel := range channels {
 		items = append(items, mapAdminPublicChannel(channel))
+	}
+	response.OK(c, paginatedResponse{
+		Items:    items,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
+}
+
+func (a *AdminController) PollingPools(c *gin.Context) {
+	query := a.db.Model(&model.PollingPool{}).Preload("Accounts", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sort_order asc, id asc")
+	})
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("name LIKE ? OR CAST(id AS CHAR) LIKE ?", like, like)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("enabled = ?", status == "enabled")
+	}
+	page, pageSize := parsePageParams(c, 10)
+	var total int64
+	query.Count(&total)
+	var pools []model.PollingPool
+	applyPagination(query, page, pageSize).Order("id desc").Find(&pools)
+	items := make([]adminPollingPoolResponse, 0, len(pools))
+	for _, pool := range pools {
+		items = append(items, mapAdminPollingPool(pool))
 	}
 	response.OK(c, paginatedResponse{
 		Items:    items,
@@ -1358,9 +1503,11 @@ func (a *AdminController) CreateUpstreamChannel(c *gin.Context) {
 	}
 
 	channel := model.UpstreamChannel{
-		Name:    req.Name,
-		BaseURL: req.BaseURL,
-		Enabled: req.Enabled,
+		Name:           req.Name,
+		BaseURL:        req.BaseURL,
+		SupportsGPT:    req.SupportsGPT,
+		SupportsClaude: req.SupportsClaude,
+		Enabled:        req.Enabled,
 	}
 	if err := a.db.Create(&channel).Error; err != nil {
 		response.Error(c, 500, "failed to create upstream channel")
@@ -1377,9 +1524,11 @@ func (a *AdminController) UpdateUpstreamChannel(c *gin.Context) {
 	}
 
 	updates := map[string]interface{}{
-		"name":     req.Name,
-		"base_url": req.BaseURL,
-		"enabled":  req.Enabled,
+		"name":            req.Name,
+		"base_url":        req.BaseURL,
+		"supports_gpt":    req.SupportsGPT,
+		"supports_claude": req.SupportsClaude,
+		"enabled":         req.Enabled,
 	}
 	if err := a.db.Model(&model.UpstreamChannel{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
 		response.Error(c, 500, "failed to update upstream channel")
@@ -1418,6 +1567,8 @@ func (a *AdminController) CreatePublicChannel(c *gin.Context) {
 		Name:              req.Name,
 		BaseURL:           req.BaseURL,
 		APIKey:            req.APIKey,
+		SupportsGPT:       req.SupportsGPT,
+		SupportsClaude:    req.SupportsClaude,
 		TotalUSDCents:     req.TotalUSDCents,
 		RemainingUSDCents: req.RemainingUSDCents,
 		Enabled:           req.Enabled,
@@ -1443,6 +1594,8 @@ func (a *AdminController) UpdatePublicChannel(c *gin.Context) {
 	updates := map[string]interface{}{
 		"name":                req.Name,
 		"base_url":            req.BaseURL,
+		"supports_gpt":        req.SupportsGPT,
+		"supports_claude":     req.SupportsClaude,
 		"total_usd_cents":     req.TotalUSDCents,
 		"remaining_usd_cents": req.RemainingUSDCents,
 		"enabled":             req.Enabled,
@@ -1463,6 +1616,131 @@ func (a *AdminController) DeletePublicChannel(c *gin.Context) {
 		return
 	}
 	response.OK(c, nil)
+}
+
+func (a *AdminController) CreatePollingPool(c *gin.Context) {
+	var req pollingPoolRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	accounts, err := normalizePollingPoolAccounts(req.Accounts, true)
+	if err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	pool := model.PollingPool{
+		Name:           strings.TrimSpace(req.Name),
+		SupportsGPT:    req.SupportsGPT,
+		SupportsClaude: req.SupportsClaude,
+		Enabled:        req.Enabled,
+		Accounts:       accounts,
+	}
+	if err := a.db.Create(&pool).Error; err != nil {
+		response.Error(c, 500, "failed to create polling pool")
+		return
+	}
+	a.db.Preload("Accounts", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sort_order asc, id asc")
+	}).First(&pool, pool.ID)
+	response.Created(c, mapAdminPollingPool(pool))
+}
+
+func (a *AdminController) UpdatePollingPool(c *gin.Context) {
+	var req pollingPoolRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	poolID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || poolID == 0 {
+		response.Error(c, 400, "invalid polling pool")
+		return
+	}
+	accounts, err := normalizePollingPoolAccounts(req.Accounts, false)
+	if err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	err = a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.PollingPool{}).Where("id = ?", poolID).Updates(map[string]interface{}{
+			"name":            strings.TrimSpace(req.Name),
+			"supports_gpt":    req.SupportsGPT,
+			"supports_claude": req.SupportsClaude,
+			"enabled":         req.Enabled,
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("polling_pool_id = ?", poolID).Delete(&model.PollingPoolAccount{}).Error; err != nil {
+			return err
+		}
+		for i := range accounts {
+			accounts[i].PollingPoolID = uint(poolID)
+		}
+		if len(accounts) > 0 {
+			return tx.Create(&accounts).Error
+		}
+		return nil
+	})
+	if err != nil {
+		response.Error(c, 500, "failed to update polling pool")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) DeletePollingPool(c *gin.Context) {
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("polling_pool_id = ?", c.Param("id")).Delete(&model.PollingPoolAccount{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.PollingPool{}, c.Param("id")).Error
+	})
+	if err != nil {
+		response.Error(c, 500, "failed to delete polling pool")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func normalizePollingPoolAccounts(input []pollingPoolAccountRequest, _ bool) ([]model.PollingPoolAccount, error) {
+	if len(input) == 0 {
+		return nil, errors.New("polling pool account required")
+	}
+	accounts := make([]model.PollingPoolAccount, 0, len(input))
+	for i, item := range input {
+		name := strings.TrimSpace(item.Name)
+		baseURL := strings.TrimSpace(item.BaseURL)
+		apiKey := strings.TrimSpace(item.APIKey)
+		if name == "" {
+			name = "账号" + strconv.Itoa(i+1)
+		}
+		if baseURL == "" {
+			return nil, errors.New("account base url required")
+		}
+		if apiKey == "" {
+			return nil, errors.New("account api key required")
+		}
+		if item.TotalUSDCents < 0 || item.RemainingUSDCents < 0 {
+			return nil, errors.New("account quota invalid")
+		}
+		if item.RemainingUSDCents <= 0 {
+			item.RemainingUSDCents = item.TotalUSDCents
+		}
+		if item.RemainingUSDCents > item.TotalUSDCents {
+			return nil, errors.New("account remaining quota cannot exceed total quota")
+		}
+		accounts = append(accounts, model.PollingPoolAccount{
+			Name:              name,
+			BaseURL:           baseURL,
+			APIKey:            apiKey,
+			TotalUSDCents:     item.TotalUSDCents,
+			RemainingUSDCents: item.RemainingUSDCents,
+			Enabled:           item.Enabled,
+			SortOrder:         item.SortOrder,
+		})
+	}
+	return accounts, nil
 }
 
 func (a *AdminController) APIKeys(c *gin.Context) {

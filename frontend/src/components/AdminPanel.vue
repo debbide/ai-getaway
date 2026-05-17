@@ -62,6 +62,7 @@ const models = ref([])
 const modelSource = ref('')
 const channels = ref([])
 const publicChannels = ref([])
+const pollingPools = ref([])
 const docs = ref([])
 const announcements = ref([])
 const emailTemplates = ref([])
@@ -81,6 +82,7 @@ const planForm = reactive(emptyPlan())
 const modelForm = reactive(emptyModel())
 const channelForm = reactive(emptyChannel())
 const publicChannelForm = reactive(emptyPublicChannel())
+const pollingPoolForm = reactive(emptyPollingPool())
 const userForm = reactive(emptyUser())
 const apiKeyForm = reactive(emptyApiKey())
 const docForm = reactive(emptyDoc())
@@ -91,6 +93,7 @@ const planSearch = reactive({ keyword: '', status: '', category: 'daily' })
 const orderSearch = reactive({ keyword: '', status: '', planId: '', paymentMethod: '' })
 const channelSearch = reactive({ keyword: '', status: '' })
 const publicChannelSearch = reactive({ keyword: '', status: '' })
+const pollingPoolSearch = reactive({ keyword: '', status: '' })
 const apiKeySearch = reactive({ keyword: '', status: '' })
 const announcementSearch = reactive({ keyword: '', status: '' })
 const docSearch = reactive({ keyword: '', status: '', groupName: '' })
@@ -100,6 +103,7 @@ const pagination = reactive({
   models: { page: 1, pageSize: 10 },
   upstreamChannels: { page: 1, pageSize: 10 },
   publicChannels: { page: 1, pageSize: 10 },
+  pollingPools: { page: 1, pageSize: 10 },
   users: { page: 1, pageSize: 10 },
   apiKeys: { page: 1, pageSize: 10 },
   announcements: { page: 1, pageSize: 10 },
@@ -110,6 +114,7 @@ const listTotals = reactive({
   orders: 0,
   upstreamChannels: 0,
   publicChannels: 0,
+  pollingPools: 0,
   users: 0,
   announcements: 0,
   docs: 0
@@ -155,6 +160,7 @@ const enabledModels = computed(() => models.value.filter((item) => item.Status =
 const approvedUsers = computed(() => stats.value.approved_users ?? users.value.filter((user) => user.Status === 'approved').length)
 const enabledChannels = computed(() => channels.value.filter((channel) => channel.Enabled).length)
 const enabledPublicChannels = computed(() => publicChannels.value.filter((channel) => channel.Enabled).length)
+const enabledPollingPools = computed(() => pollingPools.value.filter((pool) => pool.Enabled).length)
 const enabledDocs = computed(() => docs.value.filter((doc) => doc.Enabled).length)
 const enabledAnnouncements = computed(() => announcements.value.filter((item) => item.Enabled).length)
 const enabledEmailTemplates = computed(() => emailTemplates.value.filter((item) => item.Enabled).length)
@@ -179,6 +185,7 @@ const pagedAnnouncements = computed(() => announcements.value)
 const pagedDocs = computed(() => docs.value)
 const pagedUpstreamChannels = computed(() => channels.value)
 const pagedPublicChannels = computed(() => publicChannels.value)
+const pagedPollingPools = computed(() => pollingPools.value)
 
 function responseData(result, fallback) {
   return result.status === 'fulfilled' ? result.value.data : fallback
@@ -216,6 +223,7 @@ watch(() => [planSearch.keyword, planSearch.status, planSearch.category], () => 
 watch(() => [orderSearch.keyword, orderSearch.status, orderSearch.planId, orderSearch.paymentMethod], () => scheduleFilterRefresh('orders'))
 watch(() => [channelSearch.keyword, channelSearch.status], () => scheduleFilterRefresh('upstreamChannels'))
 watch(() => [publicChannelSearch.keyword, publicChannelSearch.status], () => scheduleFilterRefresh('publicChannels'))
+watch(() => [pollingPoolSearch.keyword, pollingPoolSearch.status], () => scheduleFilterRefresh('pollingPools'))
 watch(() => [announcementSearch.keyword, announcementSearch.status], () => scheduleFilterRefresh('announcements'))
 watch(() => [docSearch.keyword, docSearch.groupName, docSearch.status], () => scheduleFilterRefresh('docs'))
 watch(usersTab, () => {
@@ -257,6 +265,8 @@ function emptyPlan() {
     plan_type: 'subscription',
     quota_period: 'weekly',
     public_channel_id: '',
+    polling_pool_id: '',
+    delivery_source: 'public',
     price_rmb: 9.9,
     is_free: false,
     free_per_user_limit: 1,
@@ -303,6 +313,8 @@ function emptyChannel() {
     id: null,
     name: '',
     base_url: '',
+    supports_gpt: true,
+    supports_claude: false,
     enabled: true
   }
 }
@@ -313,6 +325,8 @@ function emptyPublicChannel() {
     name: '',
     base_url: '',
     api_key: '',
+    supports_gpt: true,
+    supports_claude: false,
     total_usd_quota: 400,
     remaining_usd_quota: 400,
     enabled: true
@@ -386,13 +400,14 @@ async function loadAll() {
       api.get('/admin/models'),
       api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
       api.get('/admin/public-channels', publicChannelFilterParams()),
+      api.get('/admin/polling-pools', pollingPoolFilterParams()),
       api.get('/admin/keys'),
       api.get('/admin/docs', docFilterParams()),
       api.get('/admin/announcements', announcementFilterParams()),
       api.get('/admin/email-templates'),
       api.get('/admin/settings')
     ])
-    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, publicChannelsRes, keysRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = results
+    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, publicChannelsRes, pollingPoolsRes, keysRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = results
     const modelData = responseData(modelsRes, { items: [], official_source: '' })
     const templateData = responseData(emailTemplatesRes, { items: [], variables: [] })
     stats.value = responseData(statsRes, {})
@@ -403,6 +418,7 @@ async function loadAll() {
     modelSource.value = modelData?.official_source || ''
     applyListData('upstreamChannels', channels, responseData(channelsRes, { items: [] }))
     applyListData('publicChannels', publicChannels, responseData(publicChannelsRes, { items: [] }))
+    applyListData('pollingPools', pollingPools, responseData(pollingPoolsRes, { items: [] }))
     apiKeys.value = unwrapListData(responseData(keysRes, []))
     applyListData('docs', docs, responseData(docsRes, { items: [] }))
     applyListData('announcements', announcements, responseData(announcementsRes, { items: [] }))
@@ -497,12 +513,14 @@ async function loadOverviewData() {
 }
 
 async function loadPlansData() {
-  const [plansRes, publicChannelsRes] = await Promise.all([
+  const [plansRes, publicChannelsRes, pollingPoolsRes] = await Promise.all([
     api.get('/admin/plans', planFilterParams()),
-    api.get('/admin/public-channels', publicChannelFilterParams())
+    api.get('/admin/public-channels', publicChannelFilterParams()),
+    api.get('/admin/polling-pools', pollingPoolFilterParams())
   ])
   applyListData('plans', plans, plansRes.data || { items: [] })
   applyListData('publicChannels', publicChannels, publicChannelsRes.data || { items: [] })
+  applyListData('pollingPools', pollingPools, pollingPoolsRes.data || { items: [] })
 }
 
 async function loadOrdersData() {
@@ -523,12 +541,14 @@ async function loadModelsData() {
 }
 
 async function loadChannelsData() {
-  const [channelsRes, publicChannelsRes] = await Promise.all([
+  const [channelsRes, publicChannelsRes, pollingPoolsRes] = await Promise.all([
     api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
-    api.get('/admin/public-channels', publicChannelFilterParams())
+    api.get('/admin/public-channels', publicChannelFilterParams()),
+    api.get('/admin/polling-pools', pollingPoolFilterParams())
   ])
   applyListData('upstreamChannels', channels, channelsRes.data || { items: [] })
   applyListData('publicChannels', publicChannels, publicChannelsRes.data || { items: [] })
+  applyListData('pollingPools', pollingPools, pollingPoolsRes.data || { items: [] })
 }
 
 async function loadUsersData() {
@@ -611,6 +631,13 @@ function publicChannelFilterParams() {
   })
 }
 
+function pollingPoolFilterParams() {
+  return listRequestParams('pollingPools', {
+    q: pollingPoolSearch.keyword,
+    status: pollingPoolSearch.status
+  })
+}
+
 function announcementFilterParams() {
   return listRequestParams('announcements', {
     q: announcementSearch.keyword,
@@ -633,6 +660,30 @@ function listRequestParams(key, filters = {}) {
       page: pagination[key].page,
       page_size: pagination[key].pageSize
     })
+  }
+}
+
+function emptyPollingPool() {
+  return {
+    id: null,
+    name: '',
+    supports_gpt: true,
+    supports_claude: false,
+    enabled: true,
+    accounts: [emptyPollingPoolAccount()]
+  }
+}
+
+function emptyPollingPoolAccount() {
+  return {
+    id: null,
+    name: '',
+    base_url: '',
+    api_key: '',
+    total_usd_quota: 300,
+    remaining_usd_quota: 300,
+    enabled: true,
+    sort_order: 0
   }
 }
 
@@ -672,6 +723,8 @@ function openPlanModal(plan = null) {
       plan_type: plan.PlanType || 'subscription',
       quota_period: plan.QuotaPeriod || 'weekly',
       public_channel_id: plan.PublicChannelID || plan.PublicChannel?.ID || '',
+      polling_pool_id: plan.PollingPoolID || plan.PollingPool?.ID || '',
+      delivery_source: plan.PollingPoolID || plan.PollingPool?.ID ? 'pool' : 'public',
       price_rmb: centsToAmount(plan.PriceCents),
       is_free: Number(plan.PriceCents || 0) === 0 && !plan.IsLottery,
       free_per_user_limit: plan.FreePerUserLimit || 1,
@@ -771,6 +824,8 @@ function openChannelModal(channel = null) {
       id: channel.ID,
       name: channel.Name,
       base_url: channel.BaseURL,
+      supports_gpt: channel.SupportsGPT !== false,
+      supports_claude: Boolean(channel.SupportsClaude),
       enabled: channel.Enabled
     })
   }
@@ -785,12 +840,39 @@ function openPublicChannelModal(channel = null) {
       name: channel.Name,
       base_url: channel.BaseURL,
       api_key: channel.APIKey || '',
+      supports_gpt: channel.SupportsGPT !== false,
+      supports_claude: Boolean(channel.SupportsClaude),
       total_usd_quota: centsToAmount(channel.TotalUSDCents),
       remaining_usd_quota: centsToAmount(channel.RemainingUSDCents),
       enabled: channel.Enabled
     })
   }
   showModal(channel ? 'edit-public-channel' : 'create-public-channel', channel ? '编辑公共渠道' : '新增公共渠道', channel ? '保存修改' : '创建公共渠道')
+}
+
+function openPollingPoolModal(pool = null) {
+  Object.assign(pollingPoolForm, emptyPollingPool())
+  if (pool) {
+    Object.assign(pollingPoolForm, {
+      id: pool.ID,
+      name: pool.Name,
+      supports_gpt: pool.SupportsGPT !== false,
+      supports_claude: Boolean(pool.SupportsClaude),
+      enabled: pool.Enabled,
+      accounts: (pool.Accounts || []).map((account) => ({
+        id: account.ID,
+        name: account.Name || '',
+        base_url: account.BaseURL || '',
+        api_key: account.APIKey || '',
+        total_usd_quota: centsToAmount(account.TotalUSDCents),
+        remaining_usd_quota: centsToAmount(account.RemainingUSDCents),
+        enabled: account.Enabled,
+        sort_order: account.SortOrder || 0
+      }))
+    })
+    if (!pollingPoolForm.accounts.length) pollingPoolForm.accounts = [emptyPollingPoolAccount()]
+  }
+  showModal(pool ? 'edit-polling-pool' : 'create-polling-pool', pool ? '编辑轮询号池' : '新增轮询号池', pool ? '保存修改' : '创建轮询号池')
 }
 
 function openDocModal(doc = null) {
@@ -929,6 +1011,19 @@ async function submitPublicChannel() {
   })
 }
 
+async function submitPollingPool() {
+  const payload = normalizePollingPool(pollingPoolForm)
+  await runAction(async () => {
+    if (pollingPoolForm.id) {
+      await api.put(`/admin/polling-pools/${pollingPoolForm.id}`, payload)
+      notice.value = '轮询号池已更新'
+    } else {
+      await api.post('/admin/polling-pools', payload)
+      notice.value = '轮询号池已创建'
+    }
+  })
+}
+
 function confirmDeleteChannel(channel) {
   showModal('delete-channel', '删除渠道', '确认删除', { channel }, true)
 }
@@ -944,10 +1039,21 @@ function confirmDeletePublicChannel(channel) {
   showModal('delete-public-channel', '删除公共渠道', '确认删除', { channel }, true)
 }
 
+function confirmDeletePollingPool(pool) {
+  showModal('delete-polling-pool', '删除轮询号池', '确认删除', { pool }, true)
+}
+
 async function deletePublicChannel() {
   await runAction(async () => {
     await api.delete(`/admin/public-channels/${modal.payload.channel.ID}`)
     notice.value = '公共渠道已删除'
+  })
+}
+
+async function deletePollingPool() {
+  await runAction(async () => {
+    await api.delete(`/admin/polling-pools/${modal.payload.pool.ID}`)
+    notice.value = '轮询号池已删除'
   })
 }
 
@@ -1452,13 +1558,15 @@ function closeModal() {
 
 function normalizePlan(plan) {
   const isPublic = plan.quota_period === 'public'
+  const usePool = isPublic && plan.delivery_source === 'pool'
   return {
     name: plan.name.trim(),
     code: plan.code.trim(),
     badge_text: plan.badge_text.trim(),
     plan_type: isPublic ? 'public' : 'subscription',
     quota_period: isPublic ? 'public' : plan.quota_period,
-    public_channel_id: isPublic ? Number(plan.public_channel_id || 0) : null,
+    public_channel_id: isPublic && !usePool ? Number(plan.public_channel_id || 0) : null,
+    polling_pool_id: usePool ? Number(plan.polling_pool_id || 0) : null,
     price_cents: plan.is_lottery || plan.is_free ? 0 : amountToCents(plan.price_rmb),
     settlement_usd_cents: amountToCents(plan.period_usd_quota),
     duration_days: isPublic ? 1 : Number(plan.duration_days || 1),
@@ -1503,13 +1611,14 @@ function scheduleFilterRefresh(key) {
 }
 
 function isServerPaginatedKey(key) {
-  return ['plans', 'orders', 'upstreamChannels', 'publicChannels', 'users', 'announcements', 'docs'].includes(key)
+  return ['plans', 'orders', 'upstreamChannels', 'publicChannels', 'pollingPools', 'users', 'announcements', 'docs'].includes(key)
 }
 
 function isListActive(key) {
   if (key === 'users') return active.value === 'users' && usersTab.value === 'users'
   if (key === 'upstreamChannels') return active.value === 'channels' && channelsTab.value === 'upstream'
   if (key === 'publicChannels') return active.value === 'channels' && channelsTab.value === 'public'
+  if (key === 'pollingPools') return active.value === 'channels' && channelsTab.value === 'pool'
   return active.value === key
 }
 
@@ -1523,6 +1632,8 @@ function normalizePublicChannel(channel) {
     name: channel.name.trim(),
     base_url: channel.base_url.trim(),
     api_key: channel.api_key.trim(),
+    supports_gpt: Boolean(channel.supports_gpt),
+    supports_claude: Boolean(channel.supports_claude),
     total_usd_cents: amountToCents(channel.total_usd_quota),
     remaining_usd_cents: amountToCents(channel.remaining_usd_quota),
     enabled: Boolean(channel.enabled)
@@ -1572,8 +1683,38 @@ function normalizeChannel(channel) {
   return {
     name: channel.name.trim(),
     base_url: channel.base_url.trim(),
+    supports_gpt: Boolean(channel.supports_gpt),
+    supports_claude: Boolean(channel.supports_claude),
     enabled: Boolean(channel.enabled)
   }
+}
+
+function normalizePollingPool(pool) {
+  return {
+    name: pool.name.trim(),
+    supports_gpt: Boolean(pool.supports_gpt),
+    supports_claude: Boolean(pool.supports_claude),
+    enabled: Boolean(pool.enabled),
+    accounts: (pool.accounts || []).map((account, index) => ({
+      id: Number(account.id || 0),
+      name: String(account.name || '').trim() || `账号${index + 1}`,
+      base_url: String(account.base_url || '').trim(),
+      api_key: String(account.api_key || '').trim(),
+      total_usd_cents: amountToCents(account.total_usd_quota),
+      remaining_usd_cents: amountToCents(account.remaining_usd_quota),
+      enabled: Boolean(account.enabled),
+      sort_order: Number(account.sort_order || index)
+    }))
+  }
+}
+
+function addPollingPoolAccount() {
+  pollingPoolForm.accounts.push({ ...emptyPollingPoolAccount(), sort_order: pollingPoolForm.accounts.length })
+}
+
+function removePollingPoolAccount(index) {
+  if (pollingPoolForm.accounts.length <= 1) return
+  pollingPoolForm.accounts.splice(index, 1)
 }
 
 function normalizeDoc(doc) {
@@ -1698,7 +1839,17 @@ function channelQuotaText(channel) {
 }
 
 function publicChannelName(plan) {
+  if (plan.PollingPoolID || plan.PollingPool) {
+    return plan.PollingPool?.Name || pollingPools.value.find((pool) => pool.ID === plan.PollingPoolID)?.Name || '未绑定轮询号池'
+  }
   return plan.PublicChannel?.Name || publicChannels.value.find((channel) => channel.ID === plan.PublicChannelID)?.Name || '未绑定公共渠道'
+}
+
+function protocolTags(item) {
+  const tags = []
+  if (item?.SupportsGPT !== false) tags.push('GPT')
+  if (item?.SupportsClaude) tags.push('Claude')
+  return tags.length ? tags : ['未启用']
 }
 
 function compactNumber(value) {
@@ -1772,6 +1923,9 @@ function submitModal() {
     'create-public-channel': submitPublicChannel,
     'edit-public-channel': submitPublicChannel,
     'delete-public-channel': deletePublicChannel,
+    'create-polling-pool': submitPollingPool,
+    'edit-polling-pool': submitPollingPool,
+    'delete-polling-pool': deletePollingPool,
     'create-doc': submitDoc,
     'edit-doc': submitDoc,
     'delete-doc': deleteDoc,
@@ -2169,12 +2323,13 @@ function submitModal() {
             <div>
               <p class="section-kicker">Channels</p>
               <h2>渠道管理</h2>
-              <span>普通渠道 {{ enabledChannels }}/{{ listTotals.upstreamChannels }}，公共渠道 {{ enabledPublicChannels }}/{{ listTotals.publicChannels }}</span>
+              <span>普通渠道 {{ enabledChannels }}/{{ listTotals.upstreamChannels }}，公共渠道 {{ enabledPublicChannels }}/{{ listTotals.publicChannels }}，轮询号池 {{ enabledPollingPools }}/{{ listTotals.pollingPools }}</span>
             </div>
             <div class="toolbar-actions">
               <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
               <el-button v-if="channelsTab === 'upstream'" type="primary" @click="openChannelModal()">新增渠道</el-button>
-              <el-button v-else type="primary" @click="openPublicChannelModal()">新增公共渠道</el-button>
+              <el-button v-else-if="channelsTab === 'public'" type="primary" @click="openPublicChannelModal()">新增公共渠道</el-button>
+              <el-button v-else type="primary" @click="openPollingPoolModal()">新增轮询号池</el-button>
             </div>
           </div>
 
@@ -2183,7 +2338,8 @@ function submitModal() {
             class="settings-tabs"
             :options="[
               { label: '上游渠道', value: 'upstream' },
-              { label: '公共渠道', value: 'public' }
+              { label: '公共渠道', value: 'public' },
+              { label: '轮询号池', value: 'pool' }
             ]"
           />
 
@@ -2206,6 +2362,7 @@ function submitModal() {
               <el-table :data="pagedUpstreamChannels" border>
                 <el-table-column label="渠道名称" min-width="160" prop="Name" />
                 <el-table-column label="API 地址" min-width="260" prop="BaseURL" />
+                <el-table-column label="支持协议" min-width="150"><template #default="{ row: channel }"><div class="table-actions"><el-tag v-for="tag in protocolTags(channel)" :key="tag" size="small">{{ tag }}</el-tag></div></template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled ? 'success' : 'info'">{{ channel.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="150"><template #default="{ row: channel }"><div class="table-actions"><el-button size="small" @click="openChannelModal(channel)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteChannel(channel)">删除</el-button></div></template></el-table-column>
               </el-table>
@@ -2224,7 +2381,7 @@ function submitModal() {
             </div>
           </section>
 
-          <section v-else class="panel-surface overflow-hidden">
+          <section v-else-if="channelsTab === 'public'" class="panel-surface overflow-hidden">
             <div class="p-4 border-b border-slate-100">
               <el-form class="form-grid user-filter-grid" label-position="top">
                 <el-form-item label="搜索">
@@ -2243,6 +2400,7 @@ function submitModal() {
               <el-table :data="pagedPublicChannels" border>
                 <el-table-column label="渠道名称" min-width="160" prop="Name" />
                 <el-table-column label="API 地址" min-width="260" prop="BaseURL" />
+                <el-table-column label="支持协议" min-width="150"><template #default="{ row: channel }"><div class="table-actions"><el-tag v-for="tag in protocolTags(channel)" :key="tag" size="small">{{ tag }}</el-tag></div></template></el-table-column>
                 <el-table-column label="剩余额度 / 总额度" min-width="160"><template #default="{ row: channel }">{{ channelQuotaText(channel) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled && channel.RemainingUSDCents > 0 ? 'success' : 'info'">{{ channel.RemainingUSDCents <= 0 ? '售罄' : (channel.Enabled ? '已启用' : '已停用') }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="150"><template #default="{ row: channel }"><div class="table-actions"><el-button size="small" @click="openPublicChannelModal(channel)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeletePublicChannel(channel)">删除</el-button></div></template></el-table-column>
@@ -2258,6 +2416,45 @@ function submitModal() {
                 layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange('publicChannels', $event)"
                 @size-change="handlePageSizeChange('publicChannels', $event)"
+              />
+            </div>
+          </section>
+
+          <section v-else class="panel-surface overflow-hidden">
+            <div class="p-4 border-b border-slate-100">
+              <el-form class="form-grid user-filter-grid" label-position="top">
+                <el-form-item label="搜索">
+                  <el-input v-model="pollingPoolSearch.keyword" clearable placeholder="名称 / ID" @input="resetPager('pollingPools')" />
+                </el-form-item>
+                <el-form-item label="状态">
+                  <el-select v-model="pollingPoolSearch.status" clearable placeholder="全部" @change="resetPager('pollingPools')">
+                    <el-option label="全部" value="" />
+                    <el-option label="已启用" value="enabled" />
+                    <el-option label="已停用" value="disabled" />
+                  </el-select>
+                </el-form-item>
+              </el-form>
+            </div>
+            <div class="table-wrap">
+              <el-table :data="pagedPollingPools" border>
+                <el-table-column label="号池名称" min-width="160" prop="Name" />
+                <el-table-column label="支持协议" min-width="150"><template #default="{ row: pool }"><div class="table-actions"><el-tag v-for="tag in protocolTags(pool)" :key="tag" size="small">{{ tag }}</el-tag></div></template></el-table-column>
+                <el-table-column label="账号数量" width="110"><template #default="{ row: pool }">{{ pool.Accounts?.length || 0 }}</template></el-table-column>
+                <el-table-column label="剩余额度 / 总额度" min-width="160"><template #default="{ row: pool }">{{ channelQuotaText(pool) }}</template></el-table-column>
+                <el-table-column label="状态" width="110"><template #default="{ row: pool }"><el-tag :type="pool.Enabled && pool.RemainingUSDCents > 0 ? 'success' : 'info'">{{ pool.RemainingUSDCents <= 0 ? '售罄' : (pool.Enabled ? '已启用' : '已停用') }}</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="150"><template #default="{ row: pool }"><div class="table-actions"><el-button size="small" @click="openPollingPoolModal(pool)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeletePollingPool(pool)">删除</el-button></div></template></el-table-column>
+              </el-table>
+            </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.pollingPools.page"
+                :page-size="pagination.pollingPools.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="listTotals.pollingPools"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('pollingPools', $event)"
+                @size-change="handlePageSizeChange('pollingPools', $event)"
               />
             </div>
           </section>
@@ -2783,10 +2980,22 @@ function submitModal() {
               <el-option label="公共渠道" value="public" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="planForm.quota_period === 'public'" label="绑定公共渠道" required>
+          <el-form-item v-if="planForm.quota_period === 'public'" label="供给来源" required>
+            <el-select v-model="planForm.delivery_source">
+              <el-option value="public" label="公共渠道" />
+              <el-option value="pool" label="轮询号池" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="planForm.quota_period === 'public' && planForm.delivery_source !== 'pool'" label="绑定公共渠道" required>
             <el-select v-model="planForm.public_channel_id" placeholder="请选择公共渠道">
               <el-option label="请选择公共渠道" value="" />
               <el-option v-for="channel in publicChannels.filter((item) => item.Enabled)" :key="channel.ID" :label="`${channel.Name}（剩余 ${usd(channel.RemainingUSDCents)}）`" :value="channel.ID" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="planForm.quota_period === 'public' && planForm.delivery_source === 'pool'" label="绑定轮询号池" required>
+            <el-select v-model="planForm.polling_pool_id" placeholder="请选择轮询号池">
+              <el-option label="请选择轮询号池" value="" />
+              <el-option v-for="pool in pollingPools.filter((item) => item.Enabled)" :key="pool.ID" :label="`${pool.Name}（剩余 ${usd(pool.RemainingUSDCents)}）`" :value="pool.ID" />
             </el-select>
           </el-form-item>
           <el-form-item v-if="planForm.is_lottery" class="md:col-span-2" label="参与抽奖按钮跳转地址" required><el-input v-model="planForm.lottery_url" placeholder="https://example.com/lottery" /></el-form-item>
@@ -2803,6 +3012,8 @@ function submitModal() {
         <div v-if="modal.type === 'create-channel' || modal.type === 'edit-channel'" class="modal-body form-grid">
           <el-form-item label="渠道名称" required><el-input v-model="channelForm.name" placeholder="OpenAI" /></el-form-item>
           <el-form-item class="md:col-span-2" label="API 地址" required><el-input v-model="channelForm.base_url" placeholder="https://api.openai.com" /></el-form-item>
+          <el-form-item label="GPT 协议"><el-switch v-model="channelForm.supports_gpt" active-text="支持" /></el-form-item>
+          <el-form-item label="Claude 协议"><el-switch v-model="channelForm.supports_claude" active-text="支持" /></el-form-item>
           <el-form-item class="md:col-span-2" label="启用渠道"><el-switch v-model="channelForm.enabled" /></el-form-item>
         </div>
 
@@ -2812,9 +3023,37 @@ function submitModal() {
           <el-form-item class="md:col-span-2" label="API Key" :required="!publicChannelForm.id">
             <el-input v-model="publicChannelForm.api_key" :placeholder="publicChannelForm.id ? '留空则不修改' : '请输入公共渠道 API Key'" />
           </el-form-item>
+          <el-form-item label="GPT 协议"><el-switch v-model="publicChannelForm.supports_gpt" active-text="支持" /></el-form-item>
+          <el-form-item label="Claude 协议"><el-switch v-model="publicChannelForm.supports_claude" active-text="支持" /></el-form-item>
           <el-form-item label="渠道总额度（美元）"><el-input v-model.number="publicChannelForm.total_usd_quota" type="number" min="0" step="0.01" required /></el-form-item>
           <el-form-item label="剩余美元额度"><el-input v-model.number="publicChannelForm.remaining_usd_quota" type="number" min="0" step="0.01" required /></el-form-item>
           <el-form-item class="md:col-span-2" label="启用公共渠道"><el-switch v-model="publicChannelForm.enabled" /></el-form-item>
+        </div>
+
+        <div v-if="modal.type === 'create-polling-pool' || modal.type === 'edit-polling-pool'" class="modal-body form-grid">
+          <el-form-item label="号池名称" required><el-input v-model="pollingPoolForm.name" placeholder="轮询号池 A" /></el-form-item>
+          <el-form-item label="GPT 协议"><el-switch v-model="pollingPoolForm.supports_gpt" active-text="支持" /></el-form-item>
+          <el-form-item label="Claude 协议"><el-switch v-model="pollingPoolForm.supports_claude" active-text="支持" /></el-form-item>
+          <el-form-item label="启用号池"><el-switch v-model="pollingPoolForm.enabled" /></el-form-item>
+          <div class="md:col-span-2 pool-account-editor">
+            <div class="section-head">
+              <div>
+                <h3>号池账号</h3>
+                <span>按排序从小到大扣减额度，第一个账号额度用完后自动使用下一个账号。</span>
+              </div>
+              <el-button size="small" type="primary" @click="addPollingPoolAccount">新增账号</el-button>
+            </div>
+            <div v-for="(account, index) in pollingPoolForm.accounts" :key="index" class="pool-account-row">
+              <el-input v-model="account.name" placeholder="账号名称" />
+              <el-input v-model="account.base_url" placeholder="API 地址" />
+              <el-input v-model="account.api_key" placeholder="API Key" />
+              <el-input v-model.number="account.total_usd_quota" type="number" min="0" step="0.01" placeholder="总额度" />
+              <el-input v-model.number="account.remaining_usd_quota" type="number" min="0" step="0.01" placeholder="剩余额度" />
+              <el-input v-model.number="account.sort_order" type="number" placeholder="排序" />
+              <el-switch v-model="account.enabled" />
+              <el-button size="small" type="danger" :disabled="pollingPoolForm.accounts.length <= 1" @click="removePollingPoolAccount(index)">删除</el-button>
+            </div>
+          </div>
         </div>
 
         <div v-if="modal.type === 'create-model' || modal.type === 'edit-model'" class="modal-body form-grid">
@@ -3044,6 +3283,11 @@ function submitModal() {
         <div v-if="modal.type === 'delete-public-channel'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.channel?.Name }}」吗？</strong>
           <p>删除后绑定到该公共渠道的套餐将无法继续售卖，请先确认没有启用中的公共套餐依赖它。</p>
+        </div>
+
+        <div v-if="modal.type === 'delete-polling-pool'" class="modal-body confirm-copy">
+          <strong>确定删除「{{ modal.payload?.pool?.Name }}」吗？</strong>
+          <p>删除后绑定到该轮询号池的套餐将无法继续售卖，请先确认没有启用中的套餐依赖它。</p>
         </div>
 
         <div v-if="modal.type === 'delete-model'" class="modal-body confirm-copy">

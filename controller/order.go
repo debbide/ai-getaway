@@ -74,7 +74,7 @@ func (o *OrderController) Create(c *gin.Context) {
 		return
 	}
 	var plan model.Plan
-	if err := o.db.Preload("PublicChannel").Where("id = ? AND enabled = ?", req.PlanID, true).First(&plan).Error; err != nil {
+	if err := o.db.Preload("PublicChannel").Preload("PollingPool.Accounts").Where("id = ? AND enabled = ?", req.PlanID, true).First(&plan).Error; err != nil {
 		response.Error(c, 404, "plan not found")
 		return
 	}
@@ -86,7 +86,7 @@ func (o *OrderController) Create(c *gin.Context) {
 		response.Error(c, 409, "active subscription in effect")
 		return
 	}
-	if plan.PlanType == model.PlanTypePublic && (plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents) {
+	if plan.PlanType == model.PlanTypePublic && !service.PlanChannelHasQuota(plan) {
 		response.Error(c, 409, "public plan sold out")
 		return
 	}
@@ -288,7 +288,7 @@ func completeFreePublicOrder(db *gorm.DB, order *model.Order) error {
 			return err
 		}
 		var plan model.Plan
-		if err := tx.Preload("PublicChannel").First(&plan, order.PlanID).Error; err != nil {
+		if err := tx.Preload("PublicChannel").Preload("PollingPool.Accounts").First(&plan, order.PlanID).Error; err != nil {
 			return err
 		}
 		orderUpdates := paymentOrderUpdates(model.OrderStatusApproved, nil, now)
@@ -303,17 +303,8 @@ func completeFreePublicOrder(db *gorm.DB, order *model.Order) error {
 		if result.RowsAffected == 0 {
 			return handlePaidOrderAlreadyProcessed(tx, order, nil)
 		}
-		if plan.PublicChannelID == nil || plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents {
-			return fmt.Errorf("public plan sold out")
-		}
-		result = tx.Model(&model.PublicChannel{}).
-			Where("id = ? AND remaining_usd_cents >= ?", *plan.PublicChannelID, plan.SettlementUSDCents).
-			Update("remaining_usd_cents", gorm.Expr("remaining_usd_cents - ?", plan.SettlementUSDCents))
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return fmt.Errorf("public plan sold out")
+		if err := service.DeductPlanChannelQuota(tx, plan); err != nil {
+			return err
 		}
 		return applyApprovedSubscription(tx, order, plan, now)
 	})
@@ -700,7 +691,7 @@ func completePaidOrder(db *gorm.DB, order *model.Order, payment *epayPaymentResu
 	now := time.Now()
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var plan model.Plan
-		if err := tx.Preload("PublicChannel").First(&plan, order.PlanID).Error; err != nil {
+		if err := tx.Preload("PublicChannel").Preload("PollingPool.Accounts").First(&plan, order.PlanID).Error; err != nil {
 			return err
 		}
 		orderUpdates := paymentOrderUpdates(model.OrderStatusApproved, payment, now)
@@ -716,17 +707,8 @@ func completePaidOrder(db *gorm.DB, order *model.Order, payment *epayPaymentResu
 		if result.RowsAffected == 0 {
 			return handlePaidOrderAlreadyProcessed(tx, order, payment)
 		}
-		if plan.PublicChannelID == nil || plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents {
-			return fmt.Errorf("public plan sold out")
-		}
-		result = tx.Model(&model.PublicChannel{}).
-			Where("id = ? AND remaining_usd_cents >= ?", *plan.PublicChannelID, plan.SettlementUSDCents).
-			Update("remaining_usd_cents", gorm.Expr("remaining_usd_cents - ?", plan.SettlementUSDCents))
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return fmt.Errorf("public plan sold out")
+		if err := service.DeductPlanChannelQuota(tx, plan); err != nil {
+			return err
 		}
 		return applyApprovedSubscription(tx, order, plan, now)
 	})

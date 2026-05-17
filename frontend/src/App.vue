@@ -516,7 +516,16 @@ function isFreePlan(plan) {
 }
 
 function publicQuotaInsufficient(plan) {
-  return isPublicPlan(plan) && Number(plan?.PublicChannel?.RemainingUSDCents || 0) < Number(plan?.SettlementUSDCents || 0)
+  return isPublicPlan(plan) && publicRemainingCents(plan) < Number(plan?.SettlementUSDCents || 0)
+}
+
+function publicRemainingCents(plan) {
+  if (plan?.PublicChannel) return Number(plan.PublicChannel.RemainingUSDCents || 0)
+  if (plan?.PollingPool) {
+    if (Number.isFinite(Number(plan.PollingPool.RemainingUSDCents))) return Number(plan.PollingPool.RemainingUSDCents || 0)
+    return (plan.PollingPool.Accounts || []).filter((account) => account.Enabled !== false).reduce((sum, account) => sum + Number(account.RemainingUSDCents || 0), 0)
+  }
+  return 0
 }
 
 function freeClaimSoldOut(plan) {
@@ -802,7 +811,15 @@ function accountPaymentNote() {
 }
 
 function publicRemainingUsd(plan) {
-  return ((plan.PublicChannel?.RemainingUSDCents || 0) / 100).toFixed(0)
+  return (publicRemainingCents(plan) / 100).toFixed(0)
+}
+
+function planProtocolTags(plan) {
+  const source = plan?.PollingPool || plan?.PublicChannel || plan
+  const tags = []
+  if (source?.SupportsGPT !== false) tags.push('GPT')
+  if (source?.SupportsClaude) tags.push('Claude')
+  return tags
 }
 
 function planBadge(index) {
@@ -980,6 +997,9 @@ function planSubtitle(index) {
               <div v-if="plan.QuotaPeriod === 'public' && !isLotteryPlan(plan)"><span class="fact-icon">□</span><span>公共渠道剩余：${{ publicRemainingUsd(plan) }}</span></div>
               <div v-else><span class="fact-icon">□</span><span>套餐时长：{{ plan.DurationDays }} 天</span></div>
               <div><span class="fact-icon">↗</span><span>总额度：约${{ totalUsd(plan) }}</span></div>
+            </div>
+            <div class="plan-protocol-tags">
+              <span v-for="tag in planProtocolTags(plan)" :key="tag">{{ tag }}</span>
             </div>
             <div v-if="isFreePlan(plan)" class="free-claim-meter">
               <div>

@@ -73,18 +73,14 @@ func (a *APIKeyController) loadUpstream(userID uint) (*model.UpstreamAccount, er
 
 func (a *APIKeyController) ensureCallablePlan(user model.User) error {
 	var fresh model.User
-	if err := a.db.Preload("Plan").First(&fresh, user.ID).Error; err != nil {
+	if err := a.db.Preload("Plan.PublicChannel").Preload("Plan.PollingPool.Accounts").First(&fresh, user.ID).Error; err != nil {
 		return err
 	}
 	if !service.HasActiveSubscription(fresh, time.Now()) || fresh.Plan == nil {
 		return errors.New("subscription expired")
 	}
 	if fresh.Plan.PlanType == model.PlanTypePublic {
-		if fresh.Plan.PublicChannelID == nil {
-			return errors.New("public channel sold out")
-		}
-		var publicChannel model.PublicChannel
-		if err := a.db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *fresh.Plan.PublicChannelID, true).First(&publicChannel).Error; err != nil {
+		if !service.PlanChannelHasQuota(*fresh.Plan) {
 			return errors.New("public channel sold out")
 		}
 		return nil

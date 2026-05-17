@@ -116,6 +116,10 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			admin.POST("/public-channels", adminController.CreatePublicChannel)
 			admin.PUT("/public-channels/:id", adminController.UpdatePublicChannel)
 			admin.DELETE("/public-channels/:id", adminController.DeletePublicChannel)
+			admin.GET("/polling-pools", adminController.PollingPools)
+			admin.POST("/polling-pools", adminController.CreatePollingPool)
+			admin.PUT("/polling-pools/:id", adminController.UpdatePollingPool)
+			admin.DELETE("/polling-pools/:id", adminController.DeletePollingPool)
 			admin.GET("/keys", adminController.APIKeys)
 			admin.PATCH("/keys/:id", apiKeyController.AdminUpdate)
 			admin.DELETE("/keys/:id", apiKeyController.AdminDelete)
@@ -125,6 +129,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 	}
 
 	r.Any("/v1/*path", middleware.APIKeyAuth(db, redisClient), upstream.ProxyHandler(db, logHub))
+	r.Any("/messages", middleware.APIKeyAuth(db, redisClient), upstream.ProxyHandler(db, logHub))
 	return r
 }
 
@@ -148,7 +153,7 @@ func cors(cfg config.Config) gin.HandlerFunc {
 			c.Header("Vary", "Origin")
 		}
 		c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Authorization,Content-Type,X-API-Key")
+		c.Header("Access-Control-Allow-Headers", "Authorization,Content-Type,X-API-Key,Anthropic-Version,Anthropic-Beta")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
