@@ -1883,6 +1883,54 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb {
   overflow-x: auto;
 }
 
+.plans-table .el-table__cell {
+  vertical-align: top;
+}
+
+.plans-table .table-actions {
+  flex-wrap: nowrap;
+}
+
+.plan-main-cell,
+.plan-price-cell,
+.plan-quota-cell,
+.plan-delivery-cell {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.plan-main-cell strong,
+.plan-price-cell strong,
+.plan-quota-cell strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.plan-main-cell small,
+.plan-main-cell span,
+.plan-quota-cell small,
+.plan-delivery-cell span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-main-cell span {
+  max-width: 100%;
+}
+
+.plan-price-cell .el-tag,
+.plan-delivery-cell .el-tag {
+  width: fit-content;
+}
+
 .data-table {
   width: 100%;
   min-width: 760px;

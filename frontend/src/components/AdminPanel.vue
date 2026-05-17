@@ -72,7 +72,7 @@ const navDraft = ref([])
 const apiEndpointDraft = ref([])
 const loading = ref(false)
 const smtpTesting = ref(false)
-let userSearchTimer = null
+const filterTimers = {}
 let overviewMetricsTimer = null
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null })
 const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountRmb: 0, status: '', planType: '', quotaPeriod: '' })
@@ -87,7 +87,7 @@ const docForm = reactive(emptyDoc())
 const announcementForm = reactive(emptyAnnouncement())
 const emailTemplateForm = reactive(emptyEmailTemplate())
 const userSearch = reactive({ keyword: '', role: '', status: '', plan: '' })
-const planSearch = reactive({ keyword: '', status: '', planType: '' })
+const planSearch = reactive({ keyword: '', status: '', category: 'daily' })
 const orderSearch = reactive({ keyword: '', status: '', planId: '', paymentMethod: '' })
 const channelSearch = reactive({ keyword: '', status: '' })
 const publicChannelSearch = reactive({ keyword: '', status: '' })
@@ -104,6 +104,15 @@ const pagination = reactive({
   apiKeys: { page: 1, pageSize: 10 },
   announcements: { page: 1, pageSize: 10 },
   docs: { page: 1, pageSize: 10 }
+})
+const listTotals = reactive({
+  plans: 0,
+  orders: 0,
+  upstreamChannels: 0,
+  publicChannels: 0,
+  users: 0,
+  announcements: 0,
+  docs: 0
 })
 const settings = reactive({
   site_title: '',
@@ -140,10 +149,10 @@ const settings = reactive({
   smtp_test_email: ''
 })
 
-const pendingOrders = computed(() => orders.value.filter((order) => reviewableOrderStatuses.includes(order.Status)).length)
-const enabledPlans = computed(() => plans.value.filter((plan) => plan.Enabled).length)
+const pendingOrders = computed(() => stats.value.pending_orders ?? orders.value.filter((order) => reviewableOrderStatuses.includes(order.Status)).length)
+const enabledPlans = computed(() => stats.value.enabled_plans ?? plans.value.filter((plan) => plan.Enabled).length)
 const enabledModels = computed(() => models.value.filter((item) => item.Status === 'active').length)
-const approvedUsers = computed(() => users.value.filter((user) => user.Status === 'approved').length)
+const approvedUsers = computed(() => stats.value.approved_users ?? users.value.filter((user) => user.Status === 'approved').length)
 const enabledChannels = computed(() => channels.value.filter((channel) => channel.Enabled).length)
 const enabledPublicChannels = computed(() => publicChannels.value.filter((channel) => channel.Enabled).length)
 const enabledDocs = computed(() => docs.value.filter((doc) => doc.Enabled).length)
@@ -152,62 +161,6 @@ const enabledEmailTemplates = computed(() => emailTemplates.value.filter((item) 
 const pendingReviewOrders = computed(() => orders.value.filter((order) => reviewableOrderStatuses.includes(order.Status)))
 const overviewPlans = computed(() => plans.value.slice(0, 4))
 const hasMorePlans = computed(() => plans.value.length > 4)
-const filteredUsers = computed(() => {
-  const keyword = String(userSearch.keyword || '').trim().toLowerCase()
-  const role = String(userSearch.role || '')
-  const status = String(userSearch.status || '')
-  const plan = String(userSearch.plan || '')
-  return users.value.filter((user) => {
-    const matchesKeyword = !keyword || [user.Username, user.Email, user.ID].some((value) => String(value || '').toLowerCase().includes(keyword))
-    const matchesRole = !role || user.Role === role
-    const matchesStatus = !status || user.Status === status
-    const matchesPlan = !plan || String(user.PlanID || '') === plan || String(user.Plan?.ID || '') === plan || String(user.Plan?.Name || '').toLowerCase().includes(plan.toLowerCase())
-    return matchesKeyword && matchesRole && matchesStatus && matchesPlan
-  })
-})
-const filteredPlans = computed(() => {
-  const keyword = String(planSearch.keyword || '').trim().toLowerCase()
-  const status = String(planSearch.status || '')
-  const planType = String(planSearch.planType || '')
-  return plans.value.filter((plan) => {
-    const matchesKeyword = !keyword || [plan.Name, plan.Code, plan.Description, plan.ID].some((value) => String(value || '').toLowerCase().includes(keyword))
-    const matchesStatus = !status || (status === 'enabled' ? Boolean(plan.Enabled) : !plan.Enabled)
-    const currentType = isPublicPlan(plan) ? 'public' : 'subscription'
-    const matchesType = !planType || currentType === planType
-    return matchesKeyword && matchesStatus && matchesType
-  })
-})
-const filteredOrders = computed(() => {
-  const keyword = String(orderSearch.keyword || '').trim().toLowerCase()
-  const status = String(orderSearch.status || '')
-  const planId = String(orderSearch.planId || '')
-  const paymentMethod = String(orderSearch.paymentMethod || '')
-  return orders.value.filter((order) => {
-    const matchesKeyword = !keyword || [order.ID, order.UserID, order.PaymentRef, order.User?.Username, order.User?.Email, order.Plan?.Name].some((value) => String(value || '').toLowerCase().includes(keyword))
-    const matchesStatus = !status || order.Status === status
-    const matchesPlan = !planId || String(order.PlanID || order.Plan?.ID || '') === planId
-    const matchesPaymentMethod = !paymentMethod || order.PaymentMethod === paymentMethod
-    return matchesKeyword && matchesStatus && matchesPlan && matchesPaymentMethod
-  })
-})
-const filteredUpstreamChannels = computed(() => {
-  const keyword = String(channelSearch.keyword || '').trim().toLowerCase()
-  const status = String(channelSearch.status || '')
-  return channels.value.filter((channel) => {
-    const matchesKeyword = !keyword || [channel.ID, channel.Name, channel.BaseURL].some((value) => String(value || '').toLowerCase().includes(keyword))
-    const matchesStatus = !status || (status === 'enabled' ? Boolean(channel.Enabled) : !channel.Enabled)
-    return matchesKeyword && matchesStatus
-  })
-})
-const filteredPublicChannels = computed(() => {
-  const keyword = String(publicChannelSearch.keyword || '').trim().toLowerCase()
-  const status = String(publicChannelSearch.status || '')
-  return publicChannels.value.filter((channel) => {
-    const matchesKeyword = !keyword || [channel.ID, channel.Name, channel.BaseURL].some((value) => String(value || '').toLowerCase().includes(keyword))
-    const matchesStatus = !status || (status === 'enabled' ? Boolean(channel.Enabled) : !channel.Enabled)
-    return matchesKeyword && matchesStatus
-  })
-})
 const filteredApiKeys = computed(() => {
   const keyword = String(apiKeySearch.keyword || '').trim().toLowerCase()
   const status = String(apiKeySearch.status || '')
@@ -217,35 +170,15 @@ const filteredApiKeys = computed(() => {
     return matchesKeyword && matchesStatus
   })
 })
-const filteredAnnouncements = computed(() => {
-  const keyword = String(announcementSearch.keyword || '').trim().toLowerCase()
-  const status = String(announcementSearch.status || '')
-  return announcements.value.filter((item) => {
-    const matchesKeyword = !keyword || [item.ID, item.Title, item.Summary, item.Content].some((value) => String(value || '').toLowerCase().includes(keyword))
-    const matchesStatus = !status || (status === 'enabled' ? Boolean(item.Enabled) : !item.Enabled)
-    return matchesKeyword && matchesStatus
-  })
-})
-const filteredDocs = computed(() => {
-  const keyword = String(docSearch.keyword || '').trim().toLowerCase()
-  const status = String(docSearch.status || '')
-  const groupName = String(docSearch.groupName || '').trim().toLowerCase()
-  return docs.value.filter((doc) => {
-    const matchesKeyword = !keyword || [doc.ID, doc.Title, doc.Slug, doc.Description].some((value) => String(value || '').toLowerCase().includes(keyword))
-    const matchesStatus = !status || (status === 'enabled' ? Boolean(doc.Enabled) : !doc.Enabled)
-    const matchesGroup = !groupName || String(doc.GroupName || '').toLowerCase().includes(groupName)
-    return matchesKeyword && matchesStatus && matchesGroup
-  })
-})
-const pagedPlans = computed(() => paginateItems(filteredPlans.value, pagination.plans))
-const pagedOrders = computed(() => paginateItems(filteredOrders.value, pagination.orders))
+const pagedPlans = computed(() => plans.value)
+const pagedOrders = computed(() => orders.value)
 const pagedModels = computed(() => paginateItems(models.value, pagination.models))
-const pagedUsers = computed(() => paginateItems(filteredUsers.value, pagination.users))
+const pagedUsers = computed(() => users.value)
 const pagedApiKeys = computed(() => paginateItems(filteredApiKeys.value, pagination.apiKeys))
-const pagedAnnouncements = computed(() => paginateItems(filteredAnnouncements.value, pagination.announcements))
-const pagedDocs = computed(() => paginateItems(filteredDocs.value, pagination.docs))
-const pagedUpstreamChannels = computed(() => paginateItems(filteredUpstreamChannels.value, pagination.upstreamChannels))
-const pagedPublicChannels = computed(() => paginateItems(filteredPublicChannels.value, pagination.publicChannels))
+const pagedAnnouncements = computed(() => announcements.value)
+const pagedDocs = computed(() => docs.value)
+const pagedUpstreamChannels = computed(() => channels.value)
+const pagedPublicChannels = computed(() => publicChannels.value)
 
 function responseData(result, fallback) {
   return result.status === 'fulfilled' ? result.value.data : fallback
@@ -257,6 +190,18 @@ function unwrapListData(payload, fallback = []) {
   return fallback
 }
 
+function applyListData(key, target, payload, fallback = []) {
+  const items = unwrapListData(payload, fallback)
+  target.value = items
+  if (payload && !Array.isArray(payload)) {
+    listTotals[key] = Number(payload.total ?? items.length)
+    pagination[key].page = Number(payload.page || pagination[key].page)
+    pagination[key].pageSize = Number(payload.page_size || pagination[key].pageSize)
+  } else {
+    listTotals[key] = items.length
+  }
+}
+
 function collectLoadErrors(results) {
   return results.filter((item) => item.status === 'rejected').map((item) => item.reason?.message).filter(Boolean)
 }
@@ -266,20 +211,22 @@ onMounted(async () => {
   startOverviewMetricsPolling()
 })
 
-watch(
-  () => [userSearch.keyword, userSearch.role, userSearch.status, userSearch.plan],
-  () => {
-    resetPager('users')
-    if (active.value !== 'users') return
-    if (userSearchTimer) clearTimeout(userSearchTimer)
-    userSearchTimer = setTimeout(() => {
-      refreshActiveData()
-    }, 250)
-  }
-)
+watch(() => [userSearch.keyword, userSearch.role, userSearch.status, userSearch.plan], () => scheduleFilterRefresh('users'))
+watch(() => [planSearch.keyword, planSearch.status, planSearch.category], () => scheduleFilterRefresh('plans'))
+watch(() => [orderSearch.keyword, orderSearch.status, orderSearch.planId, orderSearch.paymentMethod], () => scheduleFilterRefresh('orders'))
+watch(() => [channelSearch.keyword, channelSearch.status], () => scheduleFilterRefresh('upstreamChannels'))
+watch(() => [publicChannelSearch.keyword, publicChannelSearch.status], () => scheduleFilterRefresh('publicChannels'))
+watch(() => [announcementSearch.keyword, announcementSearch.status], () => scheduleFilterRefresh('announcements'))
+watch(() => [docSearch.keyword, docSearch.groupName, docSearch.status], () => scheduleFilterRefresh('docs'))
+watch(usersTab, () => {
+  if (active.value === 'users') refreshActiveData()
+})
+watch(channelsTab, () => {
+  if (active.value === 'channels') refreshActiveData()
+})
 
 onBeforeUnmount(() => {
-  if (userSearchTimer) clearTimeout(userSearchTimer)
+  Object.values(filterTimers).forEach((timer) => clearTimeout(timer))
   stopOverviewMetricsPolling()
 })
 
@@ -428,25 +375,17 @@ async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const userParams = {
-      params: {
-        q: userSearch.keyword || undefined,
-        role: userSearch.role || undefined,
-        status: userSearch.status || undefined,
-        plan: userSearch.plan || undefined
-      }
-    }
     const results = await Promise.allSettled([
       api.get('/admin/stats'),
-      api.get('/admin/orders'),
-      api.get('/admin/users', userParams),
-      api.get('/admin/plans'),
+      api.get('/admin/orders', orderFilterParams()),
+      api.get('/admin/users', userFilterParams()),
+      api.get('/admin/plans', planFilterParams()),
       api.get('/admin/models'),
-      api.get('/admin/upstream-channels'),
-      api.get('/admin/public-channels'),
+      api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
+      api.get('/admin/public-channels', publicChannelFilterParams()),
       api.get('/admin/keys'),
-      api.get('/admin/docs'),
-      api.get('/admin/announcements'),
+      api.get('/admin/docs', docFilterParams()),
+      api.get('/admin/announcements', announcementFilterParams()),
       api.get('/admin/email-templates'),
       api.get('/admin/settings')
     ])
@@ -454,16 +393,16 @@ async function loadAll() {
     const modelData = responseData(modelsRes, { items: [], official_source: '' })
     const templateData = responseData(emailTemplatesRes, { items: [], variables: [] })
     stats.value = responseData(statsRes, {})
-    orders.value = unwrapListData(responseData(ordersRes, []))
-    users.value = unwrapListData(responseData(usersRes, []))
-    plans.value = unwrapListData(responseData(plansRes, []))
+    applyListData('orders', orders, responseData(ordersRes, { items: [] }))
+    applyListData('users', users, responseData(usersRes, { items: [] }))
+    applyListData('plans', plans, responseData(plansRes, { items: [] }))
     models.value = modelData?.items || []
     modelSource.value = modelData?.official_source || ''
-    channels.value = unwrapListData(responseData(channelsRes, []))
-    publicChannels.value = unwrapListData(responseData(publicChannelsRes, []))
+    applyListData('upstreamChannels', channels, responseData(channelsRes, { items: [] }))
+    applyListData('publicChannels', publicChannels, responseData(publicChannelsRes, { items: [] }))
     apiKeys.value = unwrapListData(responseData(keysRes, []))
-    docs.value = unwrapListData(responseData(docsRes, []))
-    announcements.value = unwrapListData(responseData(announcementsRes, []))
+    applyListData('docs', docs, responseData(docsRes, { items: [] }))
+    applyListData('announcements', announcements, responseData(announcementsRes, { items: [] }))
     emailTemplates.value = templateData?.items || []
     emailTemplateVariables.value = templateData?.variables || []
     Object.assign(settings, responseData(settingsRes, {}), { smtp_password: '', epay_key: '' })
@@ -544,34 +483,34 @@ async function loadAdminSection(section) {
 async function loadOverviewData() {
   const [statsRes, ordersRes, usersRes, plansRes] = await Promise.all([
     api.get('/admin/stats'),
-    api.get('/admin/orders'),
+    api.get('/admin/orders', orderFilterParams()),
     api.get('/admin/users', userFilterParams()),
-    api.get('/admin/plans')
+    api.get('/admin/plans', planFilterParams())
   ])
   stats.value = statsRes.data || {}
-  orders.value = unwrapListData(ordersRes.data || [])
-  users.value = unwrapListData(usersRes.data || [])
-  plans.value = unwrapListData(plansRes.data || [])
+  applyListData('orders', orders, ordersRes.data || { items: [] })
+  applyListData('users', users, usersRes.data || { items: [] })
+  applyListData('plans', plans, plansRes.data || { items: [] })
 }
 
 async function loadPlansData() {
   const [plansRes, publicChannelsRes] = await Promise.all([
-    api.get('/admin/plans'),
-    api.get('/admin/public-channels')
+    api.get('/admin/plans', planFilterParams()),
+    api.get('/admin/public-channels', publicChannelFilterParams())
   ])
-  plans.value = unwrapListData(plansRes.data || [])
-  publicChannels.value = unwrapListData(publicChannelsRes.data || [])
+  applyListData('plans', plans, plansRes.data || { items: [] })
+  applyListData('publicChannels', publicChannels, publicChannelsRes.data || { items: [] })
 }
 
 async function loadOrdersData() {
   const [ordersRes, plansRes, channelsRes] = await Promise.all([
-    api.get('/admin/orders'),
-    api.get('/admin/plans'),
-    api.get('/admin/upstream-channels')
+    api.get('/admin/orders', orderFilterParams()),
+    api.get('/admin/plans', planFilterParams()),
+    api.get('/admin/upstream-channels', upstreamChannelFilterParams())
   ])
-  orders.value = unwrapListData(ordersRes.data || [])
-  plans.value = unwrapListData(plansRes.data || [])
-  channels.value = unwrapListData(channelsRes.data || [])
+  applyListData('orders', orders, ordersRes.data || { items: [] })
+  applyListData('plans', plans, plansRes.data || { items: [] })
+  applyListData('upstreamChannels', channels, channelsRes.data || { items: [] })
 }
 
 async function loadModelsData() {
@@ -582,34 +521,34 @@ async function loadModelsData() {
 
 async function loadChannelsData() {
   const [channelsRes, publicChannelsRes] = await Promise.all([
-    api.get('/admin/upstream-channels'),
-    api.get('/admin/public-channels')
+    api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
+    api.get('/admin/public-channels', publicChannelFilterParams())
   ])
-  channels.value = unwrapListData(channelsRes.data || [])
-  publicChannels.value = unwrapListData(publicChannelsRes.data || [])
+  applyListData('upstreamChannels', channels, channelsRes.data || { items: [] })
+  applyListData('publicChannels', publicChannels, publicChannelsRes.data || { items: [] })
 }
 
 async function loadUsersData() {
   const [usersRes, plansRes, channelsRes, keysRes] = await Promise.all([
     api.get('/admin/users', userFilterParams()),
-    api.get('/admin/plans'),
-    api.get('/admin/upstream-channels'),
+    api.get('/admin/plans', planFilterParams()),
+    api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
     api.get('/admin/keys')
   ])
-  users.value = unwrapListData(usersRes.data || [])
-  plans.value = unwrapListData(plansRes.data || [])
-  channels.value = unwrapListData(channelsRes.data || [])
+  applyListData('users', users, usersRes.data || { items: [] })
+  applyListData('plans', plans, plansRes.data || { items: [] })
+  applyListData('upstreamChannels', channels, channelsRes.data || { items: [] })
   apiKeys.value = unwrapListData(keysRes.data || [])
 }
 
 async function loadAnnouncementsData() {
-  const res = await api.get('/admin/announcements')
-  announcements.value = unwrapListData(res.data || [])
+  const res = await api.get('/admin/announcements', announcementFilterParams())
+  applyListData('announcements', announcements, res.data || { items: [] })
 }
 
 async function loadDocsData() {
-  const res = await api.get('/admin/docs')
-  docs.value = unwrapListData(res.data || [])
+  const res = await api.get('/admin/docs', docFilterParams())
+  applyListData('docs', docs, res.data || { items: [] })
 }
 
 async function loadEmailTemplatesData() {
@@ -626,14 +565,72 @@ async function loadSettingsData() {
 }
 
 function userFilterParams() {
+  return listRequestParams('users', {
+    q: userSearch.keyword,
+    role: userSearch.role,
+    status: userSearch.status,
+    plan: userSearch.plan
+  })
+}
+
+function planFilterParams() {
+  return listRequestParams('plans', {
+    q: planSearch.keyword,
+    status: planSearch.status,
+    category: planSearch.category
+  })
+}
+
+function orderFilterParams() {
+  return listRequestParams('orders', {
+    q: orderSearch.keyword,
+    status: orderSearch.status,
+    plan_id: orderSearch.planId,
+    payment_method: orderSearch.paymentMethod
+  })
+}
+
+function upstreamChannelFilterParams() {
+  return listRequestParams('upstreamChannels', {
+    q: channelSearch.keyword,
+    status: channelSearch.status
+  })
+}
+
+function publicChannelFilterParams() {
+  return listRequestParams('publicChannels', {
+    q: publicChannelSearch.keyword,
+    status: publicChannelSearch.status
+  })
+}
+
+function announcementFilterParams() {
+  return listRequestParams('announcements', {
+    q: announcementSearch.keyword,
+    status: announcementSearch.status
+  })
+}
+
+function docFilterParams() {
+  return listRequestParams('docs', {
+    q: docSearch.keyword,
+    status: docSearch.status,
+    group_name: docSearch.groupName
+  })
+}
+
+function listRequestParams(key, filters = {}) {
   return {
-    params: {
-      q: userSearch.keyword || undefined,
-      role: userSearch.role || undefined,
-      status: userSearch.status || undefined,
-      plan: userSearch.plan || undefined
-    }
+    params: cleanParams({
+      ...filters,
+      page: pagination[key].page,
+      page_size: pagination[key].pageSize
+    })
   }
+}
+
+function cleanParams(params) {
+  return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== '' && value !== null && value !== undefined))
 }
 
 async function refreshOverviewMetrics() {
@@ -969,6 +966,11 @@ function openUserModal(user = null) {
 }
 
 async function submitUser() {
+  const validationMessage = validateUserForm(userForm)
+  if (validationMessage) {
+    error.value = validationMessage
+    return
+  }
   if (requiresUserUpstreamRebind(userForm) && (!Number(userForm.channel_id) || !String(userForm.upstream_username || '').trim() || !String(userForm.upstream_password || '').trim() || !String(userForm.api_key || '').trim())) {
     error.value = '修改用户套餐后，必须重新绑定上游渠道并填写上游账号、上游密码和 API Key'
     return
@@ -1466,15 +1468,42 @@ function paginateItems(items, pager) {
 
 function handlePageChange(key, page) {
   pagination[key].page = page
+  if (isServerPaginatedKey(key)) refreshPaginatedList(key)
 }
 
 function handlePageSizeChange(key, pageSize) {
   pagination[key].pageSize = pageSize
   pagination[key].page = 1
+  if (isServerPaginatedKey(key)) refreshPaginatedList(key)
 }
 
 function resetPager(key) {
   pagination[key].page = 1
+}
+
+function scheduleFilterRefresh(key) {
+  resetPager(key)
+  if (!isListActive(key)) return
+  if (filterTimers[key]) clearTimeout(filterTimers[key])
+  filterTimers[key] = setTimeout(() => {
+    refreshPaginatedList(key)
+  }, 250)
+}
+
+function isServerPaginatedKey(key) {
+  return ['plans', 'orders', 'upstreamChannels', 'publicChannels', 'users', 'announcements', 'docs'].includes(key)
+}
+
+function isListActive(key) {
+  if (key === 'users') return active.value === 'users' && usersTab.value === 'users'
+  if (key === 'upstreamChannels') return active.value === 'channels' && channelsTab.value === 'upstream'
+  if (key === 'publicChannels') return active.value === 'channels' && channelsTab.value === 'public'
+  return active.value === key
+}
+
+async function refreshPaginatedList(key) {
+  if (!isListActive(key)) return
+  await refreshActiveData()
 }
 
 function normalizePublicChannel(channel) {
@@ -1588,6 +1617,17 @@ function normalizeUser(user) {
   return payload
 }
 
+function validateUserForm(user) {
+  const username = String(user.username || '').trim()
+  const email = String(user.email || '').trim()
+  const password = String(user.password || '')
+  if (username.length < 2 || username.length > 64) return '用户名长度需为 2-64 位'
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return '请填写正确的邮箱地址'
+  if (!user.id && password.length < 8) return '登录密码至少需要 8 位'
+  if (user.id && password && password.length < 8) return '新密码至少需要 8 位，留空则不修改'
+  return ''
+}
+
 function requiresUserUpstreamRebind(user) {
   return user.id && String(user.plan_id || '') !== String(user.original_plan_id || '') && String(user.plan_id || '') !== ''
 }
@@ -1692,10 +1732,6 @@ function roleLabel(value) {
 
 function planLabel(user) {
   return user.Plan?.Name || '未分配'
-}
-
-function planSearchValue(plan) {
-  return String(plan || '').toLowerCase()
 }
 
 function apiKeyStatusLabel(value) {
@@ -1872,7 +1908,7 @@ function submitModal() {
             <div>
               <p class="section-kicker">Pricing</p>
               <h2>套餐管理</h2>
-              <span>{{ enabledPlans }} 个启用套餐，{{ filteredPlans.length }} 个筛选结果</span>
+              <span>{{ enabledPlans }} 个启用套餐，{{ listTotals.plans }} 个筛选结果</span>
             </div>
             <div class="toolbar-actions">
               <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
@@ -1881,6 +1917,16 @@ function submitModal() {
           </div>
 
           <section class="panel-surface p-4">
+            <el-segmented
+              v-model="planSearch.category"
+              class="settings-tabs mb-4"
+              :options="[
+                { label: '日套餐', value: 'daily' },
+                { label: '周套餐', value: 'weekly' },
+                { label: '活动套餐', value: 'public' },
+                { label: '抽奖套餐', value: 'lottery' }
+              ]"
+            />
             <el-form class="form-grid user-filter-grid" label-position="top">
               <el-form-item label="搜索">
                 <el-input v-model="planSearch.keyword" clearable placeholder="套餐名 / 编码 / 描述 / ID" @input="resetPager('plans')" />
@@ -1892,60 +1938,49 @@ function submitModal() {
                   <el-option label="已停用" value="disabled" />
                 </el-select>
               </el-form-item>
-              <el-form-item label="类型">
-                <el-select v-model="planSearch.planType" clearable placeholder="全部" @change="resetPager('plans')">
-                  <el-option label="全部" value="" />
-                  <el-option label="订阅套餐" value="subscription" />
-                  <el-option label="公共套餐" value="public" />
-                </el-select>
-              </el-form-item>
             </el-form>
           </section>
 
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
-              <el-table :data="pagedPlans" border>
-                <el-table-column label="套餐" min-width="240">
+              <el-table :data="pagedPlans" class="plans-table" border>
+                <el-table-column label="套餐" min-width="260">
                   <template #default="{ row: plan }">
-                    <div class="model-cell">
+                    <div class="plan-main-cell">
                       <strong>{{ plan.Name }}</strong>
                       <small>{{ plan.Code || '未设置编码' }}</small>
+                      <span>{{ plan.Description || '暂无说明' }}</span>
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="说明" min-width="220">
-                  <template #default="{ row: plan }">{{ plan.Description || '暂无说明' }}</template>
-                </el-table-column>
-                <el-table-column label="售价" width="120">
-                  <template #default="{ row: plan }">{{ plan.IsLottery ? '抽奖' : rmb(plan.PriceCents) }}</template>
-                </el-table-column>
-                <el-table-column label="类型" width="110">
+                <el-table-column label="价格" width="150">
                   <template #default="{ row: plan }">
-                    <el-tag :type="plan.IsLottery ? 'warning' : 'info'">{{ plan.IsLottery ? '抽奖套餐' : '购买套餐' }}</el-tag>
+                    <div class="plan-price-cell">
+                      <strong>{{ plan.IsLottery ? '抽奖' : rmb(plan.PriceCents) }}</strong>
+                      <el-tag :type="plan.IsLottery ? 'warning' : 'info'">{{ plan.IsLottery ? '抽奖套餐' : '购买套餐' }}</el-tag>
+                    </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="额度周期" min-width="150">
-                  <template #default="{ row: plan }">{{ quotaPeriodLabel(plan.QuotaPeriod) }}美元额度</template>
-                </el-table-column>
-                <el-table-column label="周期额度" width="130">
-                  <template #default="{ row: plan }">{{ usd(plan.SettlementUSDCents) }}</template>
-                </el-table-column>
-                <el-table-column label="预计总额度" width="130">
-                  <template #default="{ row: plan }">{{ totalUsd(plan) }}</template>
-                </el-table-column>
-                <el-table-column label="渠道 / 订阅" min-width="160">
+                <el-table-column label="额度" min-width="210">
                   <template #default="{ row: plan }">
-                    <span v-if="plan.IsLottery">{{ plan.LotteryURL || '未设置跳转地址' }}</span>
-                    <span v-else-if="plan.QuotaPeriod === 'public'">{{ publicChannelName(plan) }}</span>
-                    <span v-else>{{ plan.DurationDays }} 天</span>
+                    <div class="plan-quota-cell">
+                      <span>{{ quotaPeriodLabel(plan.QuotaPeriod) }}美元额度</span>
+                      <strong>{{ usd(plan.SettlementUSDCents) }}</strong>
+                      <small>预计总额 {{ totalUsd(plan) }}</small>
+                    </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="状态" width="110">
+                <el-table-column label="交付" min-width="180">
                   <template #default="{ row: plan }">
-                    <el-tag :type="plan.Enabled ? 'success' : 'info'">{{ plan.Enabled ? '已启用' : '已停用' }}</el-tag>
+                    <div class="plan-delivery-cell">
+                      <span v-if="plan.IsLottery">{{ plan.LotteryURL || '未设置跳转地址' }}</span>
+                      <span v-else-if="plan.QuotaPeriod === 'public'">{{ publicChannelName(plan) }}</span>
+                      <span v-else>{{ plan.DurationDays }} 天</span>
+                      <el-tag :type="plan.Enabled ? 'success' : 'info'">{{ plan.Enabled ? '已启用' : '已停用' }}</el-tag>
+                    </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="操作" width="150">
+                <el-table-column label="操作" width="150" fixed="right">
                   <template #default="{ row: plan }">
                     <div class="table-actions">
                       <el-button size="small" @click="openPlanModal(plan)">编辑</el-button>
@@ -1960,7 +1995,7 @@ function submitModal() {
                 :current-page="pagination.plans.page"
                 :page-size="pagination.plans.pageSize"
                 :page-sizes="[10, 20, 50, 100]"
-                :total="filteredPlans.length"
+                :total="listTotals.plans"
                 background
                 layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange('plans', $event)"
@@ -2050,7 +2085,7 @@ function submitModal() {
                 :current-page="pagination.orders.page"
                 :page-size="pagination.orders.pageSize"
                 :page-sizes="[10, 20, 50, 100]"
-                :total="filteredOrders.length"
+                :total="listTotals.orders"
                 background
                 layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange('orders', $event)"
@@ -2119,7 +2154,7 @@ function submitModal() {
             <div>
               <p class="section-kicker">Channels</p>
               <h2>渠道管理</h2>
-              <span>普通渠道 {{ enabledChannels }}/{{ filteredUpstreamChannels.length }}，公共渠道 {{ enabledPublicChannels }}/{{ filteredPublicChannels.length }}</span>
+              <span>普通渠道 {{ enabledChannels }}/{{ listTotals.upstreamChannels }}，公共渠道 {{ enabledPublicChannels }}/{{ listTotals.publicChannels }}</span>
             </div>
             <div class="toolbar-actions">
               <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
@@ -2165,7 +2200,7 @@ function submitModal() {
                 :current-page="pagination.upstreamChannels.page"
                 :page-size="pagination.upstreamChannels.pageSize"
                 :page-sizes="[10, 20, 50, 100]"
-                :total="filteredUpstreamChannels.length"
+                :total="listTotals.upstreamChannels"
                 background
                 layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange('upstreamChannels', $event)"
@@ -2203,7 +2238,7 @@ function submitModal() {
                 :current-page="pagination.publicChannels.page"
                 :page-size="pagination.publicChannels.pageSize"
                 :page-sizes="[10, 20, 50, 100]"
-                :total="filteredPublicChannels.length"
+                :total="listTotals.publicChannels"
                 background
                 layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange('publicChannels', $event)"
@@ -2277,7 +2312,7 @@ function submitModal() {
                 :current-page="pagination.users.page"
                 :page-size="pagination.users.pageSize"
                 :page-sizes="[10, 20, 50, 100]"
-                :total="filteredUsers.length"
+                :total="listTotals.users"
                 background
                 layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange('users', $event)"
@@ -2331,7 +2366,7 @@ function submitModal() {
             <div>
               <p class="section-kicker">Announcements</p>
               <h2>公告管理</h2>
-              <span>{{ enabledAnnouncements }} 条启用公告，{{ filteredAnnouncements.length }} 条筛选结果。用户控制台默认展示最新启用公告。</span>
+              <span>{{ enabledAnnouncements }} 条启用公告，{{ listTotals.announcements }} 条筛选结果。用户控制台默认展示最新启用公告。</span>
             </div>
             <div class="toolbar-actions">
               <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
@@ -2369,7 +2404,7 @@ function submitModal() {
                 :current-page="pagination.announcements.page"
                 :page-size="pagination.announcements.pageSize"
                 :page-sizes="[10, 20, 50, 100]"
-                :total="filteredAnnouncements.length"
+                :total="listTotals.announcements"
                 background
                 layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange('announcements', $event)"
@@ -2384,7 +2419,7 @@ function submitModal() {
             <div>
               <p class="section-kicker">Docs</p>
               <h2>配置文档</h2>
-              <span>{{ enabledDocs }} 篇启用文档，{{ filteredDocs.length }} 篇筛选结果。左侧导航、排序和内容都可在这里维护。</span>
+              <span>{{ enabledDocs }} 篇启用文档，{{ listTotals.docs }} 篇筛选结果。左侧导航、排序和内容都可在这里维护。</span>
             </div>
             <div class="toolbar-actions">
               <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
@@ -2426,7 +2461,7 @@ function submitModal() {
                 :current-page="pagination.docs.page"
                 :page-size="pagination.docs.pageSize"
                 :page-sizes="[10, 20, 50, 100]"
-                :total="filteredDocs.length"
+                :total="listTotals.docs"
                 background
                 layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange('docs', $event)"

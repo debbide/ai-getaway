@@ -515,6 +515,16 @@ func (a *AdminController) Plans(c *gin.Context) {
 	if planType := strings.TrimSpace(c.Query("plan_type")); planType != "" {
 		query = query.Where("plan_type = ?", planType)
 	}
+	switch strings.TrimSpace(c.Query("category")) {
+	case "daily":
+		query = query.Where("is_lottery = ? AND quota_period = ? AND plan_type <> ?", false, model.QuotaPeriodDaily, model.PlanTypePublic)
+	case "weekly":
+		query = query.Where("is_lottery = ? AND quota_period <> ? AND quota_period <> ? AND plan_type <> ?", false, model.QuotaPeriodDaily, model.QuotaPeriodPublic, model.PlanTypePublic)
+	case "public":
+		query = query.Where("is_lottery = ? AND (quota_period = ? OR plan_type = ?)", false, model.QuotaPeriodPublic, model.PlanTypePublic)
+	case "lottery":
+		query = query.Where("is_lottery = ?", true)
+	}
 	page, pageSize := parsePageParams(c, 10)
 	var total int64
 	query.Count(&total)
@@ -1412,16 +1422,30 @@ func (a *AdminController) APIKeys(c *gin.Context) {
 }
 
 func (a *AdminController) Stats(c *gin.Context) {
-	var users, orders, apiKeys, calls int64
-	a.db.Model(&model.User{}).Count(&users)
+	var users, admins, approvedUsers, orders, pendingOrders, apiKeys, calls, plans, enabledPlans int64
+	a.db.Model(&model.User{}).Where("role = ?", model.RoleUser).Count(&users)
+	a.db.Model(&model.User{}).Where("role = ?", model.RoleAdmin).Count(&admins)
+	a.db.Model(&model.User{}).Where("role = ? AND status = ?", model.RoleUser, model.UserStatusApproved).Count(&approvedUsers)
 	a.db.Model(&model.Order{}).Count(&orders)
+	a.db.Model(&model.Order{}).Where("status IN ?", []string{
+		model.OrderStatusPendingReview,
+		model.OrderStatusManualReview,
+		model.OrderStatusPaidLate,
+	}).Count(&pendingOrders)
 	a.db.Model(&model.APIKey{}).Count(&apiKeys)
 	a.db.Model(&model.APILog{}).Count(&calls)
+	a.db.Model(&model.Plan{}).Count(&plans)
+	a.db.Model(&model.Plan{}).Where("enabled = ?", true).Count(&enabledPlans)
 	response.OK(c, gin.H{
 		"users":                  users,
+		"admins":                 admins,
+		"approved_users":         approvedUsers,
 		"orders":                 orders,
+		"pending_orders":         pendingOrders,
 		"api_keys":               apiKeys,
 		"calls":                  calls,
+		"plans":                  plans,
+		"enabled_plans":          enabledPlans,
 		"active_api_connections": service.ActiveAPIConnections(),
 		"system_load":            service.CurrentSystemLoad(),
 	})
