@@ -13,7 +13,7 @@ import FaqPage from './components/FaqPage.vue'
 
 const defaultNavigation = [
   { label: '首页', path: '/' },
-  { label: '教程 ↗', path: '/docs' },
+  { label: '教程', path: '/docs' },
   { label: '定价', path: '/plans' },
   { label: '模型', path: '/models' },
   { label: '常见问题', path: '/faq' }
@@ -26,7 +26,7 @@ const defaultSettings = {
   navigation_items: JSON.stringify(defaultNavigation),
   pricing_title: '简单透明的定价',
   pricing_subtitle: '保质保量无降智不掺假',
-  pricing_notice: '本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转',
+  pricing_notice: '本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；',
   allow_registration: true,
   online_payment_enabled: true,
   manual_payment_enabled: true,
