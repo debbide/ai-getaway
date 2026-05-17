@@ -1082,15 +1082,26 @@ function statusLabel(value) {
       </div>
     </div>
 
-    <div v-if="useKeyModalOpen" class="modal-backdrop" @click.self="closeUseKeyModal">
+    <div v-if="useKeyModalOpen" class="modal-backdrop key-usage-backdrop" @click.self="closeUseKeyModal">
       <div class="modal-card key-usage-modal" role="dialog" aria-labelledby="key-usage-title">
-        <div class="modal-head">
-          <h3 id="key-usage-title">使用密钥</h3>
-          <button type="button" class="icon-button" aria-label="关闭" @click="closeUseKeyModal">×</button>
+        <div class="key-usage-head">
+          <div>
+            <p class="section-kicker">API Key Setup</p>
+            <h3 id="key-usage-title">使用密钥</h3>
+          </div>
+          <button type="button" class="icon-button key-usage-close" aria-label="关闭" @click="closeUseKeyModal">×</button>
         </div>
         <div class="key-usage-summary">
-          <div><span>API 地址</span><code>{{ apiBaseURL }}</code></div>
-          <div><span>API Key</span><code>{{ usagePlainKey }}</code></div>
+          <div>
+            <span>API 地址</span>
+            <code>{{ apiBaseURL }}</code>
+            <button type="button" class="ghost-button small" @click="copyKey(apiBaseURL)">复制</button>
+          </div>
+          <div>
+            <span>API Key</span>
+            <code>{{ usagePlainKey }}</code>
+            <button type="button" class="ghost-button small" @click="copyKey(usagePlainKey)">复制</button>
+          </div>
         </div>
         <div class="key-usage-tabs">
           <button type="button" :class="{ active: keyUsageTab === 'claude' }" @click="keyUsageTab = 'claude'">Claude Code</button>

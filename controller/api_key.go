@@ -98,10 +98,6 @@ func (a *APIKeyController) Create(c *gin.Context) {
 		response.Error(c, 403, "account pending approval")
 		return
 	}
-	if err := a.ensureCallablePlan(user); err != nil {
-		response.Error(c, 403, err.Error())
-		return
-	}
 
 	var req createAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -156,10 +152,6 @@ func (a *APIKeyController) Rotate(c *gin.Context) {
 	user := c.MustGet("user").(model.User)
 	if user.Status != model.UserStatusApproved {
 		response.Error(c, 403, "account pending approval")
-		return
-	}
-	if err := a.ensureCallablePlan(user); err != nil {
-		response.Error(c, 403, err.Error())
 		return
 	}
 
