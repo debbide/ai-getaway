@@ -11,6 +11,7 @@ const menu = [
   { key: 'models', label: '模型管理', hint: '计费倍率' },
   { key: 'channels', label: '渠道管理', hint: '上游接口' },
   { key: 'users', label: '用户管理', hint: '账号与权限' },
+  { key: 'usageRecords', label: '使用记录', hint: '调用日志' },
   { key: 'announcements', label: '公告管理', hint: '控制台公告' },
   { key: 'docs', label: '配置文档', hint: 'Markdown 内容' },
   { key: 'emailTemplates', label: '邮件模板', hint: '通知文案' },
@@ -57,6 +58,8 @@ const stats = ref({})
 const orders = ref([])
 const users = ref([])
 const apiKeys = ref([])
+const usageRecords = ref([])
+const usageSummary = ref(null)
 const plans = ref([])
 const models = ref([])
 const modelSource = ref('')
@@ -95,6 +98,7 @@ const channelSearch = reactive({ keyword: '', status: '' })
 const publicChannelSearch = reactive({ keyword: '', status: '' })
 const pollingPoolSearch = reactive({ keyword: '', status: '' })
 const apiKeySearch = reactive({ keyword: '', status: '' })
+const usageSearch = reactive({ userKeyword: '', apiKeyKeyword: '', range: '7d' })
 const announcementSearch = reactive({ keyword: '', status: '' })
 const docSearch = reactive({ keyword: '', status: '', groupName: '' })
 const pagination = reactive({
@@ -106,6 +110,7 @@ const pagination = reactive({
   pollingPools: { page: 1, pageSize: 10 },
   users: { page: 1, pageSize: 10 },
   apiKeys: { page: 1, pageSize: 10 },
+  usageRecords: { page: 1, pageSize: 20 },
   announcements: { page: 1, pageSize: 10 },
   docs: { page: 1, pageSize: 10 }
 })
@@ -116,6 +121,7 @@ const listTotals = reactive({
   publicChannels: 0,
   pollingPools: 0,
   users: 0,
+  usageRecords: 0,
   announcements: 0,
   docs: 0
 })
@@ -181,6 +187,7 @@ const pagedOrders = computed(() => orders.value)
 const pagedModels = computed(() => paginateItems(models.value, pagination.models))
 const pagedUsers = computed(() => users.value)
 const pagedApiKeys = computed(() => paginateItems(filteredApiKeys.value, pagination.apiKeys))
+const pagedUsageRecords = computed(() => usageRecords.value)
 const pagedAnnouncements = computed(() => announcements.value)
 const pagedDocs = computed(() => docs.value)
 const pagedUpstreamChannels = computed(() => channels.value)
@@ -224,6 +231,7 @@ watch(() => [orderSearch.keyword, orderSearch.status, orderSearch.planId, orderS
 watch(() => [channelSearch.keyword, channelSearch.status], () => scheduleFilterRefresh('upstreamChannels'))
 watch(() => [publicChannelSearch.keyword, publicChannelSearch.status], () => scheduleFilterRefresh('publicChannels'))
 watch(() => [pollingPoolSearch.keyword, pollingPoolSearch.status], () => scheduleFilterRefresh('pollingPools'))
+watch(() => [usageSearch.userKeyword, usageSearch.apiKeyKeyword, usageSearch.range], () => scheduleFilterRefresh('usageRecords'))
 watch(() => [announcementSearch.keyword, announcementSearch.status], () => scheduleFilterRefresh('announcements'))
 watch(() => [docSearch.keyword, docSearch.groupName, docSearch.status], () => scheduleFilterRefresh('docs'))
 watch(usersTab, () => {
@@ -402,12 +410,13 @@ async function loadAll() {
       api.get('/admin/public-channels', publicChannelFilterParams()),
       api.get('/admin/polling-pools', pollingPoolFilterParams()),
       api.get('/admin/keys'),
+      api.get('/admin/usage/logs', usageRecordFilterParams()),
       api.get('/admin/docs', docFilterParams()),
       api.get('/admin/announcements', announcementFilterParams()),
       api.get('/admin/email-templates'),
       api.get('/admin/settings')
     ])
-    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, publicChannelsRes, pollingPoolsRes, keysRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = results
+    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, publicChannelsRes, pollingPoolsRes, keysRes, usageRecordsRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = results
     const modelData = responseData(modelsRes, { items: [], official_source: '' })
     const templateData = responseData(emailTemplatesRes, { items: [], variables: [] })
     stats.value = responseData(statsRes, {})
@@ -420,6 +429,7 @@ async function loadAll() {
     applyListData('publicChannels', publicChannels, responseData(publicChannelsRes, { items: [] }))
     applyListData('pollingPools', pollingPools, responseData(pollingPoolsRes, { items: [] }))
     apiKeys.value = unwrapListData(responseData(keysRes, []))
+    applyUsageRecordData(responseData(usageRecordsRes, { items: [] }))
     applyListData('docs', docs, responseData(docsRes, { items: [] }))
     applyListData('announcements', announcements, responseData(announcementsRes, { items: [] }))
     emailTemplates.value = templateData?.items || []
@@ -480,6 +490,9 @@ async function loadAdminSection(section) {
       break
     case 'users':
       await loadUsersData()
+      break
+    case 'usageRecords':
+      await loadUsageRecordsData()
       break
     case 'announcements':
       await loadAnnouncementsData()
@@ -562,6 +575,11 @@ async function loadUsersData() {
   plans.value = unwrapListData(plansRes.data || [])
   applyListData('upstreamChannels', channels, channelsRes.data || { items: [] })
   apiKeys.value = unwrapListData(keysRes.data || [])
+}
+
+async function loadUsageRecordsData() {
+  const res = await api.get('/admin/usage/logs', usageRecordFilterParams())
+  applyUsageRecordData(res.data || { items: [] })
 }
 
 async function loadAnnouncementsData() {
@@ -653,6 +671,14 @@ function docFilterParams() {
   })
 }
 
+function usageRecordFilterParams() {
+  return listRequestParams('usageRecords', {
+    user_keyword: usageSearch.userKeyword,
+    api_key_keyword: usageSearch.apiKeyKeyword,
+    range: usageSearch.range
+  })
+}
+
 function listRequestParams(key, filters = {}) {
   return {
     params: cleanParams({
@@ -689,6 +715,15 @@ function emptyPollingPoolAccount() {
 
 function cleanParams(params) {
   return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== '' && value !== null && value !== undefined))
+}
+
+function applyUsageRecordData(payload = {}) {
+  const items = unwrapListData(payload, [])
+  usageRecords.value = items
+  usageSummary.value = payload?.summary || null
+  listTotals.usageRecords = Number(payload?.total ?? items.length)
+  pagination.usageRecords.page = Number(payload?.page || pagination.usageRecords.page)
+  pagination.usageRecords.pageSize = Number(payload?.page_size || pagination.usageRecords.pageSize)
 }
 
 async function refreshOverviewMetrics() {
@@ -1611,7 +1646,7 @@ function scheduleFilterRefresh(key) {
 }
 
 function isServerPaginatedKey(key) {
-  return ['plans', 'orders', 'upstreamChannels', 'publicChannels', 'pollingPools', 'users', 'announcements', 'docs'].includes(key)
+  return ['plans', 'orders', 'upstreamChannels', 'publicChannels', 'pollingPools', 'users', 'usageRecords', 'announcements', 'docs'].includes(key)
 }
 
 function isListActive(key) {
@@ -1803,6 +1838,38 @@ function rmb(value) {
 
 function usd(value) {
   return `$${((value || 0) / 100).toFixed(2)}`
+}
+
+function usdMicros(value) {
+  return `$${(Number(value || 0) / 1000000).toFixed(6)}`
+}
+
+function usageCost(record) {
+  return record?.estimated_usd_micros ? usdMicros(record.estimated_usd_micros) : usd(record?.estimated_usd_cents || 0)
+}
+
+function usageUserLabel(record) {
+  return record?.user_email || record?.username || `User #${record?.user_id || '-'}`
+}
+
+function usageApiKeyLabel(record) {
+  const prefix = record?.api_key_prefix ? `${record.api_key_prefix}...` : `Key #${record?.api_key_id || '-'}`
+  return record?.api_key_name ? `${record.api_key_name} / ${prefix}` : prefix
+}
+
+function usageEndpoint(record) {
+  return record?.endpoint || record?.path || '-'
+}
+
+function requestTypeLabel(value) {
+  return { chat: '对话', stream: '流式' }[value] || '调用'
+}
+
+function latency(value) {
+  const ms = Number(value || 0)
+  if (!ms) return '-'
+  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`
+  return `${ms}ms`
 }
 
 function quotaPeriodLabel(period) {
@@ -2568,6 +2635,116 @@ function submitModal() {
                 layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange('apiKeys', $event)"
                 @size-change="handlePageSizeChange('apiKeys', $event)"
+              />
+            </div>
+          </section>
+        </div>
+
+        <div v-if="active === 'usageRecords'" class="space-y-5">
+          <div class="page-toolbar">
+            <div>
+              <p class="section-kicker">Usage Logs</p>
+              <h2>使用记录</h2>
+              <span>查看用户 API Key 调用日志，可按用户和 API Key 搜索</span>
+            </div>
+            <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
+          </div>
+
+          <div class="stat-grid">
+            <article class="stat-card">
+              <span>请求数</span>
+              <strong>{{ usageSummary?.total_requests || 0 }}</strong>
+              <small>{{ listTotals.usageRecords }} 条筛选结果</small>
+            </article>
+            <article class="stat-card">
+              <span>总 Token</span>
+              <strong>{{ compactNumber(usageSummary?.total_tokens || 0) }}</strong>
+              <small>输入 {{ compactNumber(usageSummary?.prompt_tokens || 0) }} / 输出 {{ compactNumber(usageSummary?.completion_tokens || 0) }}</small>
+            </article>
+            <article class="stat-card">
+              <span>总费用</span>
+              <strong>{{ usageSummary?.total_usd_micros ? usdMicros(usageSummary.total_usd_micros) : usd(usageSummary?.total_usd_cents || 0) }}</strong>
+              <small>按调用日志估算</small>
+            </article>
+            <article class="stat-card">
+              <span>平均耗时</span>
+              <strong>{{ latency(usageSummary?.average_latency_ms) }}</strong>
+              <small>每次请求</small>
+            </article>
+          </div>
+
+          <section class="panel-surface p-4">
+            <el-form class="form-grid user-filter-grid" label-position="top">
+              <el-form-item label="用户">
+                <el-input v-model="usageSearch.userKeyword" clearable placeholder="用户名 / 邮箱 / 用户 ID" @input="resetPager('usageRecords')" />
+              </el-form-item>
+              <el-form-item label="API Key">
+                <el-input v-model="usageSearch.apiKeyKeyword" clearable placeholder="名称 / 前缀 / Key ID" @input="resetPager('usageRecords')" />
+              </el-form-item>
+              <el-form-item label="时间范围">
+                <el-select v-model="usageSearch.range" placeholder="时间范围" @change="resetPager('usageRecords')">
+                  <el-option label="最近 24 小时" value="24h" />
+                  <el-option label="最近 7 天" value="7d" />
+                  <el-option label="最近 30 天" value="30d" />
+                  <el-option label="全部时间" value="all" />
+                </el-select>
+              </el-form-item>
+            </el-form>
+          </section>
+
+          <section class="panel-surface overflow-hidden">
+            <div class="table-wrap">
+              <el-table :data="pagedUsageRecords" border>
+                <el-table-column label="用户" min-width="220">
+                  <template #default="{ row: record }">
+                    <strong>{{ usageUserLabel(record) }}</strong>
+                    <small>{{ record.username || `ID: ${record.user_id || '-'}` }}</small>
+                  </template>
+                </el-table-column>
+                <el-table-column label="API Key" min-width="190">
+                  <template #default="{ row: record }">{{ usageApiKeyLabel(record) }}</template>
+                </el-table-column>
+                <el-table-column label="模型" min-width="150">
+                  <template #default="{ row: record }">{{ record.model || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="端点" min-width="220">
+                  <template #default="{ row: record }">
+                    <code>{{ usageEndpoint(record) }}</code>
+                    <small>{{ record.method || 'POST' }} · {{ requestTypeLabel(record.request_type) }}</small>
+                  </template>
+                </el-table-column>
+                <el-table-column label="Token" min-width="130">
+                  <template #default="{ row: record }">
+                    <strong>{{ compactNumber(record.total_tokens || 0) }}</strong>
+                    <small>入 {{ compactNumber(record.prompt_tokens || 0) }} / 出 {{ compactNumber(record.completion_tokens || 0) }}</small>
+                  </template>
+                </el-table-column>
+                <el-table-column label="费用" width="120">
+                  <template #default="{ row: record }">{{ usageCost(record) }}</template>
+                </el-table-column>
+                <el-table-column label="状态" width="110">
+                  <template #default="{ row: record }">
+                    <el-tag :type="record.status_code >= 400 ? 'danger' : 'success'">{{ record.status_code || '-' }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="耗时" width="120">
+                  <template #default="{ row: record }">{{ latency(record.latency_ms) }}</template>
+                </el-table-column>
+                <el-table-column label="时间" min-width="160">
+                  <template #default="{ row: record }">{{ formatDate(record.created_at) }}</template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.usageRecords.page"
+                :page-size="pagination.usageRecords.pageSize"
+                :page-sizes="[20, 50, 100]"
+                :total="listTotals.usageRecords"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('usageRecords', $event)"
+                @size-change="handlePageSizeChange('usageRecords', $event)"
               />
             </div>
           </section>

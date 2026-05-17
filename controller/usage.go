@@ -22,17 +22,20 @@ func NewUsageController(db *gorm.DB) *UsageController {
 }
 
 type usageSummary struct {
-	TotalRequests      int64 `json:"total_requests"`
-	TotalTokens        int64 `json:"total_tokens"`
-	PromptTokens       int64 `json:"prompt_tokens"`
-	CompletionTokens   int64 `json:"completion_tokens"`
-	TotalUSDCents      int64 `json:"total_usd_cents"`
-	TotalUSDMicros     int64 `json:"total_usd_micros"`
-	AverageLatencyMs   int64 `json:"average_latency_ms"`
+	TotalRequests    int64 `json:"total_requests"`
+	TotalTokens      int64 `json:"total_tokens"`
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalUSDCents    int64 `json:"total_usd_cents"`
+	TotalUSDMicros   int64 `json:"total_usd_micros"`
+	AverageLatencyMs int64 `json:"average_latency_ms"`
 }
 
 type usageLogItem struct {
 	ID                       uint      `json:"id"`
+	UserID                   uint      `json:"user_id"`
+	Username                 string    `json:"username"`
+	UserEmail                string    `json:"user_email"`
 	APIKeyID                 uint      `json:"api_key_id"`
 	APIKeyName               string    `json:"api_key_name"`
 	APIKeyPrefix             string    `json:"api_key_prefix"`
@@ -139,6 +142,98 @@ func (u *UsageController) List(c *gin.Context) {
 	})
 }
 
+func (u *UsageController) AdminList(c *gin.Context) {
+	page := clampInt(queryInt(c, "page", 1), 1, 100000)
+	pageSize := clampInt(queryInt(c, "page_size", 20), 1, 100)
+	userID := uint(queryInt(c, "user_id", 0))
+	apiKeyID := uint(queryInt(c, "api_key_id", 0))
+	userKeyword := strings.TrimSpace(c.Query("user_keyword"))
+	apiKeyKeyword := strings.TrimSpace(c.Query("api_key_keyword"))
+	rangeValue := c.DefaultQuery("range", "7d")
+
+	buildQuery := func() *gorm.DB {
+		query := u.db.Model(&model.APILog{}).
+			Joins("LEFT JOIN users ON users.id = api_logs.user_id").
+			Joins("LEFT JOIN api_keys ON api_keys.id = api_logs.api_key_id")
+		if userID > 0 {
+			query = query.Where("api_logs.user_id = ?", userID)
+		}
+		if apiKeyID > 0 {
+			query = query.Where("api_logs.api_key_id = ?", apiKeyID)
+		}
+		if userKeyword != "" {
+			like := "%" + userKeyword + "%"
+			query = query.Where("users.username LIKE ? OR users.email LIKE ? OR CAST(users.id AS CHAR) LIKE ?", like, like, like)
+		}
+		if apiKeyKeyword != "" {
+			like := "%" + apiKeyKeyword + "%"
+			query = query.Where("api_keys.name LIKE ? OR api_keys.key_prefix LIKE ? OR CAST(api_keys.id AS CHAR) LIKE ?", like, like, like)
+		}
+		if since, ok := usageRangeStart(rangeValue); ok {
+			query = query.Where("api_logs.created_at >= ?", since)
+		}
+		return query
+	}
+
+	var total int64
+	if err := buildQuery().Count(&total).Error; err != nil {
+		response.Error(c, 500, "failed to list usage logs")
+		return
+	}
+
+	var summary usageSummary
+	if err := buildQuery().Select(`
+		COUNT(*) AS total_requests,
+		COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+		COALESCE(SUM(total_tokens), 0) AS total_tokens,
+		COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+		COALESCE(SUM(CASE WHEN estimated_usd_micros > 0 THEN CEILING(estimated_usd_micros / 10000) ELSE estimated_usd_cents END), 0) AS total_usd_cents,
+		COALESCE(SUM(estimated_usd_micros), 0) AS total_usd_micros,
+		COALESCE(ROUND(AVG(latency_ms)), 0) AS average_latency_ms
+	`).Scan(&summary).Error; err != nil {
+		response.Error(c, 500, "failed to list usage logs")
+		return
+	}
+
+	if total == 0 {
+		response.OK(c, gin.H{
+			"items":     []usageLogItem{},
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+			"pages":     1,
+			"summary":   summary,
+		})
+		return
+	}
+
+	var logs []model.APILog
+	if err := buildQuery().
+		Preload("APIKey").
+		Preload("APIKey.User").
+		Order("api_logs.created_at desc, api_logs.id desc").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Find(&logs).Error; err != nil {
+		response.Error(c, 500, "failed to list usage logs")
+		return
+	}
+
+	items := make([]usageLogItem, 0, len(logs))
+	for _, log := range logs {
+		items = append(items, mapUsageLog(log))
+	}
+
+	response.OK(c, gin.H{
+		"items":     items,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+		"pages":     int(math.Max(1, math.Ceil(float64(total)/float64(pageSize)))),
+		"summary":   summary,
+	})
+}
+
 func mapUsageLog(log model.APILog) usageLogItem {
 	modelName := log.ModelName
 	if modelName == "" {
@@ -150,6 +245,9 @@ func mapUsageLog(log model.APILog) usageLogItem {
 	}
 	return usageLogItem{
 		ID:                       log.ID,
+		UserID:                   log.UserID,
+		Username:                 log.APIKey.User.Username,
+		UserEmail:                log.APIKey.User.Email,
 		APIKeyID:                 log.APIKeyID,
 		APIKeyName:               log.APIKey.Name,
 		APIKeyPrefix:             log.APIKey.KeyPrefix,

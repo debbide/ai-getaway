@@ -123,6 +123,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			admin.GET("/keys", adminController.APIKeys)
 			admin.PATCH("/keys/:id", apiKeyController.AdminUpdate)
 			admin.DELETE("/keys/:id", apiKeyController.AdminDelete)
+			admin.GET("/usage/logs", usageController.AdminList)
 			admin.GET("/stats", adminController.Stats)
 			admin.GET("/logs/ws", logHub.Serve)
 		}
