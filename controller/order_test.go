@@ -127,3 +127,148 @@ func TestActivePublicSubscriptionWithUsedQuotaStillBlocksFreePlan(t *testing.T) 
 		t.Fatal("expected active subscription to block free plan claim")
 	}
 }
+
+func TestActiveSubscriptionAllowsHigherPricedUpgrade(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	currentPlanID := uint(1)
+	expiresAt := now.Add(24 * time.Hour)
+	user := model.User{
+		Status:    model.UserStatusApproved,
+		PlanID:    &currentPlanID,
+		ExpiresAt: &expiresAt,
+		Plan: &model.Plan{
+			PriceCents: 1000,
+			PlanType:   model.PlanTypeSubscription,
+		},
+	}
+	targetPlan := model.Plan{
+		PriceCents: 1500,
+		PlanType:   model.PlanTypeSubscription,
+	}
+
+	blocked := activeSubscriptionBlocksPlanOrderAt(nil, user, targetPlan, now, func(*gorm.DB, uint, time.Time) int64 {
+		return 0
+	})
+
+	if blocked {
+		t.Fatal("expected higher priced plan to be available as upgrade")
+	}
+	if got := orderTypeForPlan(nil, user, targetPlan, now, func(*gorm.DB, uint, time.Time) int64 { return 0 }); got != model.OrderTypeUpgrade {
+		t.Fatalf("order type = %q, want %q", got, model.OrderTypeUpgrade)
+	}
+	if got := orderAmountCentsForPlan(user, targetPlan, model.OrderTypeUpgrade); got != 500 {
+		t.Fatalf("upgrade amount = %d, want 500", got)
+	}
+}
+
+func TestActiveSubscriptionBlocksLowerPricedPlan(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	currentPlanID := uint(1)
+	expiresAt := now.Add(24 * time.Hour)
+	user := model.User{
+		Status:    model.UserStatusApproved,
+		PlanID:    &currentPlanID,
+		ExpiresAt: &expiresAt,
+		Plan: &model.Plan{
+			PriceCents: 1500,
+			PlanType:   model.PlanTypeSubscription,
+		},
+	}
+	targetPlan := model.Plan{
+		PriceCents: 1000,
+		PlanType:   model.PlanTypeSubscription,
+	}
+
+	blocked := activeSubscriptionBlocksPlanOrderAt(nil, user, targetPlan, now, func(*gorm.DB, uint, time.Time) int64 {
+		return 0
+	})
+
+	if !blocked {
+		t.Fatal("expected lower priced plan to be blocked while subscription is active")
+	}
+}
+
+func TestActiveSubscriptionAllowsSamePlanRenewal(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	currentPlanID := uint(1)
+	expiresAt := now.Add(24 * time.Hour)
+	user := model.User{
+		Status:    model.UserStatusApproved,
+		PlanID:    &currentPlanID,
+		ExpiresAt: &expiresAt,
+		Plan: &model.Plan{
+			PriceCents: 1000,
+			PlanType:   model.PlanTypeSubscription,
+		},
+	}
+	targetPlan := model.Plan{
+		PlanType:   model.PlanTypeSubscription,
+		PriceCents: 1000,
+	}
+	targetPlan.ID = currentPlanID
+
+	blocked := activeSubscriptionBlocksPlanOrderAt(nil, user, targetPlan, now, func(*gorm.DB, uint, time.Time) int64 {
+		return 0
+	})
+
+	if blocked {
+		t.Fatal("expected same active plan to be available as renewal")
+	}
+	if got := orderTypeForPlan(nil, user, targetPlan, now, func(*gorm.DB, uint, time.Time) int64 { return 0 }); got != model.OrderTypeRenewal {
+		t.Fatalf("order type = %q, want %q", got, model.OrderTypeRenewal)
+	}
+}
+
+func TestUsedUpPublicSubscriptionCreatesPurchaseNotUpgrade(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	publicPlanID := uint(1)
+	expiresAt := now.Add(24 * time.Hour)
+	user := model.User{
+		Status:    model.UserStatusApproved,
+		PlanID:    &publicPlanID,
+		ExpiresAt: &expiresAt,
+		Plan: &model.Plan{
+			PriceCents:         1000,
+			PlanType:           model.PlanTypePublic,
+			QuotaPeriod:        model.QuotaPeriodPublic,
+			SettlementUSDCents: 1000,
+		},
+	}
+	targetPlan := model.Plan{
+		PlanType:   model.PlanTypeSubscription,
+		PriceCents: 1500,
+	}
+
+	got := orderTypeForPlan(nil, user, targetPlan, now, func(*gorm.DB, uint, time.Time) int64 { return 1000 })
+
+	if got != model.OrderTypePurchase {
+		t.Fatalf("order type = %q, want %q", got, model.OrderTypePurchase)
+	}
+}
+
+func TestRenewalExtendsFromExistingExpiry(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.AddDate(0, 0, 5)
+	user := model.User{ExpiresAt: &expiresAt}
+	plan := model.Plan{DurationDays: 30, PlanType: model.PlanTypeSubscription}
+
+	got := subscriptionExpiresAtForOrder(user, plan, model.OrderTypeRenewal, now)
+	want := expiresAt.AddDate(0, 0, 30)
+
+	if got == nil || !got.Equal(want) {
+		t.Fatalf("expiresAt = %v, want %v", got, want)
+	}
+}
+
+func TestUpgradeKeepsExistingExpiry(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.AddDate(0, 0, 5)
+	user := model.User{ExpiresAt: &expiresAt}
+	plan := model.Plan{DurationDays: 30, PlanType: model.PlanTypeSubscription}
+
+	got := subscriptionExpiresAtForOrder(user, plan, model.OrderTypeUpgrade, now)
+
+	if got == nil || !got.Equal(expiresAt) {
+		t.Fatalf("expiresAt = %v, want %v", got, expiresAt)
+	}
+}

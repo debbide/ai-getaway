@@ -652,7 +652,6 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 	}
 
 	now := time.Now()
-	expiresAt := now.AddDate(0, 0, order.Plan.DurationDays)
 	err := a.db.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&model.Order{}).
 			Where("id = ? AND status IN ?", order.ID, []string{model.OrderStatusPendingReview, model.OrderStatusManualReview, model.OrderStatusPaidLate}).
@@ -669,11 +668,7 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 			return gorm.ErrRecordNotFound
 		}
 
-		if err := tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
-			"status":     model.UserStatusApproved,
-			"plan_id":    order.PlanID,
-			"expires_at": &expiresAt,
-		}).Error; err != nil {
+		if err := applyApprovedSubscription(tx, &order, order.Plan, now); err != nil {
 			return err
 		}
 
@@ -749,7 +744,6 @@ func approvePublicPaidOrder(db *gorm.DB, order *model.Order, approvedByID *uint)
 	}
 
 	now := time.Now()
-	expiresAt := now.AddDate(100, 0, 0)
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var plan model.Plan
 		if err := tx.Preload("PublicChannel").First(&plan, order.PlanID).Error; err != nil {
@@ -783,11 +777,7 @@ func approvePublicPaidOrder(db *gorm.DB, order *model.Order, approvedByID *uint)
 		if result.RowsAffected == 0 {
 			return errors.New("public plan sold out")
 		}
-		return tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
-			"status":     model.UserStatusApproved,
-			"plan_id":    plan.ID,
-			"expires_at": &expiresAt,
-		}).Error
+		return applyApprovedSubscription(tx, order, plan, now)
 	})
 	if err != nil {
 		return err

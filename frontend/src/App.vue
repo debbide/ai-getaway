@@ -54,6 +54,10 @@ const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPasswor
 const apiOnlineWidgetCollapsed = ref(localStorage.getItem('apiOnlineWidgetCollapsed') === '1')
 const apiOnlineCount = ref(0)
 let apiOnlineTimer = null
+const upgradeModal = reactive({
+  open: false,
+  plan: null
+})
 const orderModal = reactive({
   open: false,
   loading: false,
@@ -534,12 +538,60 @@ function freeClaimStatusText(plan) {
   return freeClaimSoldOut(plan) ? '已售罄' : '可领取'
 }
 
+function activeUserPlan() {
+  return auth.user?.plan || null
+}
+
+function hasActiveUserPlan() {
+  return Boolean(activeUserPlan())
+}
+
+function currentPlanPriceCents() {
+  return Number(activeUserPlan()?.price_cents || activeUserPlan()?.PriceCents || 0)
+}
+
+function planPriceCents(plan) {
+  return Number(plan?.PriceCents || plan?.price_cents || 0)
+}
+
+function isCurrentUserPlan(plan) {
+  const current = activeUserPlan()
+  return Boolean(current?.id && plan?.ID && Number(current.id) === Number(plan.ID))
+}
+
+function activePublicPlanQuotaUsedUp() {
+  const current = activeUserPlan()
+  if (!current || current.plan_type !== 'public') return false
+  const usage = auth.user?.total_quota_usage || auth.user?.quota_usage
+  if (!usage) return false
+  return Number(usage.remaining_usd_cents || 0) <= 0
+}
+
+function planSubscriptionAction(plan) {
+  if (!auth.loggedIn || !hasActiveUserPlan()) return 'purchase'
+  if (isFreePlan(plan)) return 'blocked'
+  if (isCurrentUserPlan(plan)) return 'renew'
+  if (activePublicPlanQuotaUsedUp()) return 'purchase'
+  if (planPriceCents(plan) > currentPlanPriceCents()) return 'upgrade'
+  return 'blocked'
+}
+
 function planActionText(plan) {
   if (isLotteryPlan(plan)) return '参与抽奖'
   if (isFreePlan(plan) && publicQuotaInsufficient(plan)) return '额度不足等待补充'
   if (planSoldOut(plan)) return '售罄'
-  if (isFreePlan(plan)) return '免费领取'
-  return auth.loggedIn ? '立即续费' : '立即订阅'
+  if (isFreePlan(plan)) return hasActiveUserPlan() ? '不满足订阅条件' : '免费领取'
+  const action = planSubscriptionAction(plan)
+  if (action === 'renew') return '立即续费'
+  if (action === 'upgrade') return '立即升级'
+  if (action === 'blocked') return '不满足订阅条件'
+  return '立即订购'
+}
+
+function planActionDisabled(plan) {
+  if (planSoldOut(plan)) return true
+  if (isLotteryPlan(plan)) return !plan.LotteryURL
+  return planSubscriptionAction(plan) === 'blocked'
 }
 
 function openPlanAction(plan) {
@@ -548,7 +600,42 @@ function openPlanAction(plan) {
     if (url) window.open(url, '_blank', 'noopener,noreferrer')
     return
   }
+  if (planActionDisabled(plan)) return
+  if (planSubscriptionAction(plan) === 'upgrade') {
+    openUpgradeModal(plan)
+    return
+  }
   openPricingOrder(plan)
+}
+
+function openUpgradeModal(plan) {
+  Object.assign(upgradeModal, { open: true, plan })
+}
+
+function closeUpgradeModal() {
+  Object.assign(upgradeModal, { open: false, plan: null })
+}
+
+function confirmUpgradePlan() {
+  const plan = upgradeModal.plan
+  closeUpgradeModal()
+  if (plan) openPricingOrder(plan)
+}
+
+function upgradeDeltaCents(plan) {
+  return Math.max(0, planPriceCents(plan) - currentPlanPriceCents())
+}
+
+function upgradeDeltaQuotaUsd(plan) {
+  const delta = Number(plan?.SettlementUSDCents || 0) - Number(activeUserPlan()?.settlement_usd_cents || 0)
+  return (Math.max(0, delta) / 100).toFixed(0)
+}
+
+function orderDisplayPrice(plan) {
+  if (isFreePlan(plan)) return '免费'
+  if (orderModal.order?.AmountCents != null) return `￥${(Number(orderModal.order.AmountCents || 0) / 100).toFixed(2)}`
+  if (planSubscriptionAction(plan) === 'upgrade') return `￥${(upgradeDeltaCents(plan) / 100).toFixed(2)}`
+  return `￥${priceRmb(plan)}`
 }
 
 function openPricingOrder(plan) {
@@ -866,7 +953,7 @@ function planSubtitle(index) {
               </div>
               <span class="free-claim-track"><i :style="{ width: `${freeClaimPercent(plan)}%` }"></i></span>
             </div>
-            <button class="subscription-action" :disabled="planSoldOut(plan) || (isLotteryPlan(plan) && !plan.LotteryURL)" @click="openPlanAction(plan)">
+            <button class="subscription-action" :disabled="planActionDisabled(plan)" @click="openPlanAction(plan)">
               {{ planActionText(plan) }}
             </button>
             <small>安全支付 · 透明价格</small>
@@ -1001,7 +1088,7 @@ function planSubtitle(index) {
                 <span>{{ quotaPeriodLabel(orderModal.plan) }}</span>
               </div>
               <dl>
-                <div><dt>价格</dt><dd>{{ isFreePlan(orderModal.plan) ? '免费' : `￥${priceRmb(orderModal.plan)}` }}</dd></div>
+                <div><dt>价格</dt><dd>{{ orderDisplayPrice(orderModal.plan) }}</dd></div>
                 <div><dt>额度</dt><dd>${{ orderModal.plan.QuotaPeriod === 'public' ? totalUsd(orderModal.plan) : periodUsd(orderModal.plan) }}</dd></div>
                 <div v-if="orderModal.plan.QuotaPeriod !== 'public'"><dt>有效期</dt><dd>{{ orderModal.plan.DurationDays }} 天</dd></div>
               </dl>
@@ -1056,6 +1143,42 @@ function planSubtitle(index) {
             </button>
           </div>
         </form>
+      </div>
+    </Transition>
+
+    <Transition name="modal-fade">
+      <div v-if="upgradeModal.open" class="modal-backdrop upgrade-backdrop" @click.self="closeUpgradeModal">
+        <section class="modal-card upgrade-modal-card">
+          <div class="upgrade-modal-head">
+            <span class="upgrade-alert-icon">!</span>
+            <div>
+              <p class="section-kicker">Upgrade</p>
+              <h2>本次升级新增额度</h2>
+            </div>
+          </div>
+          <p class="upgrade-copy">
+            本次补差价 ¥{{ (upgradeDeltaCents(upgradeModal.plan) / 100).toFixed(2) }}，只新增 ${{ upgradeDeltaQuotaUsd(upgradeModal.plan) }}，不会把当前额度直接重置为目标套餐的 ${{ periodUsd(upgradeModal.plan) }}。
+          </p>
+          <div class="upgrade-metrics">
+            <div>
+              <span>本次新增</span>
+              <strong>${{ upgradeDeltaQuotaUsd(upgradeModal.plan) }}</strong>
+              <small>支付并审核后到账</small>
+            </div>
+            <div>
+              <span>目标套餐额度</span>
+              <strong>${{ periodUsd(upgradeModal.plan) }}</strong>
+              <small>{{ upgradeModal.plan?.QuotaPeriod === 'daily' ? '明日' : '下周一凌晨' }}重置</small>
+            </div>
+          </div>
+          <div class="upgrade-note">
+            升级是补差价，本周期额度按新增 ${{ upgradeDeltaQuotaUsd(upgradeModal.plan) }} 入账；下个周期再按目标套餐 ${{ periodUsd(upgradeModal.plan) }} 处理。
+          </div>
+          <div class="modal-actions upgrade-actions">
+            <button type="button" class="ghost-button" @click="closeUpgradeModal">取消</button>
+            <button type="button" class="primary-button" @click="confirmUpgradePlan">我知道了，继续升级</button>
+          </div>
+        </section>
       </div>
     </Transition>
 

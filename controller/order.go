@@ -90,6 +90,8 @@ func (o *OrderController) Create(c *gin.Context) {
 		response.Error(c, 409, "public plan sold out")
 		return
 	}
+	orderType := orderTypeForPlan(o.db, user, plan, time.Now(), service.UsedUSDCentsSince)
+	amountCents := orderAmountCentsForPlan(user, plan, orderType)
 	paymentMethod := normalizePaymentMethod(req.PaymentMethod)
 	if plan.PriceCents > 0 {
 		if err := ensureSystemSettingColumns(o.db); err != nil {
@@ -149,7 +151,8 @@ func (o *OrderController) Create(c *gin.Context) {
 	order := model.Order{
 		UserID:             ctxUser.ID,
 		PlanID:             plan.ID,
-		AmountCents:        plan.PriceCents,
+		OrderType:          orderType,
+		AmountCents:        amountCents,
 		SettlementUSDCents: plan.SettlementUSDCents,
 		Status:             model.OrderStatusPendingPayment,
 		PaymentMethod:      paymentMethod,
@@ -168,6 +171,33 @@ func (o *OrderController) Create(c *gin.Context) {
 		}
 	}
 	response.Created(c, gin.H{"order": order, "reused": false})
+}
+
+func orderTypeForPlan(db *gorm.DB, user model.User, targetPlan model.Plan, now time.Time, usedSince func(*gorm.DB, uint, time.Time) int64) string {
+	if !service.HasActiveSubscription(user, now) || user.Plan == nil || targetPlan.PriceCents == 0 {
+		return model.OrderTypePurchase
+	}
+	if user.PlanID != nil && *user.PlanID == targetPlan.ID {
+		return model.OrderTypeRenewal
+	}
+	if activePublicPlanQuotaUsedUp(db, user, now, usedSince) {
+		return model.OrderTypePurchase
+	}
+	if targetPlan.PriceCents > user.Plan.PriceCents {
+		return model.OrderTypeUpgrade
+	}
+	return model.OrderTypePurchase
+}
+
+func orderAmountCentsForPlan(user model.User, targetPlan model.Plan, orderType string) int64 {
+	if orderType != model.OrderTypeUpgrade || user.Plan == nil {
+		return targetPlan.PriceCents
+	}
+	diff := targetPlan.PriceCents - user.Plan.PriceCents
+	if diff < 0 {
+		return 0
+	}
+	return diff
 }
 
 func writeFreeOrderError(c *gin.Context, err error) {
@@ -250,7 +280,6 @@ func completeFreeOrder(db *gorm.DB, order *model.Order) error {
 
 func completeFreePublicOrder(db *gorm.DB, order *model.Order) error {
 	now := time.Now()
-	expiresAt := now.AddDate(100, 0, 0)
 	err := db.Transaction(func(tx *gorm.DB) error {
 		if err := claimFreePlan(tx, order.UserID, order.PlanID); err != nil {
 			return err
@@ -283,11 +312,7 @@ func completeFreePublicOrder(db *gorm.DB, order *model.Order) error {
 		if result.RowsAffected == 0 {
 			return fmt.Errorf("public plan sold out")
 		}
-		return tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
-			"status":     model.UserStatusApproved,
-			"plan_id":    plan.ID,
-			"expires_at": &expiresAt,
-		}).Error
+		return applyApprovedSubscription(tx, order, plan, now)
 	})
 	if err != nil {
 		return err
@@ -363,18 +388,34 @@ func activeSubscriptionBlocksPlanOrderAt(db *gorm.DB, user model.User, targetPla
 	if targetPlan.PriceCents == 0 && !targetPlan.IsLottery {
 		return true
 	}
+	if user.PlanID != nil && *user.PlanID == targetPlan.ID {
+		return false
+	}
+	if activePublicPlanQuotaUsedUp(db, user, now, usedSince) {
+		return false
+	}
+	if user.Plan != nil && targetPlan.PriceCents > user.Plan.PriceCents {
+		return false
+	}
 	if user.Plan == nil || user.Plan.PlanType != model.PlanTypePublic {
 		return true
 	}
+	return true
+}
+
+func activePublicPlanQuotaUsedUp(db *gorm.DB, user model.User, now time.Time, usedSince func(*gorm.DB, uint, time.Time) int64) bool {
+	if user.Plan == nil || user.Plan.PlanType != model.PlanTypePublic {
+		return false
+	}
 	limit := service.PlanTotalLimitUSDCents(user.Plan)
 	if limit <= 0 {
-		return true
+		return false
 	}
 	start := time.Time{}
 	if startedAt := service.SubscriptionStartAt(db, user, now); startedAt != nil {
 		start = *startedAt
 	}
-	return usedSince(db, user.ID, start) < limit
+	return usedSince(db, user.ID, start) >= limit
 }
 
 func (o *OrderController) ListMine(c *gin.Context) {
@@ -651,7 +692,6 @@ func completePaidOrder(db *gorm.DB, order *model.Order, payment *epayPaymentResu
 	}
 
 	now := time.Now()
-	expiresAt := now.AddDate(100, 0, 0)
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var plan model.Plan
 		if err := tx.Preload("PublicChannel").First(&plan, order.PlanID).Error; err != nil {
@@ -682,11 +722,7 @@ func completePaidOrder(db *gorm.DB, order *model.Order, payment *epayPaymentResu
 		if result.RowsAffected == 0 {
 			return fmt.Errorf("public plan sold out")
 		}
-		return tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
-			"status":     model.UserStatusApproved,
-			"plan_id":    plan.ID,
-			"expires_at": &expiresAt,
-		}).Error
+		return applyApprovedSubscription(tx, order, plan, now)
 	})
 	if err != nil {
 		return err
@@ -718,6 +754,66 @@ func paymentOrderUpdates(status string, payment *epayPaymentResult, now time.Tim
 		}
 	}
 	return updates
+}
+
+func applyApprovedSubscription(db *gorm.DB, order *model.Order, plan model.Plan, now time.Time) error {
+	var user model.User
+	if err := db.Preload("Plan").First(&user, order.UserID).Error; err != nil {
+		return err
+	}
+	startedAt := subscriptionStartedAtBeforeOrder(db, user, order, now)
+	expiresAt := subscriptionExpiresAtForOrder(user, plan, order.OrderType, now)
+	if startedAt == nil || order.OrderType == model.OrderTypePurchase {
+		value := now
+		startedAt = &value
+	}
+	return db.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
+		"status":                  model.UserStatusApproved,
+		"plan_id":                 plan.ID,
+		"expires_at":              expiresAt,
+		"subscription_started_at": startedAt,
+	}).Error
+}
+
+func subscriptionStartedAtBeforeOrder(db *gorm.DB, user model.User, order *model.Order, now time.Time) *time.Time {
+	if user.SubscriptionStartedAt != nil {
+		return user.SubscriptionStartedAt
+	}
+	if user.PlanID != nil {
+		var lastOrder model.Order
+		result := db.Where("user_id = ? AND plan_id = ? AND status = ? AND id <> ?", user.ID, *user.PlanID, model.OrderStatusApproved, order.ID).
+			Order("approved_at DESC, id DESC").
+			Limit(1).
+			Find(&lastOrder)
+		if result.Error == nil && result.RowsAffected > 0 && lastOrder.ApprovedAt != nil {
+			return lastOrder.ApprovedAt
+		}
+	}
+	if service.HasActiveSubscription(user, now) && user.Plan != nil && user.ExpiresAt != nil && user.Plan.DurationDays > 0 {
+		fallbackStartedAt := user.ExpiresAt.AddDate(0, 0, -user.Plan.DurationDays)
+		return &fallbackStartedAt
+	}
+	return nil
+}
+
+func subscriptionExpiresAtForOrder(user model.User, plan model.Plan, orderType string, now time.Time) *time.Time {
+	durationDays := plan.DurationDays
+	if plan.PlanType == model.PlanTypePublic {
+		durationDays = 36500
+	}
+	if durationDays < 1 {
+		durationDays = 1
+	}
+	base := now
+	if orderType == model.OrderTypeRenewal && user.ExpiresAt != nil && user.ExpiresAt.After(now) {
+		base = *user.ExpiresAt
+	}
+	if orderType == model.OrderTypeUpgrade && user.ExpiresAt != nil && user.ExpiresAt.After(now) {
+		expiresAt := *user.ExpiresAt
+		return &expiresAt
+	}
+	expiresAt := base.AddDate(0, 0, durationDays)
+	return &expiresAt
 }
 
 func handlePaidOrderAlreadyProcessed(db *gorm.DB, order *model.Order, payment *epayPaymentResult) error {

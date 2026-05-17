@@ -22,6 +22,9 @@ func HasActiveSubscription(user model.User, now time.Time) bool {
 }
 
 func SubscriptionStartAt(db *gorm.DB, user model.User, now time.Time) *time.Time {
+	if user.SubscriptionStartedAt != nil {
+		return user.SubscriptionStartedAt
+	}
 	if db != nil && user.PlanID != nil {
 		var lastOrder model.Order
 		result := db.Where("user_id = ? AND plan_id = ? AND status = ?", user.ID, *user.PlanID, model.OrderStatusApproved).

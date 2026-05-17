@@ -259,6 +259,7 @@ func publicUser(user model.User) gin.H {
 			"plan_type":            user.Plan.PlanType,
 			"settlement_usd_cents": user.Plan.SettlementUSDCents,
 			"quota_period":         user.Plan.QuotaPeriod,
+			"price_cents":          user.Plan.PriceCents,
 			"duration_days":        user.Plan.DurationDays,
 			"description":          user.Plan.Description,
 		}

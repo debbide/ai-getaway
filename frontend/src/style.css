@@ -2625,6 +2625,113 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb {
   max-width: 680px;
 }
 
+.upgrade-backdrop {
+  background: rgba(2, 6, 14, 0.76);
+}
+
+.upgrade-modal-card {
+  width: min(680px, 100%);
+  border: 1px solid rgba(213, 121, 82, 0.48);
+  border-radius: 16px;
+  background: #121a2b;
+  color: #f8fafc;
+  padding: 28px 32px 24px;
+  box-shadow:
+    0 32px 110px rgba(0, 0, 0, 0.48),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+.upgrade-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.upgrade-modal-head h2 {
+  color: #ffffff;
+  font-size: 24px;
+  font-weight: 950;
+}
+
+.upgrade-alert-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(213, 121, 82, 0.24);
+  color: #f7d77a;
+  font-size: 24px;
+  font-weight: 950;
+}
+
+.upgrade-copy {
+  margin-top: 24px;
+  color: rgba(248, 250, 252, 0.82);
+  font-size: 18px;
+  font-weight: 750;
+  line-height: 1.7;
+}
+
+.upgrade-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.upgrade-metrics div,
+.upgrade-note {
+  border: 1px solid rgba(113, 128, 150, 0.42);
+  border-radius: 14px;
+  background: rgba(28, 38, 57, 0.86);
+  padding: 18px 20px;
+}
+
+.upgrade-metrics div:first-child {
+  border-color: rgba(213, 121, 82, 0.42);
+  background: rgba(213, 121, 82, 0.08);
+}
+
+.upgrade-metrics span,
+.upgrade-metrics small {
+  display: block;
+  color: rgba(226, 232, 240, 0.76);
+  font-weight: 850;
+}
+
+.upgrade-metrics strong {
+  display: block;
+  margin-top: 6px;
+  color: #ffffff;
+  font-size: 36px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.upgrade-metrics div:first-child strong {
+  color: #d77e58;
+}
+
+.upgrade-metrics small {
+  margin-top: 10px;
+  font-size: 15px;
+}
+
+.upgrade-note {
+  margin-top: 16px;
+  color: rgba(248, 250, 252, 0.86);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.7;
+}
+
+.upgrade-actions {
+  justify-content: flex-end;
+  padding: 22px 0 0;
+}
+
 .order-modal-body {
   display: grid;
   gap: 14px;

@@ -25,6 +25,10 @@ const (
 	PaymentMethodOnline = "online"
 	PaymentMethodManual = "manual"
 
+	OrderTypePurchase = "purchase"
+	OrderTypeRenewal  = "renewal"
+	OrderTypeUpgrade  = "upgrade"
+
 	APIKeyStatusActive   = "active"
 	APIKeyStatusDisabled = "disabled"
 
@@ -48,15 +52,16 @@ const (
 
 type User struct {
 	gorm.Model
-	Username      string `gorm:"size:64;not null"`
-	Email         string `gorm:"size:128;uniqueIndex;not null"`
-	PasswordHash  string `gorm:"size:255;not null" json:"-"`
-	Role          string `gorm:"size:20;default:user;index"`
-	Status        string `gorm:"size:32;default:pending;index"`
-	EmailVerified bool   `gorm:"default:false;index"`
-	PlanID        *uint
-	Plan          *Plan
-	ExpiresAt     *time.Time
+	Username              string `gorm:"size:64;not null"`
+	Email                 string `gorm:"size:128;uniqueIndex;not null"`
+	PasswordHash          string `gorm:"size:255;not null" json:"-"`
+	Role                  string `gorm:"size:20;default:user;index"`
+	Status                string `gorm:"size:32;default:pending;index"`
+	EmailVerified         bool   `gorm:"default:false;index"`
+	PlanID                *uint
+	Plan                  *Plan
+	ExpiresAt             *time.Time
+	SubscriptionStartedAt *time.Time
 }
 
 type Plan struct {
@@ -86,6 +91,7 @@ type Order struct {
 	User                  User
 	PlanID                uint `gorm:"index;not null"`
 	Plan                  Plan
+	OrderType             string `gorm:"size:32;default:purchase;index"`
 	AmountCents           int64
 	SettlementUSDCents    int64   `gorm:"default:0"`
 	Status                string  `gorm:"size:32;default:pending_payment;index"`
