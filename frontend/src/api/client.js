@@ -28,6 +28,7 @@ const messageMap = {
   'manual payment qr code missing': '管理员尚未上传人工支付二维码，请联系站点支持',
   'payment config missing': '支付配置未完成，请联系管理员',
   'payment not completed': '暂未查询到支付成功结果，请确认已完成支付后再刷新',
+  'plan price required': '套餐价格不能小于 0',
   'failed to verify payment': '暂未查询到支付成功结果，请确认已完成支付后再刷新',
   'payment amount mismatch': '支付金额不一致，订单已转人工处理',
   'payment pid mismatch': '支付商户不一致，订单已转人工处理',

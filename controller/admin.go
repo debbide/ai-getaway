@@ -517,13 +517,15 @@ func (a *AdminController) Plans(c *gin.Context) {
 	}
 	switch strings.TrimSpace(c.Query("category")) {
 	case "daily":
-		query = query.Where("is_lottery = ? AND quota_period = ? AND plan_type <> ?", false, model.QuotaPeriodDaily, model.PlanTypePublic)
+		query = query.Where("is_lottery = ? AND price_cents > ? AND quota_period = ? AND plan_type <> ?", false, 0, model.QuotaPeriodDaily, model.PlanTypePublic)
 	case "weekly":
-		query = query.Where("is_lottery = ? AND quota_period <> ? AND quota_period <> ? AND plan_type <> ?", false, model.QuotaPeriodDaily, model.QuotaPeriodPublic, model.PlanTypePublic)
+		query = query.Where("is_lottery = ? AND price_cents > ? AND quota_period <> ? AND quota_period <> ? AND plan_type <> ?", false, 0, model.QuotaPeriodDaily, model.QuotaPeriodPublic, model.PlanTypePublic)
 	case "public":
-		query = query.Where("is_lottery = ? AND (quota_period = ? OR plan_type = ?)", false, model.QuotaPeriodPublic, model.PlanTypePublic)
+		query = query.Where("is_lottery = ? AND price_cents > ? AND (quota_period = ? OR plan_type = ?)", false, 0, model.QuotaPeriodPublic, model.PlanTypePublic)
 	case "lottery":
 		query = query.Where("is_lottery = ?", true)
+	case "free":
+		query = query.Where("is_lottery = ? AND price_cents = ?", false, 0)
 	}
 	page, pageSize := parsePageParams(c, 10)
 	var total int64
@@ -1069,7 +1071,7 @@ func (a *AdminController) validatePlanRequest(req planRequest) error {
 	if req.SettlementUSDCents <= 0 {
 		return errors.New("settlement usd quota required")
 	}
-	if !req.IsLottery && req.PriceCents <= 0 {
+	if !req.IsLottery && req.PriceCents < 0 {
 		return errors.New("plan price required")
 	}
 	if req.IsLottery && strings.TrimSpace(req.LotteryURL) == "" {

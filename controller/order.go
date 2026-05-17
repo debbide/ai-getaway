@@ -76,21 +76,6 @@ func (o *OrderController) Create(c *gin.Context) {
 		response.Error(c, 400, err.Error())
 		return
 	}
-	paymentMethod := normalizePaymentMethod(req.PaymentMethod)
-	if err := ensureSystemSettingColumns(o.db); err != nil {
-		response.Error(c, 500, "failed to load settings")
-		return
-	}
-	setting := loadSettings(o.db)
-	if paymentMethod == model.PaymentMethodOnline && !setting.OnlinePaymentEnabled {
-		response.Error(c, 400, "online payment disabled")
-		return
-	}
-	if paymentMethod == model.PaymentMethodManual && !setting.ManualPaymentEnabled {
-		response.Error(c, 400, "manual payment disabled")
-		return
-	}
-
 	var plan model.Plan
 	if err := o.db.Preload("PublicChannel").Where("id = ? AND enabled = ?", req.PlanID, true).First(&plan).Error; err != nil {
 		response.Error(c, 404, "plan not found")
@@ -103,6 +88,24 @@ func (o *OrderController) Create(c *gin.Context) {
 	if plan.PlanType == model.PlanTypePublic && (plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents) {
 		response.Error(c, 409, "public plan sold out")
 		return
+	}
+	paymentMethod := normalizePaymentMethod(req.PaymentMethod)
+	if plan.PriceCents > 0 {
+		if err := ensureSystemSettingColumns(o.db); err != nil {
+			response.Error(c, 500, "failed to load settings")
+			return
+		}
+		setting := loadSettings(o.db)
+		if paymentMethod == model.PaymentMethodOnline && !setting.OnlinePaymentEnabled {
+			response.Error(c, 400, "online payment disabled")
+			return
+		}
+		if paymentMethod == model.PaymentMethodManual && !setting.ManualPaymentEnabled {
+			response.Error(c, 400, "manual payment disabled")
+			return
+		}
+	} else {
+		paymentMethod = "free"
 	}
 
 	var existing model.Order
@@ -148,6 +151,16 @@ func (o *OrderController) Create(c *gin.Context) {
 		return
 	}
 	order.Plan = plan
+	if plan.PriceCents == 0 {
+		if err := completeFreeOrder(o.db, &order); err != nil {
+			if err.Error() == "public plan sold out" {
+				response.Error(c, 409, "public plan sold out")
+				return
+			}
+			response.Error(c, 500, "failed to create order")
+			return
+		}
+	}
 	response.Created(c, gin.H{"order": order, "reused": false})
 }
 
@@ -155,6 +168,8 @@ func normalizePaymentMethod(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case model.PaymentMethodManual:
 		return model.PaymentMethodManual
+	case "free":
+		return "free"
 	default:
 		return model.PaymentMethodOnline
 	}
@@ -181,6 +196,35 @@ func pendingOrderPaymentMethodUpdates(order model.Order, paymentMethod string, u
 		updates["payment_ref"] = fmt.Sprintf("ORDER%d%d", userID, time.Now().UnixNano())
 	}
 	return updates, true
+}
+
+func completeFreeOrder(db *gorm.DB, order *model.Order) error {
+	if order.Plan.ID == 0 {
+		if err := db.Preload("Plan").First(order, order.ID).Error; err != nil {
+			return err
+		}
+	}
+	now := time.Now()
+	updates := paymentOrderUpdates(model.OrderStatusPendingReview, nil, now)
+	updates["payment_channel"] = "free"
+	updates["paid_amount_cents"] = 0
+	if order.Plan.PlanType != model.PlanTypePublic {
+		result := db.Model(&model.Order{}).
+			Where("id = ? AND status = ?", order.ID, model.OrderStatusPendingPayment).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return handlePaidOrderAlreadyProcessed(db, order, nil)
+		}
+		if err := db.Preload("Plan").First(order, order.ID).Error; err != nil {
+			return err
+		}
+		go service.SendOrderPaymentAdminNotification(db, order.ID)
+		return nil
+	}
+	return completePaidOrder(db, order, nil, nil)
 }
 
 func activeSubscriptionBlocksNewOrder(db *gorm.DB, user model.User) bool {

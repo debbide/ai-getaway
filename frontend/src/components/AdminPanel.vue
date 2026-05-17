@@ -258,6 +258,7 @@ function emptyPlan() {
     quota_period: 'weekly',
     public_channel_id: '',
     price_rmb: 9.9,
+    is_free: false,
     period_usd_quota: 20,
     price_cents: 990,
     settlement_usd_cents: 2000,
@@ -505,11 +506,11 @@ async function loadPlansData() {
 async function loadOrdersData() {
   const [ordersRes, plansRes, channelsRes] = await Promise.all([
     api.get('/admin/orders', orderFilterParams()),
-    api.get('/admin/plans', planFilterParams()),
+    api.get('/admin/plans', allPlansParams()),
     api.get('/admin/upstream-channels', upstreamChannelFilterParams())
   ])
   applyListData('orders', orders, ordersRes.data || { items: [] })
-  applyListData('plans', plans, plansRes.data || { items: [] })
+  plans.value = unwrapListData(plansRes.data || [])
   applyListData('upstreamChannels', channels, channelsRes.data || { items: [] })
 }
 
@@ -531,12 +532,12 @@ async function loadChannelsData() {
 async function loadUsersData() {
   const [usersRes, plansRes, channelsRes, keysRes] = await Promise.all([
     api.get('/admin/users', userFilterParams()),
-    api.get('/admin/plans', planFilterParams()),
+    api.get('/admin/plans', allPlansParams()),
     api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
     api.get('/admin/keys')
   ])
   applyListData('users', users, usersRes.data || { items: [] })
-  applyListData('plans', plans, plansRes.data || { items: [] })
+  plans.value = unwrapListData(plansRes.data || [])
   applyListData('upstreamChannels', channels, channelsRes.data || { items: [] })
   apiKeys.value = unwrapListData(keysRes.data || [])
 }
@@ -579,6 +580,10 @@ function planFilterParams() {
     status: planSearch.status,
     category: planSearch.category
   })
+}
+
+function allPlansParams() {
+  return { params: { page: 1, page_size: 200 } }
 }
 
 function orderFilterParams() {
@@ -666,6 +671,7 @@ function openPlanModal(plan = null) {
       quota_period: plan.QuotaPeriod || 'weekly',
       public_channel_id: plan.PublicChannelID || plan.PublicChannel?.ID || '',
       price_rmb: centsToAmount(plan.PriceCents),
+      is_free: Number(plan.PriceCents || 0) === 0 && !plan.IsLottery,
       period_usd_quota: centsToAmount(plan.SettlementUSDCents),
       price_cents: plan.PriceCents,
       settlement_usd_cents: plan.SettlementUSDCents,
@@ -1449,7 +1455,7 @@ function normalizePlan(plan) {
     plan_type: isPublic ? 'public' : 'subscription',
     quota_period: isPublic ? 'public' : plan.quota_period,
     public_channel_id: isPublic ? Number(plan.public_channel_id || 0) : null,
-    price_cents: plan.is_lottery ? 0 : amountToCents(plan.price_rmb),
+    price_cents: plan.is_lottery || plan.is_free ? 0 : amountToCents(plan.price_rmb),
     settlement_usd_cents: amountToCents(plan.period_usd_quota),
     duration_days: isPublic ? 1 : Number(plan.duration_days || 1),
     description: plan.description.trim(),
@@ -1924,6 +1930,7 @@ function submitModal() {
                 { label: '日套餐', value: 'daily' },
                 { label: '周套餐', value: 'weekly' },
                 { label: '活动套餐', value: 'public' },
+                { label: '免费套餐', value: 'free' },
                 { label: '抽奖套餐', value: 'lottery' }
               ]"
             />
@@ -1956,7 +1963,7 @@ function submitModal() {
                 <el-table-column label="价格" width="150">
                   <template #default="{ row: plan }">
                     <div class="plan-price-cell">
-                      <strong>{{ plan.IsLottery ? '抽奖' : rmb(plan.PriceCents) }}</strong>
+                      <strong>{{ plan.IsLottery ? '抽奖' : (plan.PriceCents === 0 ? '免费' : rmb(plan.PriceCents)) }}</strong>
                       <el-tag :type="plan.IsLottery ? 'warning' : 'info'">{{ plan.IsLottery ? '抽奖套餐' : '购买套餐' }}</el-tag>
                     </div>
                   </template>
@@ -2037,6 +2044,7 @@ function submitModal() {
                   <el-option label="全部" value="" />
                   <el-option label="在线支付" value="online" />
                   <el-option label="人工支付" value="manual" />
+                  <el-option label="免费订单" value="free" />
                 </el-select>
               </el-form-item>
             </el-form>
@@ -2759,7 +2767,8 @@ function submitModal() {
           <el-form-item label="套餐名称" required><el-input v-model="planForm.name" placeholder="月卡套餐" /></el-form-item>
           <el-form-item label="套餐编码"><el-input v-model="planForm.code" placeholder="monthly" /></el-form-item>
           <el-form-item label="套餐角标文案"><el-input v-model="planForm.badge_text" placeholder="热卖推荐" maxlength="16" /></el-form-item>
-          <el-form-item label="抽奖套餐"><el-switch v-model="planForm.is_lottery" active-text="参与抽奖" /></el-form-item>
+          <el-form-item label="抽奖套餐"><el-switch v-model="planForm.is_lottery" active-text="参与抽奖" @change="planForm.is_free = false" /></el-form-item>
+          <el-form-item v-if="!planForm.is_lottery" label="免费套餐"><el-switch v-model="planForm.is_free" active-text="免费领取" /></el-form-item>
           <el-form-item label="限额周期">
             <el-select v-model="planForm.quota_period">
               <el-option label="日限额套餐" value="daily" />
@@ -2774,7 +2783,7 @@ function submitModal() {
             </el-select>
           </el-form-item>
           <el-form-item v-if="planForm.is_lottery" class="md:col-span-2" label="参与抽奖按钮跳转地址" required><el-input v-model="planForm.lottery_url" placeholder="https://example.com/lottery" /></el-form-item>
-          <el-form-item v-if="!planForm.is_lottery" label="售价（RMB）"><el-input v-model.number="planForm.price_rmb" type="number" min="0.01" step="0.01" required /></el-form-item>
+          <el-form-item v-if="!planForm.is_lottery && !planForm.is_free" label="售价（RMB）"><el-input v-model.number="planForm.price_rmb" type="number" min="0.01" step="0.01" required /></el-form-item>
           <el-form-item :label="planForm.quota_period === 'public' ? '预计总美元额度' : (planForm.quota_period === 'daily' ? '每日美元额度' : '每周美元额度')"><el-input v-model.number="planForm.period_usd_quota" type="number" min="0" step="0.01" /></el-form-item>
           <el-form-item v-if="planForm.quota_period !== 'public'" label="有效期（天）"><el-input v-model.number="planForm.duration_days" type="number" min="1" required /></el-form-item>
           <el-form-item v-if="planForm.quota_period !== 'public'" label="预计总美元额度"><el-input :model-value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></el-form-item>

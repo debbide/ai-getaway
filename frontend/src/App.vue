@@ -78,9 +78,10 @@ const navItems = computed(() => parseNavigation(publicSettings.value.navigation_
 const activeThemeLabel = computed(() => ({ light: '浅色', dark: '深色', system: '系统' })[themeMode.value] || '深色')
 const accountEmail = computed(() => auth.user?.email || '')
 const accountName = computed(() => auth.user?.username || accountEmail.value.split('@')[0] || '用户')
-const dailyPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && plan.QuotaPeriod === 'daily' && plan.PlanType !== 'public'))
-const weeklyPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && plan.QuotaPeriod !== 'daily' && plan.QuotaPeriod !== 'public' && plan.PlanType !== 'public'))
-const publicPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && (plan.QuotaPeriod === 'public' || plan.PlanType === 'public')))
+const dailyPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && !isFreePlan(plan) && plan.QuotaPeriod === 'daily' && plan.PlanType !== 'public'))
+const weeklyPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && !isFreePlan(plan) && plan.QuotaPeriod !== 'daily' && plan.QuotaPeriod !== 'public' && plan.PlanType !== 'public'))
+const publicPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && !isFreePlan(plan) && (plan.QuotaPeriod === 'public' || plan.PlanType === 'public')))
+const freePlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && Number(plan.PriceCents || 0) === 0))
 const lotteryPlans = computed(() => plans.value.filter((plan) => isLotteryPlan(plan)))
 const onlinePaymentEnabled = computed(() => publicSettings.value.online_payment_enabled !== false)
 const manualPaymentEnabled = computed(() => publicSettings.value.manual_payment_enabled !== false)
@@ -91,6 +92,7 @@ const visiblePricingPlans = computed(() => {
   if (pricingTab.value === 'daily') return dailyPlans.value
   if (pricingTab.value === 'weekly') return weeklyPlans.value
   if (pricingTab.value === 'public') return publicPlans.value
+  if (pricingTab.value === 'free') return freePlans.value
   if (pricingTab.value === 'lottery') return lotteryPlans.value
   return dailyPlans.value
 })
@@ -445,6 +447,7 @@ function applyTheme() {
 
 function priceRmb(plan) {
   if (isLotteryPlan(plan)) return '抽奖'
+  if (isFreePlan(plan)) return '免费'
   return ((plan.PriceCents || 0) / 100).toFixed((plan.PriceCents || 0) % 100 === 0 ? 0 : 1)
 }
 
@@ -494,6 +497,10 @@ function isLotteryPlan(plan) {
   return Boolean(plan?.IsLottery || plan?.is_lottery)
 }
 
+function isFreePlan(plan) {
+  return !isLotteryPlan(plan) && Number(plan?.PriceCents || plan?.price_cents || 0) === 0
+}
+
 function openPlanAction(plan) {
   if (isLotteryPlan(plan)) {
     const url = String(plan?.LotteryURL || '').trim()
@@ -515,7 +522,7 @@ function openPricingOrder(plan) {
     loading: false,
     error: paymentMethod ? '' : '当前没有可用的支付方式，请联系管理员',
     plan,
-    paymentMethod,
+    paymentMethod: isFreePlan(plan) ? 'free' : paymentMethod,
     order: null,
     paymentUrl: '',
     manualQRCode: '',
@@ -542,7 +549,7 @@ function closeOrderModal({ force = false } = {}) {
 
 async function submitPlanOrder() {
   if (!orderModal.plan?.ID) return
-  if (!hasEnabledPaymentMethod.value || !orderModal.paymentMethod) {
+  if (!isFreePlan(orderModal.plan) && (!hasEnabledPaymentMethod.value || !orderModal.paymentMethod)) {
     orderModal.error = '当前没有可用的支付方式，请联系管理员'
     return
   }
@@ -551,9 +558,16 @@ async function submitPlanOrder() {
   try {
     const res = await api.post('/orders', {
       plan_id: Number(orderModal.plan.ID),
-      payment_method: orderModal.paymentMethod
+      payment_method: isFreePlan(orderModal.plan) ? 'free' : orderModal.paymentMethod
     })
     orderModal.order = res.data?.order
+    if (isFreePlan(orderModal.plan)) {
+      await auth.loadMe()
+      navigate('/console')
+      await nextTick()
+      closeOrderModal({ force: true })
+      return
+    }
     if (orderModal.paymentMethod === 'manual') {
       await loadManualPaymentInfo()
       return
@@ -781,6 +795,7 @@ function planSubtitle(index) {
           <button :class="{ active: pricingTab === 'daily' }" @click="pricingTab = 'daily'">日套餐</button>
           <button :class="{ active: pricingTab === 'weekly' }" @click="pricingTab = 'weekly'">周套餐</button>
           <button :class="{ active: pricingTab === 'public' }" @click="pricingTab = 'public'">活动套餐</button>
+          <button :class="{ active: pricingTab === 'free' }" @click="pricingTab = 'free'">免费套餐</button>
           <button :class="{ active: pricingTab === 'lottery' }" @click="pricingTab = 'lottery'">抽奖套餐</button>
         </div>
         <div class="subscription-grid">
@@ -794,7 +809,7 @@ function planSubtitle(index) {
             <h2>{{ plan.Name }}</h2>
             <p>{{ plan.Description || planSubtitle(index) }}</p>
             <div class="subscription-price">
-              <strong>{{ isLotteryPlan(plan) ? '抽奖' : `￥${priceRmb(plan)}` }}</strong>
+              <strong>{{ isLotteryPlan(plan) ? '抽奖' : (isFreePlan(plan) ? '免费' : `￥${priceRmb(plan)}`) }}</strong>
               <span>/{{ planPeriod(plan) }}</span>
             </div>
             <div class="subscription-facts">
@@ -804,7 +819,7 @@ function planSubtitle(index) {
               <div><span class="fact-icon">↗</span><span>总额度：约${{ totalUsd(plan) }}</span></div>
             </div>
             <button class="subscription-action" :disabled="planSoldOut(plan) || (isLotteryPlan(plan) && !plan.LotteryURL)" @click="openPlanAction(plan)">
-              {{ isLotteryPlan(plan) ? '参与抽奖' : (planSoldOut(plan) ? '售罄' : (auth.loggedIn ? '立即续费' : '立即订阅')) }}
+              {{ isLotteryPlan(plan) ? '参与抽奖' : (planSoldOut(plan) ? '售罄' : (isFreePlan(plan) ? '免费领取' : (auth.loggedIn ? '立即续费' : '立即订阅'))) }}
             </button>
             <small>安全支付 · 透明价格</small>
           </article>
@@ -938,13 +953,13 @@ function planSubtitle(index) {
                 <span>{{ quotaPeriodLabel(orderModal.plan) }}</span>
               </div>
               <dl>
-                <div><dt>价格</dt><dd>￥{{ priceRmb(orderModal.plan) }}</dd></div>
+                <div><dt>价格</dt><dd>{{ isFreePlan(orderModal.plan) ? '免费' : `￥${priceRmb(orderModal.plan)}` }}</dd></div>
                 <div><dt>额度</dt><dd>${{ orderModal.plan.QuotaPeriod === 'public' ? totalUsd(orderModal.plan) : periodUsd(orderModal.plan) }}</dd></div>
                 <div v-if="orderModal.plan.QuotaPeriod !== 'public'"><dt>有效期</dt><dd>{{ orderModal.plan.DurationDays }} 天</dd></div>
               </dl>
             </section>
 
-            <section v-if="!orderModal.order" class="payment-method-field order-section-card">
+            <section v-if="!orderModal.order && !isFreePlan(orderModal.plan)" class="payment-method-field order-section-card">
               <strong>选择支付方式</strong>
               <div class="payment-method-options" role="radiogroup" aria-label="选择支付方式">
                 <button v-if="onlinePaymentEnabled" type="button" class="payment-method-option" :class="{ active: orderModal.paymentMethod === 'online' }" role="radio" :aria-checked="orderModal.paymentMethod === 'online'" @click="orderModal.paymentMethod = 'online'">
@@ -988,8 +1003,8 @@ function planSubtitle(index) {
           </div>
           <div class="modal-actions order-modal-actions">
             <button type="button" class="ghost-button" :disabled="orderModal.loading" @click="closeOrderModal">{{ orderModal.order && orderModal.paymentMethod === 'online' ? '稍后处理' : '取消' }}</button>
-            <button v-if="!orderModal.order || orderModal.paymentMethod === 'manual'" class="primary-button" :disabled="orderModal.loading || !orderModal.paymentMethod || (orderModal.order && orderModal.paymentMethod === 'manual' && !orderModal.manualQRCode)">
-              {{ orderModal.loading ? '提交中...' : (orderModal.order && orderModal.paymentMethod === 'manual' ? '提交审核' : '确认下单') }}
+            <button v-if="!orderModal.order || orderModal.paymentMethod === 'manual'" class="primary-button" :disabled="orderModal.loading || (!isFreePlan(orderModal.plan) && !orderModal.paymentMethod) || (orderModal.order && orderModal.paymentMethod === 'manual' && !orderModal.manualQRCode)">
+              {{ orderModal.loading ? '提交中...' : (orderModal.order && orderModal.paymentMethod === 'manual' ? '提交审核' : (isFreePlan(orderModal.plan) ? '免费领取' : '确认下单')) }}
             </button>
           </div>
         </form>

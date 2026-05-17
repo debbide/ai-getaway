@@ -84,6 +84,7 @@ func localizeMessage(message string) string {
 		"payment config missing":                        "支付配置未完成，请联系管理员",
 		"payment not completed":                         "支付结果尚未确认，请完成支付后再试",
 		"plan not found":                                "套餐不存在或已下架",
+		"plan price required":                           "套餐价格不能小于 0",
 		"rate limit exceeded":                           "请求过于频繁，请稍后再试",
 		"subscription expired":                          "订阅已到期，请续费后继续使用",
 		"subscription quota exceeded":                   "本周美元额度已用完，请升级或续费后继续使用",
