@@ -177,6 +177,9 @@ func orderTypeForPlan(db *gorm.DB, user model.User, targetPlan model.Plan, now t
 	if !service.HasActiveSubscription(user, now) || user.Plan == nil || targetPlan.PriceCents == 0 {
 		return model.OrderTypePurchase
 	}
+	if user.Plan.PriceCents == 0 {
+		return model.OrderTypePurchase
+	}
 	if user.PlanID != nil && *user.PlanID == targetPlan.ID {
 		return model.OrderTypeRenewal
 	}
@@ -387,6 +390,9 @@ func activeSubscriptionBlocksPlanOrderAt(db *gorm.DB, user model.User, targetPla
 	}
 	if targetPlan.PriceCents == 0 && !targetPlan.IsLottery {
 		return true
+	}
+	if user.Plan != nil && user.Plan.PriceCents == 0 {
+		return false
 	}
 	if user.PlanID != nil && *user.PlanID == targetPlan.ID {
 		return false

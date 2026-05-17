@@ -58,6 +58,10 @@ const upgradeModal = reactive({
   open: false,
   plan: null
 })
+const freeOverrideModal = reactive({
+  open: false,
+  plan: null
+})
 const orderModal = reactive({
   open: false,
   loading: false,
@@ -559,6 +563,16 @@ function isCurrentUserPlan(plan) {
   return Boolean(current?.id && plan?.ID && Number(current.id) === Number(plan.ID))
 }
 
+function isCurrentPlanFree() {
+  return hasActiveUserPlan() && currentPlanPriceCents() === 0
+}
+
+function hasClaimedFreePlan(plan) {
+  if (!isFreePlan(plan) || !auth.loggedIn) return false
+  const ids = auth.user?.claimed_free_plan_ids || []
+  return ids.some((id) => Number(id) === Number(plan?.ID))
+}
+
 function activePublicPlanQuotaUsedUp() {
   const current = activeUserPlan()
   if (!current || current.plan_type !== 'public') return false
@@ -570,6 +584,7 @@ function activePublicPlanQuotaUsedUp() {
 function planSubscriptionAction(plan) {
   if (!auth.loggedIn || !hasActiveUserPlan()) return 'purchase'
   if (isFreePlan(plan)) return 'blocked'
+  if (isCurrentPlanFree()) return 'purchase'
   if (isCurrentUserPlan(plan)) return 'renew'
   if (activePublicPlanQuotaUsedUp()) return 'purchase'
   if (planPriceCents(plan) > currentPlanPriceCents()) return 'upgrade'
@@ -580,6 +595,7 @@ function planActionText(plan) {
   if (isLotteryPlan(plan)) return '参与抽奖'
   if (isFreePlan(plan) && publicQuotaInsufficient(plan)) return '额度不足等待补充'
   if (planSoldOut(plan)) return '售罄'
+  if (hasClaimedFreePlan(plan)) return '已领取'
   if (isFreePlan(plan)) return hasActiveUserPlan() ? '不满足订阅条件' : '免费领取'
   const action = planSubscriptionAction(plan)
   if (action === 'renew') return '立即续费'
@@ -591,6 +607,7 @@ function planActionText(plan) {
 function planActionDisabled(plan) {
   if (planSoldOut(plan)) return true
   if (isLotteryPlan(plan)) return !plan.LotteryURL
+  if (hasClaimedFreePlan(plan)) return true
   return planSubscriptionAction(plan) === 'blocked'
 }
 
@@ -603,6 +620,10 @@ function openPlanAction(plan) {
   if (planActionDisabled(plan)) return
   if (planSubscriptionAction(plan) === 'upgrade') {
     openUpgradeModal(plan)
+    return
+  }
+  if (!isFreePlan(plan) && isCurrentPlanFree()) {
+    openFreeOverrideModal(plan)
     return
   }
   openPricingOrder(plan)
@@ -619,6 +640,20 @@ function closeUpgradeModal() {
 function confirmUpgradePlan() {
   const plan = upgradeModal.plan
   closeUpgradeModal()
+  if (plan) openPricingOrder(plan)
+}
+
+function openFreeOverrideModal(plan) {
+  Object.assign(freeOverrideModal, { open: true, plan })
+}
+
+function closeFreeOverrideModal() {
+  Object.assign(freeOverrideModal, { open: false, plan: null })
+}
+
+function confirmFreeOverridePlan() {
+  const plan = freeOverrideModal.plan
+  closeFreeOverrideModal()
   if (plan) openPricingOrder(plan)
 }
 
@@ -1143,6 +1178,30 @@ function planSubtitle(index) {
             </button>
           </div>
         </form>
+      </div>
+    </Transition>
+
+    <Transition name="modal-fade">
+      <div v-if="freeOverrideModal.open" class="modal-backdrop upgrade-backdrop" @click.self="closeFreeOverrideModal">
+        <section class="modal-card upgrade-modal-card">
+          <div class="upgrade-modal-head">
+            <span class="upgrade-alert-icon">!</span>
+            <div>
+              <p class="section-kicker">Subscribe</p>
+              <h2>付费套餐将覆盖免费套餐</h2>
+            </div>
+          </div>
+          <p class="upgrade-copy">
+            你当前正在使用免费套餐。购买 {{ freeOverrideModal.plan?.Name }} 后，会直接切换到新的付费套餐，免费套餐剩余额度不会累加到新套餐中。
+          </p>
+          <div class="upgrade-note">
+            付费套餐审核通过后按新套餐额度和有效期生效；如果是日套餐或周套餐，仍需要等待管理员审核。
+          </div>
+          <div class="modal-actions upgrade-actions">
+            <button type="button" class="ghost-button" @click="closeFreeOverrideModal">取消</button>
+            <button type="button" class="primary-button" @click="confirmFreeOverridePlan">我知道了，继续订购</button>
+          </div>
+        </section>
       </div>
     </Transition>
 

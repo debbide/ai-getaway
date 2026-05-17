@@ -246,6 +246,40 @@ func TestUsedUpPublicSubscriptionCreatesPurchaseNotUpgrade(t *testing.T) {
 	}
 }
 
+func TestFreeSubscriptionCreatesPurchaseForPaidPlan(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	freePlanID := uint(1)
+	expiresAt := now.Add(24 * time.Hour)
+	user := model.User{
+		Status:    model.UserStatusApproved,
+		PlanID:    &freePlanID,
+		ExpiresAt: &expiresAt,
+		Plan: &model.Plan{
+			PriceCents: 0,
+			PlanType:   model.PlanTypeSubscription,
+		},
+	}
+	targetPlan := model.Plan{
+		PlanType:   model.PlanTypeSubscription,
+		PriceCents: 1500,
+	}
+
+	blocked := activeSubscriptionBlocksPlanOrderAt(nil, user, targetPlan, now, func(*gorm.DB, uint, time.Time) int64 {
+		return 0
+	})
+	if blocked {
+		t.Fatal("expected paid plan to be available when current plan is free")
+	}
+
+	got := orderTypeForPlan(nil, user, targetPlan, now, func(*gorm.DB, uint, time.Time) int64 { return 0 })
+	if got != model.OrderTypePurchase {
+		t.Fatalf("order type = %q, want %q", got, model.OrderTypePurchase)
+	}
+	if amount := orderAmountCentsForPlan(user, targetPlan, got); amount != targetPlan.PriceCents {
+		t.Fatalf("amount = %d, want %d", amount, targetPlan.PriceCents)
+	}
+}
+
 func TestRenewalExtendsFromExistingExpiry(t *testing.T) {
 	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.AddDate(0, 0, 5)

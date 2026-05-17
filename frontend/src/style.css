@@ -2025,8 +2025,7 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb {
 }
 
 .model-pricing-table {
-  min-width: 1260px;
-  table-layout: fixed;
+  width: 100%;
 }
 
 .model-pricing-table th,

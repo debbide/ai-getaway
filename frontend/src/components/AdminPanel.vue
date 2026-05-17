@@ -2081,15 +2081,15 @@ function submitModal() {
                 <el-table-column label="状态" width="130">
                   <template #default="{ row: order }"><el-tag>{{ statusLabel(order.Status) }}</el-tag></template>
                 </el-table-column>
-                <el-table-column label="操作" min-width="360">
+                <el-table-column label="操作" width="360" fixed="right">
                   <template #default="{ row: order }">
                     <div class="table-actions">
                       <el-button size="small" @click="openEditOrderModal(order)">编辑</el-button>
-                      <el-button type="primary" size="small" :disabled="order.Status !== 'pending_payment'" @click="completeOrderPayment(order)">完成支付</el-button>
-                      <el-button size="small" :disabled="!reviewableOrderStatuses.includes(order.Status)" @click="openApproveModal(order)">审核</el-button>
-                      <el-button type="danger" size="small" :disabled="!reviewableOrderStatuses.includes(order.Status)" @click="openRejectModal(order)">拒绝</el-button>
-                      <el-button type="warning" size="small" :disabled="order.Status === 'approved' || order.Status === 'rejected' || order.Status === 'payment_timeout'" @click="confirmCloseOrder(order)">关闭</el-button>
-                      <el-button type="danger" plain size="small" :disabled="order.Status === 'approved'" @click="confirmDeleteOrder(order)">删除</el-button>
+                      <el-button v-if="order.Status === 'pending_payment'" type="primary" size="small" @click="completeOrderPayment(order)">完成支付</el-button>
+                      <el-button v-if="reviewableOrderStatuses.includes(order.Status)" size="small" @click="openApproveModal(order)">审核</el-button>
+                      <el-button v-if="reviewableOrderStatuses.includes(order.Status)" type="danger" size="small" @click="openRejectModal(order)">拒绝</el-button>
+                      <el-button v-if="order.Status !== 'approved' && order.Status !== 'rejected' && order.Status !== 'payment_timeout'" type="warning" size="small" @click="confirmCloseOrder(order)">关闭</el-button>
+                      <el-button v-if="order.Status !== 'approved'" type="danger" plain size="small" @click="confirmDeleteOrder(order)">删除</el-button>
                     </div>
                   </template>
                 </el-table-column>
@@ -2135,7 +2135,7 @@ function submitModal() {
                 <el-table-column label="展示卡片" width="110"><template #default="{ row: item }"><el-tag :type="item.Featured ? 'success' : 'info'">{{ item.Featured ? '展示' : '不展示' }}</el-tag></template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: item }"><el-tag :type="item.Status === 'active' ? 'success' : 'info'">{{ modelStatusLabel(item.Status) }}</el-tag></template></el-table-column>
                 <el-table-column label="同步时间" min-width="150"><template #default="{ row: item }">{{ formatSyncTime(item.OfficialSyncedAt) }}</template></el-table-column>
-                <el-table-column label="操作" width="150"><template #default="{ row: item }"><div class="table-actions"><el-button size="small" @click="openModelModal(item)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteModel(item)">删除</el-button></div></template></el-table-column>
+                <el-table-column label="操作" width="150" fixed="right"><template #default="{ row: item }"><div class="table-actions"><el-button size="small" @click="openModelModal(item)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteModel(item)">删除</el-button></div></template></el-table-column>
               </el-table>
             </div>
             <div class="p-4 flex justify-end">

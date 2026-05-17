@@ -205,7 +205,30 @@ func (a *AuthController) Me(c *gin.Context) {
 			body["total_quota_usage"] = service.PlanTotalQuotaUsage(a.db, user.ID, user.Plan, *subscriptionStartedAt, *user.ExpiresAt)
 		}
 	}
+	body["claimed_free_plan_ids"] = a.claimedFreePlanIDs(user.ID)
 	response.OK(c, body)
+}
+
+func (a *AuthController) claimedFreePlanIDs(userID uint) []uint {
+	var orders []model.Order
+	if err := a.db.Select("plan_id").
+		Where("user_id = ? AND payment_method = ? AND status IN ?", userID, "free", []string{
+			model.OrderStatusPendingReview,
+			model.OrderStatusApproved,
+			model.OrderStatusManualReview,
+		}).
+		Find(&orders).Error; err != nil {
+		return []uint{}
+	}
+	seen := map[uint]bool{}
+	ids := make([]uint, 0, len(orders))
+	for _, order := range orders {
+		if !seen[order.PlanID] {
+			seen[order.PlanID] = true
+			ids = append(ids, order.PlanID)
+		}
+	}
+	return ids
 }
 
 func (a *AuthController) ChangePassword(c *gin.Context) {
