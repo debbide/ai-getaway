@@ -473,7 +473,7 @@ async function confirmManualPaymentSubmission() {
 }
 
 function periodUsd(plan) {
-  return ((plan.SettlementUSDCents || 0) / 100).toFixed((plan.SettlementUSDCents || 0) % 100 === 0 ? 0 : 2)
+  return usdDisplay(plan.SettlementUSDCents || 0)
 }
 
 function quotaPeriodLabel(plan) {
@@ -483,9 +483,9 @@ function quotaPeriodLabel(plan) {
 }
 
 function totalUsd(plan) {
-  if (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') return ((plan.SettlementUSDCents || 0) / 100).toFixed(0)
+  if (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') return usdDisplay(plan.SettlementUSDCents || 0)
   const units = plan.QuotaPeriod === 'daily' ? (plan.DurationDays || 1) : Math.max(1, Math.round((plan.DurationDays || 30) / 7))
-  return (((plan.SettlementUSDCents || 0) / 100) * units).toFixed(0)
+  return usdDisplay(Number(plan.SettlementUSDCents || 0) * units)
 }
 
 function planPeriod(plan) {
@@ -811,7 +811,13 @@ function accountPaymentNote() {
 }
 
 function publicRemainingUsd(plan) {
-  return (publicRemainingCents(plan) / 100).toFixed(0)
+  return usdDisplay(publicRemainingCents(plan))
+}
+
+function usdDisplay(cents) {
+  const amount = Number(cents || 0) / 100
+  if (!Number.isFinite(amount)) return '0'
+  return amount.toFixed(2).replace(/\.?0+$/, '')
 }
 
 function planProtocolTags(plan) {
