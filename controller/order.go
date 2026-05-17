@@ -21,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type OrderController struct {
@@ -118,6 +119,14 @@ func (o *OrderController) Create(c *gin.Context) {
 			response.Error(c, 409, "order already waiting review")
 			return
 		}
+		if plan.PriceCents == 0 {
+			if err := completeFreeOrder(o.db, &existing); err != nil {
+				writeFreeOrderError(c, err)
+				return
+			}
+			response.OK(c, gin.H{"order": existing, "reused": true})
+			return
+		}
 		if updates, changed := pendingOrderPaymentMethodUpdates(existing, paymentMethod, ctxUser.ID); changed {
 			if err := o.db.Model(&existing).Updates(updates).Error; err != nil {
 				response.Error(c, 500, "failed to create order")
@@ -153,15 +162,21 @@ func (o *OrderController) Create(c *gin.Context) {
 	order.Plan = plan
 	if plan.PriceCents == 0 {
 		if err := completeFreeOrder(o.db, &order); err != nil {
-			if err.Error() == "public plan sold out" {
-				response.Error(c, 409, "public plan sold out")
-				return
-			}
-			response.Error(c, 500, "failed to create order")
+			o.db.Delete(&order)
+			writeFreeOrderError(c, err)
 			return
 		}
 	}
 	response.Created(c, gin.H{"order": order, "reused": false})
+}
+
+func writeFreeOrderError(c *gin.Context, err error) {
+	switch err.Error() {
+	case "public plan sold out", "free plan sold out", "free plan user limit reached":
+		response.Error(c, 409, err.Error())
+	default:
+		response.Error(c, 500, "failed to create order")
+	}
 }
 
 func normalizePaymentMethod(value string) string {
@@ -209,22 +224,132 @@ func completeFreeOrder(db *gorm.DB, order *model.Order) error {
 	updates["payment_channel"] = "free"
 	updates["paid_amount_cents"] = 0
 	if order.Plan.PlanType != model.PlanTypePublic {
-		result := db.Model(&model.Order{}).
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if err := claimFreePlan(tx, order.UserID, order.PlanID); err != nil {
+				return err
+			}
+			result := tx.Model(&model.Order{}).
+				Where("id = ? AND status = ?", order.ID, model.OrderStatusPendingPayment).
+				Updates(updates)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return handlePaidOrderAlreadyProcessed(tx, order, nil)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		_ = db.Preload("Plan").First(order, order.ID).Error
+		go service.SendOrderPaymentAdminNotification(db, order.ID)
+		return nil
+	}
+	return completeFreePublicOrder(db, order)
+}
+
+func completeFreePublicOrder(db *gorm.DB, order *model.Order) error {
+	now := time.Now()
+	expiresAt := now.AddDate(100, 0, 0)
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := claimFreePlan(tx, order.UserID, order.PlanID); err != nil {
+			return err
+		}
+		var plan model.Plan
+		if err := tx.Preload("PublicChannel").First(&plan, order.PlanID).Error; err != nil {
+			return err
+		}
+		orderUpdates := paymentOrderUpdates(model.OrderStatusApproved, nil, now)
+		orderUpdates["payment_channel"] = "free"
+		orderUpdates["paid_amount_cents"] = 0
+		result := tx.Model(&model.Order{}).
 			Where("id = ? AND status = ?", order.ID, model.OrderStatusPendingPayment).
-			Updates(updates)
+			Updates(orderUpdates)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected == 0 {
-			return handlePaidOrderAlreadyProcessed(db, order, nil)
+			return handlePaidOrderAlreadyProcessed(tx, order, nil)
 		}
-		if err := db.Preload("Plan").First(order, order.ID).Error; err != nil {
+		if plan.PublicChannelID == nil || plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents {
+			return fmt.Errorf("public plan sold out")
+		}
+		result = tx.Model(&model.PublicChannel{}).
+			Where("id = ? AND remaining_usd_cents >= ?", *plan.PublicChannelID, plan.SettlementUSDCents).
+			Update("remaining_usd_cents", gorm.Expr("remaining_usd_cents - ?", plan.SettlementUSDCents))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("public plan sold out")
+		}
+		return tx.Model(&model.User{}).Where("id = ?", order.UserID).Updates(map[string]interface{}{
+			"status":     model.UserStatusApproved,
+			"plan_id":    plan.ID,
+			"expires_at": &expiresAt,
+		}).Error
+	})
+	if err != nil {
+		return err
+	}
+	order.Status = model.OrderStatusApproved
+	order.ApprovedAt = &now
+	go service.SendOrderApprovedUserNotification(db, order.ID, order.AdminNote)
+	return nil
+}
+
+func claimFreePlan(db *gorm.DB, userID, planID uint) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var plan model.Plan
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&plan, planID).Error; err != nil {
 			return err
 		}
-		go service.SendOrderPaymentAdminNotification(db, order.ID)
-		return nil
+		if plan.PriceCents != 0 || plan.IsLottery {
+			return nil
+		}
+		var totalClaimed int64
+		if err := tx.Model(&model.Order{}).
+			Where("plan_id = ? AND payment_method = ? AND status IN ?", planID, "free", freeClaimedOrderStatuses()).
+			Count(&totalClaimed).Error; err != nil {
+			return err
+		}
+		if plan.FreeTotalLimit > 0 && totalClaimed >= int64(plan.FreeTotalLimit) {
+			return fmt.Errorf("free plan sold out")
+		}
+		perUserLimit := plan.FreePerUserLimit
+		if perUserLimit <= 0 {
+			perUserLimit = 1
+		}
+		var claimedByUser int64
+		if err := tx.Model(&model.Order{}).
+			Where("user_id = ? AND plan_id = ? AND payment_method = ? AND status IN ?", userID, planID, "free", freeClaimedOrderStatuses()).
+			Count(&claimedByUser).Error; err != nil {
+			return err
+		}
+		if claimedByUser >= int64(perUserLimit) {
+			return fmt.Errorf("free plan user limit reached")
+		}
+		result := tx.Model(&model.Plan{}).Where("id = ?", planID).Update("free_claimed_count", int(totalClaimed)+1)
+		return result.Error
+	})
+}
+
+func refreshFreePlanClaimedCount(db *gorm.DB, planID uint) error {
+	var totalClaimed int64
+	if err := db.Model(&model.Order{}).
+		Where("plan_id = ? AND payment_method = ? AND status IN ?", planID, "free", freeClaimedOrderStatuses()).
+		Count(&totalClaimed).Error; err != nil {
+		return err
 	}
-	return completePaidOrder(db, order, nil, nil)
+	return db.Model(&model.Plan{}).Where("id = ?", planID).Update("free_claimed_count", int(totalClaimed)).Error
+}
+
+func freeClaimedOrderStatuses() []string {
+	return []string{
+		model.OrderStatusPendingReview,
+		model.OrderStatusApproved,
+		model.OrderStatusManualReview,
+	}
 }
 
 func activeSubscriptionBlocksNewOrder(db *gorm.DB, user model.User) bool {

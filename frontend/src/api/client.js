@@ -38,6 +38,8 @@ const messageMap = {
   'paid or payment-started order amount cannot be changed': '订单已开始支付，不能修改金额',
   'public channel sold out': '公共渠道额度已售罄，请选择其他套餐',
   'public plan sold out': '该活动套餐已售罄，请选择其他套餐',
+  'free plan sold out': '免费套餐已领完',
+  'free plan user limit reached': '你已达到该免费套餐的领取上限',
   'subscription expired': '订阅已到期，请续费后继续使用',
   'subscription quota exceeded': '本周美元额度已用完，请升级或续费后继续使用',
   'user disabled': '账号已被禁用，请联系管理员',

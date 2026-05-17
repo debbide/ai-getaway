@@ -490,6 +490,7 @@ function planPeriod(plan) {
 
 function planSoldOut(plan) {
   if (isLotteryPlan(plan)) return false
+  if (isFreePlan(plan)) return freeClaimSoldOut(plan)
   return (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') && Number(plan.PublicChannel?.RemainingUSDCents || 0) < Number(plan.SettlementUSDCents || 0)
 }
 
@@ -499,6 +500,24 @@ function isLotteryPlan(plan) {
 
 function isFreePlan(plan) {
   return !isLotteryPlan(plan) && Number(plan?.PriceCents || plan?.price_cents || 0) === 0
+}
+
+function freeClaimSoldOut(plan) {
+  const limit = Number(plan?.FreeTotalLimit || 0)
+  return limit > 0 && Number(plan?.FreeClaimedCount || 0) >= limit
+}
+
+function freeClaimPercent(plan) {
+  const limit = Number(plan?.FreeTotalLimit || 0)
+  if (limit <= 0) return 0
+  return Math.min(100, Math.max(0, (Number(plan?.FreeClaimedCount || 0) / limit) * 100))
+}
+
+function freeClaimText(plan) {
+  const claimed = Number(plan?.FreeClaimedCount || 0)
+  const limit = Number(plan?.FreeTotalLimit || 0)
+  if (limit <= 0) return `已领取 ${claimed} 份 / 不限量`
+  return `已领取 ${claimed} / ${limit} 份`
 }
 
 function openPlanAction(plan) {
@@ -817,6 +836,13 @@ function planSubtitle(index) {
               <div v-if="plan.QuotaPeriod === 'public' && !isLotteryPlan(plan)"><span class="fact-icon">□</span><span>公共渠道剩余：${{ publicRemainingUsd(plan) }}</span></div>
               <div v-else><span class="fact-icon">□</span><span>套餐时长：{{ plan.DurationDays }} 天</span></div>
               <div><span class="fact-icon">↗</span><span>总额度：约${{ totalUsd(plan) }}</span></div>
+            </div>
+            <div v-if="isFreePlan(plan)" class="free-claim-meter">
+              <div>
+                <span>{{ freeClaimText(plan) }}</span>
+                <strong>{{ planSoldOut(plan) ? '已售罄' : '可领取' }}</strong>
+              </div>
+              <span class="free-claim-track"><i :style="{ width: `${freeClaimPercent(plan)}%` }"></i></span>
             </div>
             <button class="subscription-action" :disabled="planSoldOut(plan) || (isLotteryPlan(plan) && !plan.LotteryURL)" @click="openPlanAction(plan)">
               {{ isLotteryPlan(plan) ? '参与抽奖' : (planSoldOut(plan) ? '售罄' : (isFreePlan(plan) ? '免费领取' : (auth.loggedIn ? '立即续费' : '立即订阅'))) }}

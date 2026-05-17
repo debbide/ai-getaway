@@ -1307,6 +1307,44 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb {
   font-size: 20px;
 }
 
+.free-claim-meter {
+  display: grid;
+  gap: 10px;
+  margin-top: 28px;
+}
+
+.free-claim-meter div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(247, 248, 251, 0.72);
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.free-claim-meter strong {
+  color: #f0a67f;
+  white-space: nowrap;
+}
+
+.free-claim-track {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.free-claim-track i {
+  display: block;
+  height: 100%;
+  max-width: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #df845c, #f0b38f);
+  box-shadow: 0 0 22px rgba(223, 132, 92, 0.24);
+}
+
 .subscription-action {
   width: 100%;
   margin-top: 48px;

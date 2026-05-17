@@ -47,6 +47,8 @@ type planRequest struct {
 	Description        string `json:"description"`
 	IsLottery          bool   `json:"is_lottery"`
 	LotteryURL         string `json:"lottery_url"`
+	FreePerUserLimit   int    `json:"free_per_user_limit"`
+	FreeTotalLimit     int    `json:"free_total_limit"`
 	Enabled            bool   `json:"enabled"`
 }
 
@@ -564,6 +566,8 @@ func (a *AdminController) CreatePlan(c *gin.Context) {
 		Description:        req.Description,
 		IsLottery:          req.IsLottery,
 		LotteryURL:         strings.TrimSpace(req.LotteryURL),
+		FreePerUserLimit:   normalizedFreePerUserLimit(req),
+		FreeTotalLimit:     normalizedFreeTotalLimit(req),
 		Enabled:            req.Enabled,
 	}
 	if err := a.db.Create(&plan).Error; err != nil {
@@ -596,6 +600,8 @@ func (a *AdminController) UpdatePlan(c *gin.Context) {
 		"description":          req.Description,
 		"is_lottery":           req.IsLottery,
 		"lottery_url":          strings.TrimSpace(req.LotteryURL),
+		"free_per_user_limit":  normalizedFreePerUserLimit(req),
+		"free_total_limit":     normalizedFreeTotalLimit(req),
 		"enabled":              req.Enabled,
 	}
 	if err := a.db.Model(&model.Plan{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
@@ -798,18 +804,36 @@ func (a *AdminController) RejectOrder(c *gin.Context) {
 	if req.AdminNote == "" {
 		req.AdminNote = c.Query("note")
 	}
-	result := a.db.Model(&model.Order{}).
-		Where("id = ? AND status IN ?", c.Param("id"), []string{model.OrderStatusPendingReview, model.OrderStatusManualReview, model.OrderStatusPaidLate}).
-		Updates(map[string]interface{}{
-			"status":     model.OrderStatusRejected,
-			"admin_note": req.AdminNote,
-		})
-	if result.Error != nil {
-		response.Error(c, 500, "failed to reject order")
+
+	var order model.Order
+	if err := a.db.First(&order, c.Param("id")).Error; err != nil {
+		response.Error(c, 404, "order not found")
 		return
 	}
-	if result.RowsAffected == 0 {
-		response.Error(c, 409, "order not rejectable")
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.Order{}).
+			Where("id = ? AND status IN ?", order.ID, []string{model.OrderStatusPendingReview, model.OrderStatusManualReview, model.OrderStatusPaidLate}).
+			Updates(map[string]interface{}{
+				"status":     model.OrderStatusRejected,
+				"admin_note": req.AdminNote,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if order.PaymentMethod == "free" {
+			return refreshFreePlanClaimedCount(tx, order.PlanID)
+		}
+		return nil
+	})
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			response.Error(c, 409, "order not rejectable")
+			return
+		}
+		response.Error(c, 500, "failed to reject order")
 		return
 	}
 	response.OK(c, nil)
@@ -842,7 +866,16 @@ func (a *AdminController) CloseOrder(c *gin.Context) {
 		return
 	}
 
-	if err := a.db.Model(&model.Order{}).Where("id = ?", order.ID).Updates(updates).Error; err != nil {
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Order{}).Where("id = ?", order.ID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if order.PaymentMethod == "free" {
+			return refreshFreePlanClaimedCount(tx, order.PlanID)
+		}
+		return nil
+	})
+	if err != nil {
 		response.Error(c, 500, "failed to close order")
 		return
 	}
@@ -859,8 +892,16 @@ func (a *AdminController) DeleteOrder(c *gin.Context) {
 		response.Error(c, 409, "approved order cannot be deleted")
 		return
 	}
-	result := a.db.Delete(&model.Order{}, order.ID)
-	if result.Error != nil {
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&model.Order{}, order.ID).Error; err != nil {
+			return err
+		}
+		if order.PaymentMethod == "free" {
+			return refreshFreePlanClaimedCount(tx, order.PlanID)
+		}
+		return nil
+	})
+	if err != nil {
 		response.Error(c, 500, "failed to delete order")
 		return
 	}
@@ -1064,6 +1105,23 @@ func normalizedPublicChannelID(req planRequest) *uint {
 		return nil
 	}
 	return req.PublicChannelID
+}
+
+func normalizedFreePerUserLimit(req planRequest) int {
+	if req.IsLottery || req.PriceCents > 0 {
+		return 0
+	}
+	if req.FreePerUserLimit <= 0 {
+		return 1
+	}
+	return req.FreePerUserLimit
+}
+
+func normalizedFreeTotalLimit(req planRequest) int {
+	if req.IsLottery || req.PriceCents > 0 || req.FreeTotalLimit < 0 {
+		return 0
+	}
+	return req.FreeTotalLimit
 }
 
 func (a *AdminController) validatePlanRequest(req planRequest) error {

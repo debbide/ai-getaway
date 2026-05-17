@@ -74,6 +74,9 @@ type Plan struct {
 	Description        string `gorm:"size:255"`
 	IsLottery          bool   `gorm:"default:false;index"`
 	LotteryURL         string `gorm:"size:512"`
+	FreePerUserLimit   int    `gorm:"default:1"`
+	FreeTotalLimit     int    `gorm:"default:0"`
+	FreeClaimedCount   int    `gorm:"default:0"`
 	Enabled            bool   `gorm:"default:true;index"`
 }
 

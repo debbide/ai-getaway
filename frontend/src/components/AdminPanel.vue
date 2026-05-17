@@ -259,6 +259,8 @@ function emptyPlan() {
     public_channel_id: '',
     price_rmb: 9.9,
     is_free: false,
+    free_per_user_limit: 1,
+    free_total_limit: 0,
     period_usd_quota: 20,
     price_cents: 990,
     settlement_usd_cents: 2000,
@@ -672,6 +674,8 @@ function openPlanModal(plan = null) {
       public_channel_id: plan.PublicChannelID || plan.PublicChannel?.ID || '',
       price_rmb: centsToAmount(plan.PriceCents),
       is_free: Number(plan.PriceCents || 0) === 0 && !plan.IsLottery,
+      free_per_user_limit: plan.FreePerUserLimit || 1,
+      free_total_limit: plan.FreeTotalLimit || 0,
       period_usd_quota: centsToAmount(plan.SettlementUSDCents),
       price_cents: plan.PriceCents,
       settlement_usd_cents: plan.SettlementUSDCents,
@@ -1461,6 +1465,8 @@ function normalizePlan(plan) {
     description: plan.description.trim(),
     is_lottery: Boolean(plan.is_lottery),
     lottery_url: plan.lottery_url.trim(),
+    free_per_user_limit: plan.is_free ? Number(plan.free_per_user_limit || 1) : 0,
+    free_total_limit: plan.is_free ? Number(plan.free_total_limit || 0) : 0,
     enabled: Boolean(plan.enabled)
   }
 }
@@ -1974,6 +1980,7 @@ function submitModal() {
                       <span>{{ quotaPeriodLabel(plan.QuotaPeriod) }}美元额度</span>
                       <strong>{{ usd(plan.SettlementUSDCents) }}</strong>
                       <small>预计总额 {{ totalUsd(plan) }}</small>
+                      <small v-if="plan.PriceCents === 0">已领取 {{ plan.FreeClaimedCount || 0 }} / {{ plan.FreeTotalLimit || '不限' }}</small>
                     </div>
                   </template>
                 </el-table-column>
@@ -2784,6 +2791,8 @@ function submitModal() {
           </el-form-item>
           <el-form-item v-if="planForm.is_lottery" class="md:col-span-2" label="参与抽奖按钮跳转地址" required><el-input v-model="planForm.lottery_url" placeholder="https://example.com/lottery" /></el-form-item>
           <el-form-item v-if="!planForm.is_lottery && !planForm.is_free" label="售价（RMB）"><el-input v-model.number="planForm.price_rmb" type="number" min="0.01" step="0.01" required /></el-form-item>
+          <el-form-item v-if="planForm.is_free" label="每人领取上限"><el-input v-model.number="planForm.free_per_user_limit" type="number" min="1" step="1" required /></el-form-item>
+          <el-form-item v-if="planForm.is_free" label="总领取上限"><el-input v-model.number="planForm.free_total_limit" type="number" min="0" step="1" placeholder="0 表示不限" /></el-form-item>
           <el-form-item :label="planForm.quota_period === 'public' ? '预计总美元额度' : (planForm.quota_period === 'daily' ? '每日美元额度' : '每周美元额度')"><el-input v-model.number="planForm.period_usd_quota" type="number" min="0" step="0.01" /></el-form-item>
           <el-form-item v-if="planForm.quota_period !== 'public'" label="有效期（天）"><el-input v-model.number="planForm.duration_days" type="number" min="1" required /></el-form-item>
           <el-form-item v-if="planForm.quota_period !== 'public'" label="预计总美元额度"><el-input :model-value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></el-form-item>

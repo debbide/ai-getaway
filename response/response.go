@@ -63,6 +63,8 @@ func localizeMessage(message string) string {
 		"failed to update plan":                         "套餐更新失败，请检查填写内容",
 		"failed to update settings":                     "系统设置保存失败，请稍后重试",
 		"failed to update user":                         "用户更新失败，请稍后重试",
+		"free plan sold out":                            "免费套餐已领完",
+		"free plan user limit reached":                  "你已达到该免费套餐的领取上限",
 		"invalid api key":                               "API Key 无效，请检查后重试",
 		"invalid authorization token":                   "登录状态已失效，请重新登录",
 		"invalid credentials":                           "邮箱或密码不正确，请检查后重试",
