@@ -1152,6 +1152,29 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb {
   height: 18px;
   border-radius: 50%;
   background: #a96347;
+  animation: pricing-dot-breathe 1.35s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.pricing-dots span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.pricing-dots span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+@keyframes pricing-dot-breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.72);
+  }
+
+  45% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
 }
 
 .pricing-tabs {

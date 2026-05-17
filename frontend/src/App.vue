@@ -545,7 +545,7 @@ function planActionText(plan) {
 function openPlanAction(plan) {
   if (isLotteryPlan(plan)) {
     const url = String(plan?.LotteryURL || '').trim()
-    if (url) window.location.href = url
+    if (url) window.open(url, '_blank', 'noopener,noreferrer')
     return
   }
   openPricingOrder(plan)

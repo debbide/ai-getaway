@@ -66,10 +66,6 @@ func (o *OrderController) Create(c *gin.Context) {
 		response.Error(c, 401, "user not found")
 		return
 	}
-	if activeSubscriptionBlocksNewOrder(o.db, user) {
-		response.Error(c, 409, "active subscription in effect")
-		return
-	}
 	expirePendingPaymentOrders(o.db)
 
 	var req createOrderRequest
@@ -84,6 +80,10 @@ func (o *OrderController) Create(c *gin.Context) {
 	}
 	if plan.IsLottery {
 		response.Error(c, 400, "lottery plan cannot be purchased")
+		return
+	}
+	if activeSubscriptionBlocksPlanOrder(o.db, user, plan) {
+		response.Error(c, 409, "active subscription in effect")
 		return
 	}
 	if plan.PlanType == model.PlanTypePublic && (plan.PublicChannel == nil || !plan.PublicChannel.Enabled || plan.PublicChannel.RemainingUSDCents < plan.SettlementUSDCents) {
@@ -352,9 +352,16 @@ func freeClaimedOrderStatuses() []string {
 	}
 }
 
-func activeSubscriptionBlocksNewOrder(db *gorm.DB, user model.User) bool {
-	if !service.HasActiveSubscription(user, time.Now()) {
+func activeSubscriptionBlocksPlanOrder(db *gorm.DB, user model.User, targetPlan model.Plan) bool {
+	return activeSubscriptionBlocksPlanOrderAt(db, user, targetPlan, time.Now(), service.UsedUSDCentsSince)
+}
+
+func activeSubscriptionBlocksPlanOrderAt(db *gorm.DB, user model.User, targetPlan model.Plan, now time.Time, usedSince func(*gorm.DB, uint, time.Time) int64) bool {
+	if !service.HasActiveSubscription(user, now) {
 		return false
+	}
+	if targetPlan.PriceCents == 0 && !targetPlan.IsLottery {
+		return true
 	}
 	if user.Plan == nil || user.Plan.PlanType != model.PlanTypePublic {
 		return true
@@ -364,10 +371,10 @@ func activeSubscriptionBlocksNewOrder(db *gorm.DB, user model.User) bool {
 		return true
 	}
 	start := time.Time{}
-	if startedAt := service.SubscriptionStartAt(db, user, time.Now()); startedAt != nil {
+	if startedAt := service.SubscriptionStartAt(db, user, now); startedAt != nil {
 		start = *startedAt
 	}
-	return service.UsedUSDCentsSince(db, user.ID, start) < limit
+	return usedSince(db, user.ID, start) < limit
 }
 
 func (o *OrderController) ListMine(c *gin.Context) {

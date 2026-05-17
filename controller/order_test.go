@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"ai-gateway/model"
+
+	"gorm.io/gorm"
 )
 
 func TestPendingOrderPaymentMethodUpdatesSwitchesStartedOnlineOrderToManual(t *testing.T) {
@@ -63,5 +65,65 @@ func TestPendingOrderPaymentMethodUpdatesDoesNotRestartOnlinePayment(t *testing.
 	updates, changed := pendingOrderPaymentMethodUpdates(order, model.PaymentMethodOnline, 7)
 	if changed {
 		t.Fatalf("changed = true, want false with updates %v", updates)
+	}
+}
+
+func TestActivePublicSubscriptionWithUsedQuotaCanBuyPaidPlan(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	publicPlanID := uint(1)
+	expiresAt := now.Add(24 * time.Hour)
+	user := model.User{
+		Status:    model.UserStatusApproved,
+		PlanID:    &publicPlanID,
+		ExpiresAt: &expiresAt,
+		Plan: &model.Plan{
+			PlanType:           model.PlanTypePublic,
+			QuotaPeriod:        model.QuotaPeriodPublic,
+			SettlementUSDCents: 1000,
+		},
+	}
+	user.ID = 7
+	targetPlan := model.Plan{
+		PlanType:    model.PlanTypeSubscription,
+		QuotaPeriod: model.QuotaPeriodWeekly,
+		PriceCents:  990,
+	}
+
+	blocked := activeSubscriptionBlocksPlanOrderAt(nil, user, targetPlan, now, func(*gorm.DB, uint, time.Time) int64 {
+		return 1000
+	})
+
+	if blocked {
+		t.Fatal("expected used-up public subscription to allow paid plan purchase")
+	}
+}
+
+func TestActivePublicSubscriptionWithUsedQuotaStillBlocksFreePlan(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	publicPlanID := uint(1)
+	expiresAt := now.Add(24 * time.Hour)
+	user := model.User{
+		Status:    model.UserStatusApproved,
+		PlanID:    &publicPlanID,
+		ExpiresAt: &expiresAt,
+		Plan: &model.Plan{
+			PlanType:           model.PlanTypePublic,
+			QuotaPeriod:        model.QuotaPeriodPublic,
+			SettlementUSDCents: 1000,
+		},
+	}
+	user.ID = 7
+	targetPlan := model.Plan{
+		PlanType:    model.PlanTypeSubscription,
+		QuotaPeriod: model.QuotaPeriodWeekly,
+		PriceCents:  0,
+	}
+
+	blocked := activeSubscriptionBlocksPlanOrderAt(nil, user, targetPlan, now, func(*gorm.DB, uint, time.Time) int64 {
+		return 1000
+	})
+
+	if !blocked {
+		t.Fatal("expected active subscription to block free plan claim")
 	}
 }
