@@ -490,16 +490,25 @@ function planPeriod(plan) {
 
 function planSoldOut(plan) {
   if (isLotteryPlan(plan)) return false
+  if (publicQuotaInsufficient(plan)) return true
   if (isFreePlan(plan)) return freeClaimSoldOut(plan)
-  return (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') && Number(plan.PublicChannel?.RemainingUSDCents || 0) < Number(plan.SettlementUSDCents || 0)
+  return false
 }
 
 function isLotteryPlan(plan) {
   return Boolean(plan?.IsLottery || plan?.is_lottery)
 }
 
+function isPublicPlan(plan) {
+  return plan?.QuotaPeriod === 'public' || plan?.PlanType === 'public' || plan?.quota_period === 'public' || plan?.plan_type === 'public'
+}
+
 function isFreePlan(plan) {
   return !isLotteryPlan(plan) && Number(plan?.PriceCents || plan?.price_cents || 0) === 0
+}
+
+function publicQuotaInsufficient(plan) {
+  return isPublicPlan(plan) && Number(plan?.PublicChannel?.RemainingUSDCents || 0) < Number(plan?.SettlementUSDCents || 0)
 }
 
 function freeClaimSoldOut(plan) {
@@ -518,6 +527,19 @@ function freeClaimText(plan) {
   const limit = Number(plan?.FreeTotalLimit || 0)
   if (limit <= 0) return `已领取 ${claimed} 份 / 不限量`
   return `已领取 ${claimed} / ${limit} 份`
+}
+
+function freeClaimStatusText(plan) {
+  if (publicQuotaInsufficient(plan)) return '额度不足'
+  return freeClaimSoldOut(plan) ? '已售罄' : '可领取'
+}
+
+function planActionText(plan) {
+  if (isLotteryPlan(plan)) return '参与抽奖'
+  if (isFreePlan(plan) && publicQuotaInsufficient(plan)) return '额度不足等待补充'
+  if (planSoldOut(plan)) return '售罄'
+  if (isFreePlan(plan)) return '免费领取'
+  return auth.loggedIn ? '立即续费' : '立即订阅'
 }
 
 function openPlanAction(plan) {
@@ -840,12 +862,12 @@ function planSubtitle(index) {
             <div v-if="isFreePlan(plan)" class="free-claim-meter">
               <div>
                 <span>{{ freeClaimText(plan) }}</span>
-                <strong>{{ planSoldOut(plan) ? '已售罄' : '可领取' }}</strong>
+                <strong>{{ freeClaimStatusText(plan) }}</strong>
               </div>
               <span class="free-claim-track"><i :style="{ width: `${freeClaimPercent(plan)}%` }"></i></span>
             </div>
             <button class="subscription-action" :disabled="planSoldOut(plan) || (isLotteryPlan(plan) && !plan.LotteryURL)" @click="openPlanAction(plan)">
-              {{ isLotteryPlan(plan) ? '参与抽奖' : (planSoldOut(plan) ? '售罄' : (isFreePlan(plan) ? '免费领取' : (auth.loggedIn ? '立即续费' : '立即订阅'))) }}
+              {{ planActionText(plan) }}
             </button>
             <small>安全支付 · 透明价格</small>
           </article>
