@@ -33,5 +33,7 @@ vite.err.log
 Thumbs.db
 
 # Build artifacts
+ai-getaway
+ai-getaway-linux-*
 *.exe
 *.dll
