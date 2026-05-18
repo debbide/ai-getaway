@@ -323,6 +323,7 @@ function emptyUser() {
     email_verified: true,
     plan_id: '',
     original_plan_id: '',
+    reset_subscription: false,
     has_upstream: false,
     channel_id: '',
     upstream_username: '',
@@ -1130,6 +1131,7 @@ function openUserModal(user = null) {
       email_verified: Boolean(user.EmailVerified),
       plan_id: user.PlanID || '',
       original_plan_id: user.PlanID || '',
+      reset_subscription: false,
       has_upstream: Boolean(user.Upstream),
       channel_id: channel?.ID || '',
       upstream_username: upstream.Username || '',
@@ -1821,7 +1823,8 @@ function normalizeUser(user) {
     role: user.role,
     status: user.status,
     email_verified: Boolean(user.email_verified),
-    plan_id: user.plan_id === '' || user.plan_id === null ? null : Number(user.plan_id)
+    plan_id: user.plan_id === '' || user.plan_id === null ? null : Number(user.plan_id),
+    reset_subscription: Boolean(user.reset_subscription || requiresUserUpstreamRebind(user))
   }
   if (shouldEditUserUpstream(user)) {
     payload.channel_id = Number(user.channel_id || 0)
@@ -3418,6 +3421,13 @@ function submitModal() {
               <el-option value="" label="不分配" />
               <el-option v-for="plan in plans" :key="plan.ID" :value="plan.ID" :label="plan.Name" />
             </el-select>
+          </el-form-item>
+          <el-form-item v-if="userForm.id && userForm.plan_id" label="重新开通套餐周期">
+            <el-switch
+              v-model="userForm.reset_subscription"
+              :disabled="requiresUserUpstreamRebind(userForm)"
+              active-text="重置开始时间和总额度统计"
+            />
           </el-form-item>
           <el-form-item v-if="shouldEditUserUpstream(userForm)" :label="requiresUserUpstreamRebind(userForm) ? '重新绑定上游渠道' : '上游渠道'">
             <el-select v-model="userForm.channel_id" required>

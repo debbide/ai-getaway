@@ -54,18 +54,19 @@ type planRequest struct {
 }
 
 type updateUserRequest struct {
-	Username         string `json:"username"`
-	Email            string `json:"email"`
-	Password         string `json:"password"`
-	Role             string `json:"role"`
-	Status           string `json:"status"`
-	EmailVerified    *bool  `json:"email_verified"`
-	PlanID           *uint  `json:"plan_id"`
-	PlanIDPresent    bool   `json:"-"`
-	ChannelID        uint   `json:"channel_id"`
-	UpstreamUsername string `json:"upstream_username"`
-	UpstreamPassword string `json:"upstream_password"`
-	APIKey           string `json:"api_key"`
+	Username          string `json:"username"`
+	Email             string `json:"email"`
+	Password          string `json:"password"`
+	Role              string `json:"role"`
+	Status            string `json:"status"`
+	EmailVerified     *bool  `json:"email_verified"`
+	PlanID            *uint  `json:"plan_id"`
+	PlanIDPresent     bool   `json:"-"`
+	ResetSubscription bool   `json:"reset_subscription"`
+	ChannelID         uint   `json:"channel_id"`
+	UpstreamUsername  string `json:"upstream_username"`
+	UpstreamPassword  string `json:"upstream_password"`
+	APIKey            string `json:"api_key"`
 }
 
 func (r *updateUserRequest) UnmarshalJSON(data []byte) error {
@@ -396,6 +397,16 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		return
 	}
 
+	var user model.User
+	if err := a.db.First(&user, c.Param("id")).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Error(c, 404, "user not found")
+			return
+		}
+		response.Error(c, 500, "failed to update user")
+		return
+	}
+
 	updates := map[string]interface{}{}
 	if req.Username != "" {
 		updates["username"] = req.Username
@@ -424,35 +435,33 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 	if req.EmailVerified != nil {
 		updates["email_verified"] = *req.EmailVerified
 	}
+	now := time.Now()
+	planChanged := req.PlanIDPresent && !sameUintPointer(user.PlanID, req.PlanID)
+	shouldResetSubscription := req.ResetSubscription || planChanged
 	if req.PlanIDPresent {
 		if req.PlanID == nil {
 			updates["plan_id"] = nil
 			updates["expires_at"] = nil
+			updates["subscription_started_at"] = nil
 		} else {
 			var plan model.Plan
 			if err := a.db.First(&plan, *req.PlanID).Error; err != nil {
 				response.Error(c, 404, "plan not found")
 				return
 			}
-			expiresAt := time.Now().AddDate(0, 0, plan.DurationDays)
 			updates["plan_id"] = plan.ID
-			updates["expires_at"] = &expiresAt
+			if shouldResetSubscription {
+				startedAt := now
+				expiresAt := now.AddDate(0, 0, plan.DurationDays)
+				updates["subscription_started_at"] = &startedAt
+				updates["expires_at"] = &expiresAt
+			}
 		}
 	}
 	if len(updates) == 0 {
 		response.OK(c, nil)
 		return
 	}
-	var user model.User
-	if err := a.db.First(&user, c.Param("id")).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.Error(c, 404, "user not found")
-			return
-		}
-		response.Error(c, 500, "failed to update user")
-		return
-	}
-	planChanged := req.PlanIDPresent && !sameUintPointer(user.PlanID, req.PlanID)
 	upstreamUpdateRequested := req.ChannelID != 0 || req.UpstreamUsername != "" || req.UpstreamPassword != "" || req.APIKey != ""
 	var selectedChannel *model.UpstreamChannel
 	if upstreamUpdateRequested || (planChanged && req.PlanID != nil) {
