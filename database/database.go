@@ -42,6 +42,7 @@ func AutoMigrate(db *gorm.DB) {
 		&model.User{},
 		&model.Plan{},
 		&model.Order{},
+		&model.RedeemCode{},
 		&model.UpstreamAccount{},
 		&model.UpstreamChannel{},
 		&model.PublicChannel{},

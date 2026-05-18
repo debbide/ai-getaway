@@ -8,6 +8,7 @@ import {
   CreditCard,
   DataAnalysis,
   Document,
+  Finished,
   Menu as MenuIcon,
   Monitor,
   Refresh,
@@ -22,6 +23,7 @@ import { useAuthStore } from '../stores/auth'
 const menu = [
   { key: 'overview', label: '总览', hint: '运营数据', icon: DataAnalysis },
   { key: 'plans', label: '套餐管理', hint: '价格与额度', icon: CreditCard },
+  { key: 'redeemCodes', label: '兑换码管理', hint: '套餐兑换', icon: Finished },
   { key: 'orders', label: '审核管理', hint: '订单开通', icon: ShoppingCart },
   { key: 'models', label: '模型管理', hint: '计费倍率', icon: Cpu },
   { key: 'channels', label: '渠道管理', hint: '上游接口', icon: Connection },
@@ -77,6 +79,7 @@ const apiKeys = ref([])
 const usageRecords = ref([])
 const usageSummary = ref(null)
 const plans = ref([])
+const redeemCodes = ref([])
 const models = ref([])
 const modelSource = ref('')
 const channels = ref([])
@@ -98,6 +101,7 @@ const modal = reactive({ open: false, type: '', title: '', actionLabel: '', dang
 const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountRmb: 0, status: '', planType: '', quotaPeriod: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
 const planForm = reactive(emptyPlan())
+const redeemCodeForm = reactive(emptyRedeemCode())
 const modelForm = reactive(emptyModel())
 const channelForm = reactive(emptyChannel())
 const publicChannelForm = reactive(emptyPublicChannel())
@@ -109,6 +113,7 @@ const announcementForm = reactive(emptyAnnouncement())
 const emailTemplateForm = reactive(emptyEmailTemplate())
 const userSearch = reactive({ keyword: '', role: '', status: '', plan: '' })
 const planSearch = reactive({ keyword: '', status: '', category: 'daily' })
+const redeemCodeSearch = reactive({ keyword: '', status: '', planId: '' })
 const orderSearch = reactive({ keyword: '', status: '', planId: '', paymentMethod: '' })
 const channelSearch = reactive({ keyword: '', status: '' })
 const publicChannelSearch = reactive({ keyword: '', status: '' })
@@ -119,6 +124,7 @@ const announcementSearch = reactive({ keyword: '', status: '' })
 const docSearch = reactive({ keyword: '', status: '', groupName: '' })
 const pagination = reactive({
   plans: { page: 1, pageSize: 10 },
+  redeemCodes: { page: 1, pageSize: 10 },
   orders: { page: 1, pageSize: 10 },
   models: { page: 1, pageSize: 10 },
   upstreamChannels: { page: 1, pageSize: 10 },
@@ -132,6 +138,7 @@ const pagination = reactive({
 })
 const listTotals = reactive({
   plans: 0,
+  redeemCodes: 0,
   orders: 0,
   upstreamChannels: 0,
   publicChannels: 0,
@@ -205,6 +212,7 @@ const filteredApiKeys = computed(() => {
   })
 })
 const pagedPlans = computed(() => plans.value)
+const pagedRedeemCodes = computed(() => redeemCodes.value)
 const pagedOrders = computed(() => orders.value)
 const pagedModels = computed(() => paginateItems(models.value, pagination.models))
 const pagedUsers = computed(() => users.value)
@@ -249,6 +257,7 @@ onMounted(async () => {
 
 watch(() => [userSearch.keyword, userSearch.role, userSearch.status, userSearch.plan], () => scheduleFilterRefresh('users'))
 watch(() => [planSearch.keyword, planSearch.status, planSearch.category], () => scheduleFilterRefresh('plans'))
+watch(() => [redeemCodeSearch.keyword, redeemCodeSearch.status, redeemCodeSearch.planId], () => scheduleFilterRefresh('redeemCodes'))
 watch(() => [orderSearch.keyword, orderSearch.status, orderSearch.planId, orderSearch.paymentMethod], () => scheduleFilterRefresh('orders'))
 watch(() => [channelSearch.keyword, channelSearch.status], () => scheduleFilterRefresh('upstreamChannels'))
 watch(() => [publicChannelSearch.keyword, publicChannelSearch.status], () => scheduleFilterRefresh('publicChannels'))
@@ -309,6 +318,14 @@ function emptyPlan() {
     is_lottery: false,
     lottery_url: '',
     enabled: true
+  }
+}
+
+function emptyRedeemCode() {
+  return {
+    plan_id: '',
+    count: 1,
+    note: ''
   }
 }
 
@@ -429,6 +446,7 @@ async function loadAll() {
       api.get('/admin/orders', orderFilterParams()),
       api.get('/admin/users', userFilterParams()),
       api.get('/admin/plans', planFilterParams()),
+      api.get('/admin/redeem-codes', redeemCodeFilterParams()),
       api.get('/admin/models'),
       api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
       api.get('/admin/public-channels', publicChannelFilterParams()),
@@ -440,13 +458,14 @@ async function loadAll() {
       api.get('/admin/email-templates'),
       api.get('/admin/settings')
     ])
-    const [statsRes, ordersRes, usersRes, plansRes, modelsRes, channelsRes, publicChannelsRes, pollingPoolsRes, keysRes, usageRecordsRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = results
+    const [statsRes, ordersRes, usersRes, plansRes, redeemCodesRes, modelsRes, channelsRes, publicChannelsRes, pollingPoolsRes, keysRes, usageRecordsRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = results
     const modelData = responseData(modelsRes, { items: [], official_source: '' })
     const templateData = responseData(emailTemplatesRes, { items: [], variables: [] })
     stats.value = responseData(statsRes, {})
     applyListData('orders', orders, responseData(ordersRes, { items: [] }))
     applyListData('users', users, responseData(usersRes, { items: [] }))
     applyListData('plans', plans, responseData(plansRes, { items: [] }))
+    applyListData('redeemCodes', redeemCodes, responseData(redeemCodesRes, { items: [] }))
     models.value = modelData?.items || []
     modelSource.value = modelData?.official_source || ''
     applyListData('upstreamChannels', channels, responseData(channelsRes, { items: [] }))
@@ -503,6 +522,9 @@ async function loadAdminSection(section) {
     case 'plans':
       await loadPlansData()
       break
+    case 'redeemCodes':
+      await loadRedeemCodesData()
+      break
     case 'orders':
       await loadOrdersData()
       break
@@ -558,6 +580,15 @@ async function loadPlansData() {
   applyListData('plans', plans, plansRes.data || { items: [] })
   applyListData('publicChannels', publicChannels, publicChannelsRes.data || { items: [] })
   applyListData('pollingPools', pollingPools, pollingPoolsRes.data || { items: [] })
+}
+
+async function loadRedeemCodesData() {
+  const [codesRes, plansRes] = await Promise.all([
+    api.get('/admin/redeem-codes', redeemCodeFilterParams()),
+    api.get('/admin/plans', allPlansParams())
+  ])
+  applyListData('redeemCodes', redeemCodes, codesRes.data || { items: [] })
+  plans.value = unwrapListData(plansRes.data || [])
 }
 
 async function loadOrdersData() {
@@ -643,6 +674,14 @@ function planFilterParams() {
     q: planSearch.keyword,
     status: planSearch.status,
     category: planSearch.category
+  })
+}
+
+function redeemCodeFilterParams() {
+  return listRequestParams('redeemCodes', {
+    q: redeemCodeSearch.keyword,
+    status: redeemCodeSearch.status,
+    plan_id: redeemCodeSearch.planId
   })
 }
 
@@ -822,6 +861,33 @@ async function deletePlan() {
   await runAction(async () => {
     await api.delete(`/admin/plans/${modal.payload.plan.ID}`)
     notice.value = '套餐已删除'
+  })
+}
+
+function openRedeemCodeModal() {
+  Object.assign(redeemCodeForm, emptyRedeemCode())
+  showModal('create-redeem-code', '生成兑换码', '生成兑换码')
+}
+
+async function submitRedeemCodes() {
+  await runAction(async () => {
+    await api.post('/admin/redeem-codes', {
+      plan_id: Number(redeemCodeForm.plan_id || 0),
+      count: Number(redeemCodeForm.count || 1),
+      note: redeemCodeForm.note.trim()
+    })
+    notice.value = '兑换码已生成'
+  })
+}
+
+function confirmDisableRedeemCode(code) {
+  showModal('disable-redeem-code', `停用兑换码 ${code.Code}`, '确认停用', { code }, true)
+}
+
+async function disableRedeemCode() {
+  await runAction(async () => {
+    await api.patch(`/admin/redeem-codes/${modal.payload.code.ID}/disable`)
+    notice.value = '兑换码已停用'
   })
 }
 
@@ -1676,7 +1742,7 @@ function scheduleFilterRefresh(key) {
 }
 
 function isServerPaginatedKey(key) {
-  return ['plans', 'orders', 'upstreamChannels', 'publicChannels', 'pollingPools', 'users', 'usageRecords', 'announcements', 'docs'].includes(key)
+  return ['plans', 'redeemCodes', 'orders', 'upstreamChannels', 'publicChannels', 'pollingPools', 'users', 'usageRecords', 'announcements', 'docs'].includes(key)
 }
 
 function isListActive(key) {
@@ -2011,11 +2077,21 @@ function statusLabel(value) {
   return statusOptions.find((item) => item.value === value)?.label || orderStatusMap[value] || value
 }
 
+function redeemCodeStatusLabel(value) {
+  return {
+    unused: '未使用',
+    redeemed: '已兑换',
+    disabled: '已停用'
+  }[value] || value
+}
+
 function submitModal() {
   const actions = {
     'create-plan': submitPlan,
     'edit-plan': submitPlan,
     'delete-plan': deletePlan,
+    'create-redeem-code': submitRedeemCodes,
+    'disable-redeem-code': disableRedeemCode,
     'create-model': submitModel,
     'edit-model': submitModel,
     'delete-model': deleteModel,
@@ -2295,6 +2371,93 @@ function submitModal() {
                 layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange('plans', $event)"
                 @size-change="handlePageSizeChange('plans', $event)"
+              />
+            </div>
+          </section>
+        </div>
+
+        <div v-if="active === 'redeemCodes'" class="space-y-5">
+          <div class="page-toolbar">
+            <div>
+              <p class="section-kicker">Redeem Codes</p>
+              <h2>兑换码管理</h2>
+              <span>{{ listTotals.redeemCodes }} 个筛选结果，可生成绑定套餐的一次性兑换码。</span>
+            </div>
+            <div class="toolbar-actions">
+              <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
+              <el-button type="primary" @click="openRedeemCodeModal">生成兑换码</el-button>
+            </div>
+          </div>
+
+          <section class="panel-surface p-4">
+            <el-form class="form-grid user-filter-grid" label-position="top">
+              <el-form-item label="搜索">
+                <el-input v-model="redeemCodeSearch.keyword" clearable placeholder="兑换码 / 备注 / 用户 / 套餐" @input="resetPager('redeemCodes')" />
+              </el-form-item>
+              <el-form-item label="状态">
+                <el-select v-model="redeemCodeSearch.status" clearable placeholder="全部" @change="resetPager('redeemCodes')">
+                  <el-option label="全部" value="" />
+                  <el-option label="未使用" value="unused" />
+                  <el-option label="已兑换" value="redeemed" />
+                  <el-option label="已停用" value="disabled" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="套餐">
+                <el-select v-model="redeemCodeSearch.planId" clearable filterable placeholder="全部" @change="resetPager('redeemCodes')">
+                  <el-option label="全部" value="" />
+                  <el-option v-for="plan in plans" :key="plan.ID" :label="plan.Name" :value="String(plan.ID)" />
+                </el-select>
+              </el-form-item>
+            </el-form>
+          </section>
+
+          <section class="panel-surface overflow-hidden">
+            <div class="table-wrap">
+              <el-table :data="pagedRedeemCodes" border>
+                <el-table-column label="兑换码" min-width="170">
+                  <template #default="{ row: code }"><code>{{ code.Code }}</code></template>
+                </el-table-column>
+                <el-table-column label="套餐" min-width="160">
+                  <template #default="{ row: code }">{{ code.Plan?.Name || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="状态" width="110">
+                  <template #default="{ row: code }">
+                    <el-tag :type="code.Status === 'unused' ? 'success' : (code.Status === 'redeemed' ? 'info' : 'warning')">{{ redeemCodeStatusLabel(code.Status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="兑换用户" min-width="220">
+                  <template #default="{ row: code }">
+                    <strong>{{ code.User?.Email || '-' }}</strong>
+                    <small v-if="code.User?.Username">{{ code.User.Username }}</small>
+                  </template>
+                </el-table-column>
+                <el-table-column label="订单" width="100">
+                  <template #default="{ row: code }">{{ code.OrderID ? `#${code.OrderID}` : '-' }}</template>
+                </el-table-column>
+                <el-table-column label="备注" min-width="160">
+                  <template #default="{ row: code }">{{ code.Note || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="时间" min-width="170">
+                  <template #default="{ row: code }">{{ formatDate(code.RedeemedAt || code.CreatedAt) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="120" fixed="right">
+                  <template #default="{ row: code }">
+                    <el-button v-if="code.Status === 'unused'" type="warning" size="small" @click="confirmDisableRedeemCode(code)">停用</el-button>
+                    <span v-else class="text-muted">-</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.redeemCodes.page"
+                :page-size="pagination.redeemCodes.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="listTotals.redeemCodes"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('redeemCodes', $event)"
+                @size-change="handlePageSizeChange('redeemCodes', $event)"
               />
             </div>
           </section>
@@ -3247,6 +3410,20 @@ function submitModal() {
           <el-form-item class="md:col-span-2" label="启用套餐"><el-switch v-model="planForm.enabled" /></el-form-item>
         </div>
 
+        <div v-if="modal.type === 'create-redeem-code'" class="modal-body form-grid">
+          <el-form-item label="绑定套餐" required>
+            <el-select v-model="redeemCodeForm.plan_id" filterable placeholder="请选择套餐">
+              <el-option v-for="plan in plans.filter((item) => item.Enabled && !item.IsLottery)" :key="plan.ID" :value="plan.ID" :label="plan.Name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="生成数量">
+            <el-input-number v-model="redeemCodeForm.count" class="w-full" :min="1" :max="100" />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="备注">
+            <el-input v-model="redeemCodeForm.note" maxlength="255" show-word-limit placeholder="例如：客服补偿 / 活动赠送" />
+          </el-form-item>
+        </div>
+
         <div v-if="modal.type === 'create-channel' || modal.type === 'edit-channel'" class="modal-body form-grid">
           <el-form-item label="渠道名称" required><el-input v-model="channelForm.name" placeholder="OpenAI" /></el-form-item>
           <el-form-item class="md:col-span-2" label="API 地址" required><el-input v-model="channelForm.base_url" placeholder="https://api.openai.com" /></el-form-item>
@@ -3543,6 +3720,11 @@ function submitModal() {
         <div v-if="modal.type === 'delete-plan'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.plan?.Name }}」吗？</strong>
           <p>删除后该套餐不会再出现在管理列表和用户可购套餐中，请确认没有正在依赖它的运营流程。</p>
+        </div>
+
+        <div v-if="modal.type === 'disable-redeem-code'" class="modal-body confirm-copy">
+          <strong>确定停用兑换码 {{ modal.payload?.code?.Code }} 吗？</strong>
+          <p>停用后用户将不能再使用该兑换码兑换套餐。</p>
         </div>
 
         <div v-if="modal.type === 'delete-channel'" class="modal-body confirm-copy">

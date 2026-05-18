@@ -51,6 +51,10 @@ const (
 
 	ProtocolGPT    = "gpt"
 	ProtocolClaude = "claude"
+
+	RedeemCodeStatusUnused   = "unused"
+	RedeemCodeStatusRedeemed = "redeemed"
+	RedeemCodeStatusDisabled = "disabled"
 )
 
 type User struct {
@@ -112,6 +116,22 @@ type Order struct {
 	AdminNote             string `gorm:"size:255"`
 	ApprovedAt            *time.Time
 	ApprovedByID          *uint
+}
+
+type RedeemCode struct {
+	gorm.Model
+	Code       string `gorm:"size:32;uniqueIndex;not null"`
+	PlanID     uint   `gorm:"index;not null"`
+	Plan       Plan
+	Status     string `gorm:"size:32;default:unused;index"`
+	RedeemedBy *uint  `gorm:"index"`
+	User       *User  `gorm:"foreignKey:RedeemedBy"`
+	OrderID    *uint  `gorm:"index"`
+	Order      *Order
+	RedeemedAt *time.Time
+	CreatedBy  *uint  `gorm:"index"`
+	Creator    *User  `gorm:"foreignKey:CreatedBy"`
+	Note       string `gorm:"size:255"`
 }
 
 type UpstreamAccount struct {

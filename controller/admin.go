@@ -1,8 +1,11 @@
 package controller
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +54,12 @@ type planRequest struct {
 	FreePerUserLimit   int    `json:"free_per_user_limit"`
 	FreeTotalLimit     int    `json:"free_total_limit"`
 	Enabled            bool   `json:"enabled"`
+}
+
+type redeemCodeRequest struct {
+	PlanID uint   `json:"plan_id" binding:"required"`
+	Count  int    `json:"count"`
+	Note   string `json:"note"`
 }
 
 type updateUserRequest struct {
@@ -688,6 +697,99 @@ func (a *AdminController) DeletePlan(c *gin.Context) {
 	response.OK(c, nil)
 }
 
+func (a *AdminController) RedeemCodes(c *gin.Context) {
+	query := a.db.Model(&model.RedeemCode{}).Preload("Plan").Preload("User").Preload("Order")
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Joins("LEFT JOIN users ON users.id = redeem_codes.redeemed_by").
+			Joins("LEFT JOIN plans ON plans.id = redeem_codes.plan_id").
+			Where("redeem_codes.code LIKE ? OR redeem_codes.note LIKE ? OR users.username LIKE ? OR users.email LIKE ? OR plans.name LIKE ?", like, like, like, like, like)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("redeem_codes.status = ?", status)
+	}
+	if planID := strings.TrimSpace(c.Query("plan_id")); planID != "" {
+		query = query.Where("redeem_codes.plan_id = ?", planID)
+	}
+
+	page, pageSize := parsePageParams(c, 10)
+	var total int64
+	query.Count(&total)
+
+	var codes []model.RedeemCode
+	applyPagination(query, page, pageSize).Order("redeem_codes.id desc").Find(&codes)
+	response.OK(c, paginatedResponse{
+		Items:    codes,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
+}
+
+func (a *AdminController) CreateRedeemCodes(c *gin.Context) {
+	admin := c.MustGet("user").(model.User)
+	var req redeemCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	count := req.Count
+	if count <= 0 {
+		count = 1
+	}
+	if count > 100 {
+		response.Error(c, 400, "redeem code count too large")
+		return
+	}
+
+	var plan model.Plan
+	if err := a.db.Where("id = ?", req.PlanID).First(&plan).Error; err != nil {
+		response.Error(c, 404, "plan not found")
+		return
+	}
+
+	codes := make([]model.RedeemCode, 0, count)
+	for len(codes) < count {
+		code, err := generateRedeemCode()
+		if err != nil {
+			response.Error(c, 500, "failed to generate redeem code")
+			return
+		}
+		item := model.RedeemCode{
+			Code:      code,
+			PlanID:    plan.ID,
+			Status:    model.RedeemCodeStatusUnused,
+			CreatedBy: &admin.ID,
+			Note:      strings.TrimSpace(req.Note),
+		}
+		if err := a.db.Create(&item).Error; err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+				continue
+			}
+			response.Error(c, 500, "failed to create redeem code")
+			return
+		}
+		item.Plan = plan
+		codes = append(codes, item)
+	}
+	response.Created(c, gin.H{"items": codes})
+}
+
+func (a *AdminController) DisableRedeemCode(c *gin.Context) {
+	result := a.db.Model(&model.RedeemCode{}).
+		Where("id = ? AND status = ?", c.Param("id"), model.RedeemCodeStatusUnused).
+		Update("status", model.RedeemCodeStatusDisabled)
+	if result.Error != nil {
+		response.Error(c, 500, "failed to disable redeem code")
+		return
+	}
+	if result.RowsAffected == 0 {
+		response.Error(c, 409, "redeem code not unused")
+		return
+	}
+	response.OK(c, nil)
+}
+
 func (a *AdminController) ApproveOrder(c *gin.Context) {
 	admin := c.MustGet("user").(model.User)
 	var req approveOrderRequest
@@ -1231,6 +1333,82 @@ func (a *AdminController) validatePlanRequest(req planRequest) error {
 		return errors.New("duration days required")
 	}
 	return nil
+}
+
+func generateRedeemCode() (string, error) {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	var b strings.Builder
+	b.Grow(12)
+	for i := 0; i < 12; i++ {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return "", err
+		}
+		b.WriteByte(alphabet[n.Int64()])
+	}
+	return b.String(), nil
+}
+
+func normalizeRedeemCode(value string) string {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	replacer := strings.NewReplacer("-", "", " ", "")
+	return replacer.Replace(value)
+}
+
+func applyRedeemCodeSubscription(tx *gorm.DB, userID uint, plan model.Plan, now time.Time, code string) (*model.Order, error) {
+	var user model.User
+	if err := tx.Preload("Plan").First(&user, userID).Error; err != nil {
+		return nil, err
+	}
+	if activeSubscriptionBlocksPlanOrder(tx, user, plan) {
+		return nil, errors.New("active subscription in effect")
+	}
+	order := model.Order{
+		UserID:             userID,
+		PlanID:             plan.ID,
+		OrderType:          orderTypeForPlan(tx, user, plan, now, service.UsedUSDCentsSince),
+		AmountCents:        0,
+		SettlementUSDCents: plan.SettlementUSDCents,
+		Status:             model.OrderStatusApproved,
+		PaymentMethod:      "redeem",
+		PaymentRef:         fmt.Sprintf("REDEEM%d%d", userID, now.UnixNano()),
+		PaymentChannel:     "redeem_code",
+		PaidAmountCents:    0,
+		PaidAt:             &now,
+		ApprovedAt:         &now,
+		AdminNote:          fmt.Sprintf("兑换码 %s", code),
+	}
+	if err := tx.Create(&order).Error; err != nil {
+		return nil, err
+	}
+	order.Plan = plan
+	if plan.PlanType == model.PlanTypePublic {
+		if err := service.DeductPlanChannelQuota(tx, plan); err != nil {
+			return nil, err
+		}
+	} else if !userHasActiveUpstream(tx, userID) {
+		if err := tx.Model(&order).Updates(map[string]interface{}{
+			"status":      model.OrderStatusPendingReview,
+			"approved_at": nil,
+		}).Error; err != nil {
+			return nil, err
+		}
+		order.Status = model.OrderStatusPendingReview
+		order.ApprovedAt = nil
+		return &order, nil
+	}
+	if err := applyApprovedSubscription(tx, &order, plan, now); err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+func userHasActiveUpstream(db *gorm.DB, userID uint) bool {
+	var count int64
+	db.Model(&model.UpstreamAccount{}).
+		Where("user_id = ? AND status = ?", userID, model.UpstreamStatusActive).
+		Count(&count)
+	return count > 0
 }
 
 func fallbackProvider(value string) string {

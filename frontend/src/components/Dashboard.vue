@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Present, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
@@ -28,6 +28,8 @@ const claudeOSTab = ref('powershell')
 const usagePlainKey = ref('')
 const modalError = ref('')
 const loading = reactive({ announcements: false, keys: false, orders: false, plan: false })
+const redeemForm = reactive({ code: '' })
+const redeeming = ref(false)
 const orderPage = ref(1)
 const nowMs = ref(Date.now())
 const orderPageSize = 5
@@ -195,6 +197,28 @@ async function refreshPlan() {
     showNotice(err.message, err.authExpired ? 'error' : 'warning')
   } finally {
     loading.plan = false
+  }
+}
+
+async function redeemCode() {
+  const code = normalizeRedeemInput(redeemForm.code)
+  if (code.length !== 12) {
+    showNotice('请输入 12 位激活码', 'warning')
+    return
+  }
+  redeeming.value = true
+  notice.value = ''
+  error.value = ''
+  try {
+    const res = await api.post('/redeem-codes/redeem', { code })
+    redeemForm.code = ''
+    const status = res.data?.order?.Status
+    showNotice(status === 'approved' ? '兑换成功，套餐已开通' : '兑换成功，订单已提交审核', 'success')
+    await Promise.all([auth.loadMe(), loadOrders({ showLoading: false })])
+  } catch (err) {
+    showNotice(err.message || '兑换失败，请检查激活码', err.authExpired ? 'error' : 'warning')
+  } finally {
+    redeeming.value = false
   }
 }
 
@@ -530,6 +554,10 @@ function formatDateTime(value) {
   return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 }
 
+function normalizeRedeemInput(value) {
+  return String(value || '').trim().toUpperCase().replace(/[\s-]/g, '')
+}
+
 function parseApiEndpoints(value) {
   try {
     const parsed = JSON.parse(value || '[]')
@@ -853,6 +881,29 @@ function statusLabel(value) {
         </div>
 
         <aside class="console-dashboard-aside">
+          <section class="redeem-card">
+            <div class="redeem-card-head">
+              <div class="redeem-icon" aria-hidden="true"><Present /></div>
+              <div>
+                <p class="section-kicker">Redeem</p>
+                <h3>激活码兑换</h3>
+              </div>
+            </div>
+            <p>使用激活码兑换包月订阅，享受更多功能</p>
+            <form class="redeem-form" @submit.prevent="redeemCode">
+              <input
+                v-model="redeemForm.code"
+                maxlength="14"
+                autocomplete="off"
+                placeholder="请输入12位激活码"
+                @input="redeemForm.code = normalizeRedeemInput(redeemForm.code)"
+              />
+              <button type="submit" :disabled="redeeming || normalizeRedeemInput(redeemForm.code).length !== 12">
+                {{ redeeming ? '兑换中' : '兑换' }}
+              </button>
+            </form>
+          </section>
+
           <section class="endpoint-card">
             <div>
               <p class="section-kicker">Endpoint</p>
