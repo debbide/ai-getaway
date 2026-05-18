@@ -9,9 +9,11 @@ import {
   DataAnalysis,
   Document,
   Finished,
+  FullScreen,
   Menu as MenuIcon,
   Monitor,
   Refresh,
+  ScaleToOriginal,
   Setting,
   ShoppingCart,
   Tickets,
@@ -19,6 +21,7 @@ import {
 } from '@element-plus/icons-vue'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
+import MarkdownEditor from './MarkdownEditor.vue'
 
 const menu = [
   { key: 'overview', label: '总览', hint: '运营数据', icon: DataAnalysis },
@@ -97,7 +100,7 @@ const loading = ref(false)
 const smtpTesting = ref(false)
 const filterTimers = {}
 let overviewMetricsTimer = null
-const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null })
+const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null, fullscreen: false })
 const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountRmb: 0, status: '', planType: '', quotaPeriod: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
 const planForm = reactive(emptyPlan())
@@ -185,11 +188,12 @@ const settings = reactive({
 
 const pendingOrders = computed(() => stats.value.pending_orders ?? orders.value.filter((order) => reviewableOrderStatuses.includes(order.Status)).length)
 const currentMenu = computed(() => menu.find((item) => item.key === active.value) || menu[0])
-const adminDisplayName = computed(() => auth.user?.email || auth.user?.username || 'Admin')
 const modalDialogWidth = computed(() => {
+  if (modal.fullscreen) return 'calc(100vw - 32px)'
   if (modal.type === 'create-polling-pool' || modal.type === 'edit-polling-pool') return '980px'
   return '760px'
 })
+const modalCanFullscreen = computed(() => ['create-doc', 'edit-doc', 'create-announcement', 'edit-announcement'].includes(modal.type))
 const enabledPlans = computed(() => stats.value.enabled_plans ?? plans.value.filter((plan) => plan.Enabled).length)
 const enabledModels = computed(() => models.value.filter((item) => item.Status === 'active').length)
 const approvedUsers = computed(() => stats.value.approved_users ?? users.value.filter((user) => user.Status === 'approved').length)
@@ -1680,11 +1684,15 @@ async function runAction(action, close = true) {
 }
 
 function showModal(type, title, actionLabel, payload = null, danger = false) {
-  Object.assign(modal, { open: true, type, title, actionLabel, payload, danger })
+  Object.assign(modal, { open: true, type, title, actionLabel, payload, danger, fullscreen: false })
 }
 
 function closeModal() {
-  Object.assign(modal, { open: false, type: '', title: '', actionLabel: '', payload: null, danger: false })
+  Object.assign(modal, { open: false, type: '', title: '', actionLabel: '', payload: null, danger: false, fullscreen: false })
+}
+
+function toggleModalFullscreen() {
+  modal.fullscreen = !modal.fullscreen
 }
 
 function normalizePlan(plan) {
@@ -2161,30 +2169,12 @@ function submitModal() {
             <span>{{ pendingOrders }}</span>
             <small>待审核</small>
           </div>
-          <div class="admin-user-chip">
-            <strong>{{ adminDisplayName }}</strong>
-            <small>Administrator</small>
-          </div>
         </div>
       </header>
 
       <main class="admin-content">
         <div class="min-w-0">
         <div v-if="active === 'overview'" class="space-y-6">
-          <div class="admin-hero">
-            <div>
-              <p class="section-kicker">Overview</p>
-              <h2 class="mt-2 text-3xl font-black text-white">运营总览</h2>
-              <p class="mt-3 max-w-2xl text-sm leading-6 text-white/72">
-                这里集中展示用户、订单、套餐和调用数据。待审核订单会优先露出，方便管理员直接进入审核流程。
-              </p>
-            </div>
-            <div class="hero-orbit">
-              <span>{{ pendingOrders }}</span>
-              <small>待审核</small>
-            </div>
-          </div>
-
           <div class="stat-grid">
             <article class="stat-card">
               <span>用户总数</span>
@@ -3365,7 +3355,34 @@ function submitModal() {
       </main>
     </div>
 
-    <el-dialog v-model="modal.open" class="admin-modal-dialog" :title="modal.title" :width="modalDialogWidth" align-center @close="closeModal">
+    <el-dialog
+      v-model="modal.open"
+      class="admin-modal-dialog"
+      :class="{ 'admin-modal-dialog--fullscreen': modal.fullscreen }"
+      :width="modalDialogWidth"
+      :fullscreen="modal.fullscreen"
+      :show-close="false"
+      align-center
+      @close="closeModal"
+    >
+      <template #header="{ close, titleId, titleClass }">
+        <div class="admin-modal-titlebar">
+          <h2 :id="titleId" :class="titleClass">{{ modal.title }}</h2>
+          <div class="admin-modal-titlebar-actions">
+            <el-button
+              v-if="modalCanFullscreen"
+              circle
+              :icon="modal.fullscreen ? ScaleToOriginal : FullScreen"
+              :aria-label="modal.fullscreen ? '还原弹框' : '全屏编辑'"
+              :title="modal.fullscreen ? '还原弹框' : '全屏编辑'"
+              @click="toggleModalFullscreen"
+            />
+            <el-button circle aria-label="关闭" title="关闭" @click="close">
+              <span aria-hidden="true">×</span>
+            </el-button>
+          </div>
+        </div>
+      </template>
       <el-form class="admin-modal-form" label-position="top" @submit.prevent="submitModal">
 
         <div v-if="modal.type === 'create-plan' || modal.type === 'edit-plan'" class="modal-body form-grid">
@@ -3510,52 +3527,60 @@ function submitModal() {
           <el-form-item class="md:col-span-2" label="备注"><el-input v-model="modelForm.notes" type="textarea" :rows="3" /></el-form-item>
         </div>
 
-        <div v-if="modal.type === 'create-doc' || modal.type === 'edit-doc'" class="modal-body form-grid">
-          <el-form-item label="文档标题">
-            <el-input v-model="docForm.title" required placeholder="官方 API Base URL" />
+        <div v-if="modal.type === 'create-doc' || modal.type === 'edit-doc'" class="modal-body editor-modal-body">
+          <div class="editor-basic-grid">
+            <el-form-item label="文档标题">
+              <el-input v-model="docForm.title" required placeholder="官方 API Base URL" />
+            </el-form-item>
+            <el-form-item label="Slug" required>
+              <el-input v-model="docForm.slug" placeholder="api-base-url" />
+            </el-form-item>
+            <el-form-item label="左侧分组">
+              <el-input v-model="docForm.group_name" placeholder="快速开始" />
+            </el-form-item>
+            <el-form-item label="排序">
+              <el-input-number v-model="docForm.sort_order" class="w-full" />
+            </el-form-item>
+            <el-form-item class="editor-wide-field" label="说明">
+              <el-input v-model="docForm.description" placeholder="展示在后台列表中的简短说明" />
+            </el-form-item>
+          </div>
+          <el-form-item class="fullscreen-editor-field" label="Markdown 内容">
+            <MarkdownEditor v-model="docForm.content" :min-height="modal.fullscreen ? 560 : 430" placeholder="# 标题&#10;&#10;这里填写 Markdown 文档内容" />
           </el-form-item>
-          <el-form-item label="Slug" required>
-            <el-input v-model="docForm.slug" placeholder="api-base-url" />
-          </el-form-item>
-          <el-form-item label="左侧分组">
-            <el-input v-model="docForm.group_name" placeholder="快速开始" />
-          </el-form-item>
-          <el-form-item label="排序">
-            <el-input-number v-model="docForm.sort_order" class="w-full" />
-          </el-form-item>
-          <el-form-item class="md:col-span-2" label="说明">
-            <el-input v-model="docForm.description" placeholder="展示在后台列表中的简短说明" />
-          </el-form-item>
-          <el-form-item class="md:col-span-2" label="Markdown 内容">
-            <el-input v-model="docForm.content" type="textarea" :rows="18" placeholder="# 标题&#10;&#10;这里填写 Markdown 文档内容" />
-          </el-form-item>
-          <el-form-item class="md:col-span-2" label="启用文档"><el-switch v-model="docForm.enabled" /></el-form-item>
+          <div class="editor-extra-grid editor-extra-grid--compact">
+            <el-form-item label="启用文档"><el-switch v-model="docForm.enabled" /></el-form-item>
+          </div>
         </div>
 
-        <div v-if="modal.type === 'create-announcement' || modal.type === 'edit-announcement'" class="modal-body form-grid">
-          <el-form-item class="md:col-span-2" label="公告标题">
-            <el-input v-model="announcementForm.title" required placeholder="【2026-05-14】服务更新说明" />
+        <div v-if="modal.type === 'create-announcement' || modal.type === 'edit-announcement'" class="modal-body editor-modal-body">
+          <div class="editor-basic-grid">
+            <el-form-item class="editor-half-field" label="公告标题">
+              <el-input v-model="announcementForm.title" required placeholder="【2026-05-14】服务更新说明" />
+            </el-form-item>
+            <el-form-item class="editor-half-field" label="摘要">
+              <el-input v-model="announcementForm.summary" type="textarea" :rows="3" placeholder="收起状态下展示的短内容，留空时自动使用正文前段" />
+            </el-form-item>
+          </div>
+          <el-form-item class="fullscreen-editor-field" label="公告正文">
+            <MarkdownEditor v-model="announcementForm.content" :min-height="modal.fullscreen ? 560 : 260" placeholder="支持 Markdown，可填写更新说明、使用提醒、教程地址等内容。" />
           </el-form-item>
-          <el-form-item class="md:col-span-2" label="摘要">
-            <el-input v-model="announcementForm.summary" type="textarea" :rows="3" placeholder="收起状态下展示的短内容，留空时自动使用正文前段" />
-          </el-form-item>
-          <el-form-item class="md:col-span-2" label="公告正文">
-            <el-input v-model="announcementForm.content" type="textarea" :rows="8" placeholder="支持换行展示。可填写更新说明、使用提醒、教程地址等内容。" />
-          </el-form-item>
-          <el-form-item label="链接文案">
-            <el-input v-model="announcementForm.link_text" placeholder="教程地址" />
-          </el-form-item>
-          <el-form-item label="链接地址">
-            <el-input v-model="announcementForm.link_url" placeholder="https://docs.example.com/..." />
-          </el-form-item>
-          <el-form-item label="发布时间">
-            <el-input v-model="announcementForm.published_at" type="datetime-local" />
-          </el-form-item>
-          <el-form-item label="排序">
-            <el-input v-model.number="announcementForm.sort_order" type="number" />
-          </el-form-item>
-          <el-form-item label="置顶公告"><el-switch v-model="announcementForm.pinned" /></el-form-item>
-          <el-form-item label="启用公告"><el-switch v-model="announcementForm.enabled" /></el-form-item>
+          <div class="editor-extra-grid">
+            <el-form-item label="链接文案">
+              <el-input v-model="announcementForm.link_text" placeholder="教程地址" />
+            </el-form-item>
+            <el-form-item label="链接地址">
+              <el-input v-model="announcementForm.link_url" placeholder="https://docs.example.com/..." />
+            </el-form-item>
+            <el-form-item label="发布时间">
+              <el-input v-model="announcementForm.published_at" type="datetime-local" />
+            </el-form-item>
+            <el-form-item label="排序">
+              <el-input v-model.number="announcementForm.sort_order" type="number" />
+            </el-form-item>
+            <el-form-item label="置顶公告"><el-switch v-model="announcementForm.pinned" /></el-form-item>
+            <el-form-item label="启用公告"><el-switch v-model="announcementForm.enabled" /></el-form-item>
+          </div>
         </div>
 
         <div v-if="modal.type === 'edit-email-template'" class="modal-body form-grid">

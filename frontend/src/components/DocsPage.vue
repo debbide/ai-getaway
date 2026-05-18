@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import { renderMarkdown } from '../utils/markdown'
 
 const docs = ref([])
 const activeSlug = ref('')
@@ -76,109 +77,6 @@ function selectDoc(doc) {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-function renderMarkdown(source) {
-  const lines = String(source || '').split(/\r?\n/)
-  const html = []
-  let inCode = false
-  let codeLang = ''
-  let codeLines = []
-  let inTable = false
-  let tableRows = []
-  let listItems = []
-
-  const flushList = () => {
-    if (!listItems.length) return
-    html.push(`<ol>${listItems.map((item) => `<li>${inlineMarkdown(item)}</li>`).join('')}</ol>`)
-    listItems = []
-  }
-  const flushTable = () => {
-    if (!inTable) return
-    const [head, , ...body] = tableRows
-    const headers = splitTableRow(head)
-    html.push('<table><thead><tr>')
-    html.push(headers.map((cell) => `<th>${inlineMarkdown(cell)}</th>`).join(''))
-    html.push('</tr></thead><tbody>')
-    for (const row of body) {
-      const cells = splitTableRow(row)
-      html.push(`<tr>${cells.map((cell) => `<td>${inlineMarkdown(cell)}</td>`).join('')}</tr>`)
-    }
-    html.push('</tbody></table>')
-    inTable = false
-    tableRows = []
-  }
-  const flushCode = () => {
-    if (!inCode) return
-    html.push(`<pre><code class="language-${escapeAttr(codeLang)}">${escapeHtml(codeLines.join('\n'))}</code></pre>`)
-    inCode = false
-    codeLang = ''
-    codeLines = []
-  }
-
-  for (const line of lines) {
-    const codeMatch = line.match(/^```(\w+)?\s*$/)
-    if (codeMatch) {
-      if (inCode) {
-        flushCode()
-      } else {
-        flushList()
-        flushTable()
-        inCode = true
-        codeLang = codeMatch[1] || ''
-      }
-      continue
-    }
-    if (inCode) {
-      codeLines.push(line)
-      continue
-    }
-    if (/^\|.+\|$/.test(line)) {
-      flushList()
-      inTable = true
-      tableRows.push(line)
-      continue
-    }
-    flushTable()
-
-    const ordered = line.match(/^\d+\.\s+(.+)$/)
-    if (ordered) {
-      listItems.push(ordered[1])
-      continue
-    }
-    flushList()
-
-    if (!line.trim()) continue
-    if (line.startsWith('# ')) html.push(`<h1>${inlineMarkdown(line.slice(2))}</h1>`)
-    else if (line.startsWith('## ')) html.push(`<h2>${inlineMarkdown(line.slice(3))}</h2>`)
-    else if (line.startsWith('### ')) html.push(`<h3>${inlineMarkdown(line.slice(4))}</h3>`)
-    else html.push(`<p>${inlineMarkdown(line)}</p>`)
-  }
-  flushCode()
-  flushTable()
-  flushList()
-  return html.join('\n')
-}
-
-function splitTableRow(line) {
-  return line.replace(/^\||\|$/g, '').split('|').map((cell) => cell.trim())
-}
-
-function inlineMarkdown(value) {
-  return escapeHtml(value).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-}
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (char) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  })[char])
-}
-
-function escapeAttr(value) {
-  return String(value || '').replace(/[^a-z0-9_-]/gi, '')
-}
 </script>
 
 <template>

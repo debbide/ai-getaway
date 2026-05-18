@@ -1033,7 +1033,6 @@ function planSubtitle(index) {
           </div>
           <div v-if="auth.loggedIn" class="console-title-actions">
             <button class="ghost-button" type="button" @click="navigate('/console')">返回控制台</button>
-            <div class="user-chip">{{ auth.user?.email || auth.user?.username }}</div>
           </div>
         </div>
 
@@ -1059,7 +1058,6 @@ function planSubtitle(index) {
             <h1>{{ auth.loggedIn ? '管理后台' : '登录后进入管理后台' }}</h1>
             <p>管理用户、套餐、模型价格、渠道和系统配置。</p>
           </div>
-          <div v-if="auth.loggedIn" class="user-chip">{{ auth.user?.email || auth.user?.username }}</div>
         </div>
 
         <div v-if="!auth.loggedIn" class="panel-surface grid gap-4 p-5 sm:grid-cols-[1fr_auto] sm:items-center">
@@ -1087,11 +1085,9 @@ function planSubtitle(index) {
       <section class="mx-auto max-w-7xl px-4 py-10 sm:px-6">
         <div class="console-title">
           <div>
-            <p class="section-kicker">Console</p>
-            <h1>{{ auth.loggedIn ? '用户控制台' : '登录后进入控制台' }}</h1>
-            <p>负责下单、API Key 管理和使用记录。</p>
+            <h1>{{ auth.loggedIn ? `欢迎回来，${accountName}` : '登录后进入控制台' }}</h1>
+            <p>{{ auth.loggedIn ? '管理您的 API 密钥和配置' : '登录后可以创建订单、管理 API Key 和查看使用记录。' }}</p>
           </div>
-          <div v-if="auth.loggedIn" class="user-chip">{{ auth.user?.email || auth.user?.username }}</div>
         </div>
 
         <div v-if="!auth.loggedIn" class="panel-surface grid gap-4 p-5 sm:grid-cols-[1fr_auto] sm:items-center">

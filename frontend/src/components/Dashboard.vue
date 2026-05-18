@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Present, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
+import { plainTextFromMarkdown, renderMarkdown } from '../utils/markdown'
 
 const props = defineProps({
   plans: { type: Array, default: () => [] },
@@ -98,7 +99,7 @@ const historyAnnouncements = computed(() => announcements.value.slice(1))
 const announcementSummary = computed(() => {
   const item = currentAnnouncement.value
   if (!item) return ''
-  return item.Summary || String(item.Content || '').split('\n').find(Boolean) || ''
+  return item.Summary || plainTextFromMarkdown(item.Content).split('\n').find(Boolean) || ''
 })
 
 onMounted(() => {
@@ -481,8 +482,8 @@ function announcementDate(item) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
 }
 
-function announcementLines(item) {
-  return String(item?.Content || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+function announcementHtml(item) {
+  return renderMarkdown(item?.Content || '')
 }
 
 function orderExpiresAt(order) {
@@ -697,19 +698,6 @@ function statusLabel(value) {
 
 <template>
   <section class="console-shell mx-auto max-w-7xl px-4 pb-12 sm:px-6">
-    <div class="dashboard-hero">
-      <div>
-        <p class="section-kicker">User Console</p>
-        <h2>控制台</h2>
-        <p>账号状态：{{ statusLabel(auth.user?.status) }}</p>
-      </div>
-      <div class="usage-card">
-        <span>账号</span>
-        <strong>{{ auth.user?.email || '—' }}</strong>
-        <small class="text-muted">管理套餐与 API Key</small>
-      </div>
-    </div>
-
     <div v-if="pendingPlainKey || lastKeyMasked" class="key-reveal">
       <span>密钥已就绪（下方仅掩码，完整内容请用按钮复制）</span>
       <code v-if="lastKeyMasked" class="api-key-code api-key-code--mask">{{ lastKeyMasked }}</code>
@@ -732,7 +720,7 @@ function statusLabel(value) {
                 </div>
               </div>
               <div v-if="announcementExpanded" class="announcement-content">
-                <p v-for="(line, index) in announcementLines(currentAnnouncement)" :key="index">{{ line }}</p>
+                <div class="markdown-body" v-html="announcementHtml(currentAnnouncement)"></div>
                 <a v-if="currentAnnouncement.LinkURL" :href="currentAnnouncement.LinkURL" target="_blank" rel="noopener noreferrer">
                   {{ currentAnnouncement.LinkText || '查看详情' }}
                 </a>
@@ -1218,7 +1206,7 @@ function statusLabel(value) {
                   <span v-if="item.Pinned">置顶</span>
                 </div>
                 <h4>{{ item.Title }}</h4>
-                <p v-for="(line, lineIndex) in announcementLines(item)" :key="lineIndex">{{ line }}</p>
+                <div class="markdown-body" v-html="announcementHtml(item)"></div>
                 <a v-if="item.LinkURL" :href="item.LinkURL" target="_blank" rel="noopener noreferrer">
                   {{ item.LinkText || '查看详情' }}
                 </a>
