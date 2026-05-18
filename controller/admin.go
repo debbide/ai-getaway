@@ -453,9 +453,10 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		return
 	}
 	planChanged := req.PlanIDPresent && !sameUintPointer(user.PlanID, req.PlanID)
+	upstreamUpdateRequested := req.ChannelID != 0 || req.UpstreamUsername != "" || req.UpstreamPassword != "" || req.APIKey != ""
 	var selectedChannel *model.UpstreamChannel
-	if planChanged && req.PlanID != nil {
-		if req.ChannelID == 0 || req.UpstreamUsername == "" || req.UpstreamPassword == "" || req.APIKey == "" {
+	if upstreamUpdateRequested || (planChanged && req.PlanID != nil) {
+		if req.ChannelID == 0 || strings.TrimSpace(req.UpstreamUsername) == "" || req.UpstreamPassword == "" || req.APIKey == "" {
 			response.Error(c, 400, "upstream rebinding required after plan change")
 			return
 		}
@@ -483,7 +484,7 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 			Assign(map[string]interface{}{
 				"channel":         selectedChannel.Name,
 				"base_url":        selectedChannel.BaseURL,
-				"username":        req.UpstreamUsername,
+				"username":        strings.TrimSpace(req.UpstreamUsername),
 				"password":        req.UpstreamPassword,
 				"api_key":         req.APIKey,
 				"supports_gpt":    selectedChannel.SupportsGPT,

@@ -323,6 +323,7 @@ function emptyUser() {
     email_verified: true,
     plan_id: '',
     original_plan_id: '',
+    has_upstream: false,
     channel_id: '',
     upstream_username: '',
     upstream_password: '',
@@ -1129,6 +1130,7 @@ function openUserModal(user = null) {
       email_verified: Boolean(user.EmailVerified),
       plan_id: user.PlanID || '',
       original_plan_id: user.PlanID || '',
+      has_upstream: Boolean(user.Upstream),
       channel_id: channel?.ID || '',
       upstream_username: upstream.Username || '',
       upstream_password: upstream.Password || '',
@@ -1144,8 +1146,8 @@ async function submitUser() {
     error.value = validationMessage
     return
   }
-  if (requiresUserUpstreamRebind(userForm) && (!Number(userForm.channel_id) || !String(userForm.upstream_username || '').trim() || !String(userForm.upstream_password || '').trim() || !String(userForm.api_key || '').trim())) {
-    error.value = '修改用户套餐后，必须重新绑定上游渠道并填写上游账号、上游密码和 API Key'
+  if (shouldEditUserUpstream(userForm) && (!Number(userForm.channel_id) || !String(userForm.upstream_username || '').trim() || !String(userForm.upstream_password || '').trim() || !String(userForm.api_key || '').trim())) {
+    error.value = '编辑上游渠道时，必须填写渠道、上游账号、上游密码和 API Key'
     return
   }
   const payload = normalizeUser(userForm)
@@ -1171,6 +1173,10 @@ async function openUserUpstreamModal(user) {
     const res = await api.get(`/admin/users/${user.ID}/upstream`)
     showModal('user-upstream', `渠道 #${user.ID}`, '关闭', { user, upstream: res.data })
   } catch (err) {
+    if (err.status === 404 && err.rawMessage === 'upstream account not found') {
+      showModal('user-upstream', `渠道 #${user.ID}`, '关闭', { user, upstream: null })
+      return
+    }
     error.value = err.message
   }
 }
@@ -1817,7 +1823,7 @@ function normalizeUser(user) {
     email_verified: Boolean(user.email_verified),
     plan_id: user.plan_id === '' || user.plan_id === null ? null : Number(user.plan_id)
   }
-  if (requiresUserUpstreamRebind(user)) {
+  if (shouldEditUserUpstream(user)) {
     payload.channel_id = Number(user.channel_id || 0)
     payload.upstream_username = user.upstream_username.trim()
     payload.upstream_password = user.upstream_password
@@ -1840,6 +1846,10 @@ function validateUserForm(user) {
 
 function requiresUserUpstreamRebind(user) {
   return user.id && String(user.plan_id || '') !== String(user.original_plan_id || '') && String(user.plan_id || '') !== ''
+}
+
+function shouldEditUserUpstream(user) {
+  return Boolean(user.id) && (Boolean(user.has_upstream) || requiresUserUpstreamRebind(user))
 }
 
 function money(cents, currency = '￥') {
@@ -3409,20 +3419,20 @@ function submitModal() {
               <el-option v-for="plan in plans" :key="plan.ID" :value="plan.ID" :label="plan.Name" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="requiresUserUpstreamRebind(userForm)" label="重新绑定上游渠道">
+          <el-form-item v-if="shouldEditUserUpstream(userForm)" :label="requiresUserUpstreamRebind(userForm) ? '重新绑定上游渠道' : '上游渠道'">
             <el-select v-model="userForm.channel_id" required>
               <el-option value="" label="请选择渠道" />
               <el-option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID" :label="channel.Name" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="requiresUserUpstreamRebind(userForm)" class="md:col-span-2" label="上游账号">
+          <el-form-item v-if="shouldEditUserUpstream(userForm)" class="md:col-span-2" label="上游账号">
             <el-input v-model="userForm.upstream_username" required placeholder="请输入上游账号" />
           </el-form-item>
-          <el-form-item v-if="requiresUserUpstreamRebind(userForm)" label="上游密码">
+          <el-form-item v-if="shouldEditUserUpstream(userForm)" label="上游密码">
             <el-input v-model="userForm.upstream_password" type="text" required placeholder="请输入上游密码" />
           </el-form-item>
-          <el-form-item v-if="requiresUserUpstreamRebind(userForm)" label="新的上游 API Key">
-            <el-input v-model="userForm.api_key" type="text" required placeholder="修改套餐后必须重新绑定" />
+          <el-form-item v-if="shouldEditUserUpstream(userForm)" label="上游 API Key">
+            <el-input v-model="userForm.api_key" type="text" required placeholder="请输入上游 API Key" />
           </el-form-item>
           <el-form-item class="md:col-span-2" label="邮箱已验证"><el-switch v-model="userForm.email_verified" /></el-form-item>
         </div>
@@ -3440,8 +3450,12 @@ function submitModal() {
         </div>
 
         <div v-if="modal.type === 'user-upstream'" class="modal-body form-grid">
+          <div v-if="!modal.payload?.upstream" class="order-flow-note md:col-span-2">
+            <strong>尚未绑定上游渠道</strong>
+            <span>当前用户没有独立上游账号。需要开通时，请在编辑用户时分配套餐并填写上游渠道、账号、密码和 API Key。</span>
+          </div>
           <el-form-item label="用户"><el-input :model-value="modal.payload?.user?.Email || '-'" readonly /></el-form-item>
-          <el-form-item label="状态"><el-input :model-value="statusLabel(modal.payload?.upstream?.Status || '-')" readonly /></el-form-item>
+          <el-form-item label="状态"><el-input :model-value="modal.payload?.upstream ? statusLabel(modal.payload.upstream.Status) : '未绑定'" readonly /></el-form-item>
           <el-form-item label="上游渠道"><el-input :model-value="modal.payload?.upstream?.Channel || '-'" readonly /></el-form-item>
           <el-form-item class="md:col-span-2" label="API 地址"><el-input :model-value="modal.payload?.upstream?.BaseURL || '-'" readonly /></el-form-item>
           <el-form-item label="上游账号"><el-input :model-value="modal.payload?.upstream?.Username || '-'" readonly /></el-form-item>
