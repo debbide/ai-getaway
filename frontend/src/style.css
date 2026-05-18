@@ -3979,6 +3979,38 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
   padding: 14px;
 }
 
+.endpoint-admin-item .el-form-item__label {
+  color: var(--muted);
+  font-weight: 900;
+}
+
+html[data-theme="dark"] .endpoint-admin-item {
+  border-color: rgba(71, 84, 110, 0.74);
+  background: rgba(17, 24, 39, 0.78);
+}
+
+html[data-theme="dark"] .endpoint-admin-item .el-form-item__label {
+  color: #cbd5e1;
+}
+
+html[data-theme="dark"] .endpoint-admin-item .el-input__wrapper {
+  border-color: rgba(71, 84, 110, 0.86);
+  background: rgba(9, 14, 25, 0.72);
+  box-shadow: 0 0 0 1px rgba(71, 84, 110, 0.86) inset;
+}
+
+html[data-theme="dark"] .endpoint-admin-item .el-input__inner {
+  color: #f8fafc;
+}
+
+html[data-theme="dark"] .endpoint-admin-item .el-input__inner::placeholder {
+  color: #778399;
+}
+
+html[data-theme="dark"] .endpoint-admin-item .el-button.is-disabled {
+  opacity: 0.45;
+}
+
 .template-variable-list {
   display: flex;
   flex-wrap: wrap;
