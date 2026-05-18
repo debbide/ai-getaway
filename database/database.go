@@ -164,7 +164,6 @@ func StartSubscriptionExpireEmailReminder(db *gorm.DB) {
 		service.SendSubscriptionExpireReminders(db)
 	}
 
-	remind()
 	go func() {
 		ticker := time.NewTicker(12 * time.Hour)
 		defer ticker.Stop()

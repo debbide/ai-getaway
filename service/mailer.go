@@ -2,7 +2,9 @@ package service
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html"
@@ -17,6 +19,7 @@ import (
 
 	"ai-gateway/model"
 
+	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -339,21 +342,6 @@ func sendTemplateEmail(db *gorm.DB, setting model.SystemSetting, templateType, t
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-
-	var tpl model.EmailTemplate
-	if err := db.Where("type = ? AND enabled = ?", templateType, true).First(&tpl).Error; err != nil {
-		return err
-	}
-	variables := emailTemplateVariables(input, extra)
-	subject := renderEmailTemplateText(tpl.Subject, variables, false)
-	body := renderEmailTemplateText(tpl.Body, variables, true)
-	if strings.TrimSpace(body) == "" {
-		body = renderEmailTemplateText(defaultTemplateBody(templateType), variables, true)
-	}
-
-	if err := NewMailer(setting).SendHTML(to, subject, body); err != nil {
-		return err
-	}
 	logItem := model.EmailNotificationLog{
 		EventType:   templateType,
 		SentTo:      to,
@@ -366,9 +354,44 @@ func sendTemplateEmail(db *gorm.DB, setting model.SystemSetting, templateType, t
 		logItem.OrderID = &input.Order.ID
 	}
 	if err := db.Create(&logItem).Error; err != nil {
+		if isDuplicateFingerprintError(err) {
+			return nil
+		}
+		return err
+	}
+
+	var tpl model.EmailTemplate
+	if err := db.Where("type = ? AND enabled = ?", templateType, true).First(&tpl).Error; err != nil {
+		deleteEmailNotificationLog(db, logItem.ID)
+		return err
+	}
+	variables := emailTemplateVariables(input, extra)
+	subject := renderEmailTemplateText(tpl.Subject, variables, false)
+	body := renderEmailTemplateText(tpl.Body, variables, true)
+	if strings.TrimSpace(body) == "" {
+		body = renderEmailTemplateText(defaultTemplateBody(templateType), variables, true)
+	}
+
+	if err := NewMailer(setting).SendHTML(to, subject, body); err != nil {
+		deleteEmailNotificationLog(db, logItem.ID)
 		return err
 	}
 	return nil
+}
+
+func deleteEmailNotificationLog(db *gorm.DB, id uint) {
+	if id == 0 {
+		return
+	}
+	db.Unscoped().Delete(&model.EmailNotificationLog{}, id)
+}
+
+func isDuplicateFingerprintError(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }
 
 func emailTemplateVariables(input EmailTemplateInput, extra map[string]string) map[string]string {
@@ -451,7 +474,12 @@ func notificationFingerprint(eventType string, userID *uint, orderID *uint, to s
 	if suffix != "" {
 		parts = append(parts, suffix)
 	}
-	return strings.Join(parts, ":")
+	raw := strings.Join(parts, ":")
+	if len(raw) <= 128 {
+		return raw
+	}
+	sum := sha256.Sum256([]byte(raw))
+	return eventType + ":" + hex.EncodeToString(sum[:])
 }
 
 func fallback(value, backup string) string {

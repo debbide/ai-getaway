@@ -59,7 +59,9 @@ func (a *APIKeyController) dedupeUserAPIKeys(userID uint) {
 	var keys []model.APIKey
 	a.db.Where("user_id = ?", userID).Order("id desc").Find(&keys)
 	for i := 1; i < len(keys); i++ {
-		a.db.Unscoped().Delete(&model.APIKey{}, keys[i].ID)
+		a.db.Model(&model.APIKey{}).
+			Where("id = ?", keys[i].ID).
+			Update("status", model.APIKeyStatusDisabled)
 	}
 }
 
@@ -190,7 +192,9 @@ func (a *APIKeyController) Rotate(c *gin.Context) {
 	}
 
 	err = a.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Unscoped().Where("user_id = ?", user.ID).Delete(&model.APIKey{}).Error; err != nil {
+		if err := tx.Model(&model.APIKey{}).
+			Where("user_id = ?", user.ID).
+			Update("status", model.APIKeyStatusDisabled).Error; err != nil {
 			return err
 		}
 		return tx.Create(&apiKey).Error
@@ -356,7 +360,9 @@ func (a *APIKeyController) AdminUpdate(c *gin.Context) {
 }
 
 func (a *APIKeyController) AdminDelete(c *gin.Context) {
-	result := a.db.Delete(&model.APIKey{}, c.Param("id"))
+	result := a.db.Model(&model.APIKey{}).
+		Where("id = ?", c.Param("id")).
+		Update("status", model.APIKeyStatusDisabled)
 	if result.Error != nil {
 		response.Error(c, 500, "failed to delete api key")
 		return
