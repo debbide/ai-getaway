@@ -839,7 +839,7 @@ function planSubtitle(index) {
 
 <template>
   <div class="app-frame min-h-screen">
-    <header class="site-header">
+    <header v-if="!isAdminPage || !auth.loggedIn || !auth.isAdmin" class="site-header">
       <div class="site-nav mx-auto flex max-w-7xl items-center justify-between px-4 sm:px-6">
         <button class="brand-lockup focus-ring" @click="navigate('/')">
           <span class="brand-mark">XK</span>
@@ -1052,7 +1052,7 @@ function planSubtitle(index) {
     </main>
 
     <main v-else-if="isAdminPage" class="console-page">
-      <section class="mx-auto max-w-7xl px-4 py-10 sm:px-6">
+      <section v-if="!auth.loggedIn || !auth.isAdmin" class="mx-auto max-w-7xl px-4 py-10 sm:px-6">
         <div class="console-title">
           <div>
             <p class="section-kicker">Admin</p>

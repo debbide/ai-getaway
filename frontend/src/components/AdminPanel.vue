@@ -1,22 +1,37 @@
 ﻿<script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import {
+  Bell,
+  Connection,
+  Cpu,
+  CreditCard,
+  DataAnalysis,
+  Document,
+  Menu as MenuIcon,
+  Monitor,
+  Refresh,
+  Setting,
+  ShoppingCart,
+  Tickets,
+  User
+} from '@element-plus/icons-vue'
 import { api } from '../api/client'
+import { useAuthStore } from '../stores/auth'
 
 const menu = [
-  { key: 'overview', label: '总览', hint: '运营数据' },
-  { key: 'plans', label: '套餐管理', hint: '价格与额度' },
-  { key: 'orders', label: '审核管理', hint: '订单开通' },
-  { key: 'models', label: '模型管理', hint: '计费倍率' },
-  { key: 'channels', label: '渠道管理', hint: '上游接口' },
-  { key: 'users', label: '用户管理', hint: '账号与权限' },
-  { key: 'usageRecords', label: '使用记录', hint: '调用日志' },
-  { key: 'announcements', label: '公告管理', hint: '控制台公告' },
-  { key: 'docs', label: '配置文档', hint: 'Markdown 内容' },
-  { key: 'emailTemplates', label: '邮件模板', hint: '通知文案' },
-  { key: 'navigation', label: '导航菜单', hint: '顶部菜单' },
-  { key: 'settings', label: '系统设置', hint: '邮件与支付' }
+  { key: 'overview', label: '总览', hint: '运营数据', icon: DataAnalysis },
+  { key: 'plans', label: '套餐管理', hint: '价格与额度', icon: CreditCard },
+  { key: 'orders', label: '审核管理', hint: '订单开通', icon: ShoppingCart },
+  { key: 'models', label: '模型管理', hint: '计费倍率', icon: Cpu },
+  { key: 'channels', label: '渠道管理', hint: '上游接口', icon: Connection },
+  { key: 'users', label: '用户管理', hint: '账号与权限', icon: User },
+  { key: 'usageRecords', label: '使用记录', hint: '调用日志', icon: Tickets },
+  { key: 'announcements', label: '公告管理', hint: '控制台公告', icon: Bell },
+  { key: 'docs', label: '配置文档', hint: 'Markdown 内容', icon: Document },
+  { key: 'emailTemplates', label: '邮件模板', hint: '通知文案', icon: Monitor },
+  { key: 'navigation', label: '导航菜单', hint: '顶部菜单', icon: MenuIcon },
+  { key: 'settings', label: '系统设置', hint: '邮件与支付', icon: Setting }
 ]
 
 const statusOptions = [
@@ -51,6 +66,7 @@ const orderStatusMap = {
 const reviewableOrderStatuses = ['pending_review', 'pending_manual_review', 'paid_late']
 
 const active = ref('overview')
+const auth = useAuthStore()
 const settingsTab = ref('basic')
 const usersTab = ref('users')
 const channelsTab = ref('upstream')
@@ -161,6 +177,8 @@ const settings = reactive({
 })
 
 const pendingOrders = computed(() => stats.value.pending_orders ?? orders.value.filter((order) => reviewableOrderStatuses.includes(order.Status)).length)
+const currentMenu = computed(() => menu.find((item) => item.key === active.value) || menu[0])
+const adminDisplayName = computed(() => auth.user?.email || auth.user?.username || 'Admin')
 const modalDialogWidth = computed(() => {
   if (modal.type === 'create-polling-pool' || modal.type === 'edit-polling-pool') return '980px'
   return '760px'
@@ -2021,23 +2039,48 @@ function submitModal() {
 </script>
 
 <template>
-  <section class="console-shell mx-auto max-w-7xl px-4 pb-12 sm:px-6">
-    <div class="grid gap-5 lg:grid-cols-[250px_1fr]">
-      <aside class="admin-sidebar">
-        <div class="sidebar-glow"></div>
-        <p class="section-kicker">Admin Center</p>
-        <h2 class="mt-2 text-2xl font-black text-ink">管理后台</h2>
-        <el-menu class="mt-6 admin-el-menu" :default-active="active" @select="setActiveSection">
-          <el-menu-item v-for="item in menu" :key="item.key" :index="item.key">
-            <div class="admin-menu-item">
-              <span>{{ item.label }}</span>
-              <small>{{ item.hint }}</small>
-            </div>
-          </el-menu-item>
-        </el-menu>
-      </aside>
+  <section class="admin-app-shell">
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <span class="admin-brand-mark">AI</span>
+        <div>
+          <strong>管理后台</strong>
+          <small>AI Gateway</small>
+        </div>
+      </div>
+      <nav class="admin-menu-list" aria-label="管理后台菜单">
+        <button v-for="item in menu" :key="item.key" class="admin-menu-button" :class="{ active: active === item.key }" type="button" @click="setActiveSection(item.key)">
+          <el-icon class="admin-menu-icon"><component :is="item.icon" /></el-icon>
+          <div class="admin-menu-item">
+            <span>{{ item.label }}</span>
+            <small>{{ item.hint }}</small>
+          </div>
+        </button>
+      </nav>
+    </aside>
 
-      <div class="min-w-0">
+    <div class="admin-main">
+      <header class="admin-topbar">
+        <div>
+          <p class="section-kicker">Admin Center</p>
+          <h1>{{ currentMenu.label }}</h1>
+          <span>{{ currentMenu.hint }}</span>
+        </div>
+        <div class="admin-topbar-actions">
+          <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
+          <div class="admin-status-chip">
+            <span>{{ pendingOrders }}</span>
+            <small>待审核</small>
+          </div>
+          <div class="admin-user-chip">
+            <strong>{{ adminDisplayName }}</strong>
+            <small>Administrator</small>
+          </div>
+        </div>
+      </header>
+
+      <main class="admin-content">
+        <div class="min-w-0">
         <div v-if="active === 'overview'" class="space-y-6">
           <div class="admin-hero">
             <div>
@@ -3142,7 +3185,8 @@ function submitModal() {
             </div>
           </section>
         </el-form>
-      </div>
+        </div>
+      </main>
     </div>
 
     <el-dialog v-model="modal.open" class="admin-modal-dialog" :title="modal.title" :width="modalDialogWidth" align-center @close="closeModal">
