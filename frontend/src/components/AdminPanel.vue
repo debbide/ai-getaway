@@ -161,6 +161,10 @@ const settings = reactive({
 })
 
 const pendingOrders = computed(() => stats.value.pending_orders ?? orders.value.filter((order) => reviewableOrderStatuses.includes(order.Status)).length)
+const modalDialogWidth = computed(() => {
+  if (modal.type === 'create-polling-pool' || modal.type === 'edit-polling-pool') return '980px'
+  return '760px'
+})
 const enabledPlans = computed(() => stats.value.enabled_plans ?? plans.value.filter((plan) => plan.Enabled).length)
 const enabledModels = computed(() => models.value.filter((item) => item.Status === 'active').length)
 const approvedUsers = computed(() => stats.value.approved_users ?? users.value.filter((user) => user.Status === 'approved').length)
@@ -3141,7 +3145,7 @@ function submitModal() {
       </div>
     </div>
 
-    <el-dialog v-model="modal.open" class="admin-modal-dialog" :title="modal.title" width="760px" align-center @close="closeModal">
+    <el-dialog v-model="modal.open" class="admin-modal-dialog" :title="modal.title" :width="modalDialogWidth" align-center @close="closeModal">
       <el-form class="admin-modal-form" label-position="top" @submit.prevent="submitModal">
 
         <div v-if="modal.type === 'create-plan' || modal.type === 'edit-plan'" class="modal-body form-grid">
@@ -3221,14 +3225,35 @@ function submitModal() {
               <el-button size="small" type="primary" @click="addPollingPoolAccount">新增账号</el-button>
             </div>
             <div v-for="(account, index) in pollingPoolForm.accounts" :key="index" class="pool-account-row">
-              <el-input v-model="account.name" placeholder="账号名称" />
-              <el-input v-model="account.base_url" placeholder="API 地址" />
-              <el-input v-model="account.api_key" placeholder="API Key" />
-              <el-input v-model.number="account.total_usd_quota" type="number" min="0" step="0.01" placeholder="总额度" />
-              <el-input v-model.number="account.remaining_usd_quota" type="number" min="0" step="0.01" placeholder="剩余额度" />
-              <el-input v-model.number="account.sort_order" type="number" placeholder="排序" />
-              <el-switch v-model="account.enabled" />
-              <el-button size="small" type="danger" :disabled="pollingPoolForm.accounts.length <= 1" @click="removePollingPoolAccount(index)">删除</el-button>
+              <div class="pool-account-field pool-account-name">
+                <span>账号名称</span>
+                <el-input v-model="account.name" placeholder="例如：OpenAI 主账号" />
+              </div>
+              <div class="pool-account-field pool-account-base">
+                <span>API 地址</span>
+                <el-input v-model="account.base_url" placeholder="https://api.openai.com" />
+              </div>
+              <div class="pool-account-field pool-account-key">
+                <span>API Key</span>
+                <el-input v-model="account.api_key" placeholder="请输入上游 API Key" />
+              </div>
+              <div class="pool-account-field pool-account-quota">
+                <span>总额度（美元）</span>
+                <el-input v-model.number="account.total_usd_quota" type="number" min="0" step="0.01" placeholder="总额度" />
+              </div>
+              <div class="pool-account-field pool-account-remaining">
+                <span>剩余额度（美元）</span>
+                <el-input v-model.number="account.remaining_usd_quota" type="number" min="0" step="0.01" placeholder="剩余额度" />
+              </div>
+              <div class="pool-account-field pool-account-sort">
+                <span>排序</span>
+                <el-input v-model.number="account.sort_order" type="number" placeholder="数字越小越先使用" />
+              </div>
+              <div class="pool-account-enabled">
+                <span>启用</span>
+                <el-switch v-model="account.enabled" />
+              </div>
+              <el-button class="pool-account-delete" size="small" type="danger" :disabled="pollingPoolForm.accounts.length <= 1" @click="removePollingPoolAccount(index)">删除</el-button>
             </div>
           </div>
         </div>

@@ -4453,13 +4453,76 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb {
 
 .pool-account-row {
   display: grid;
-  grid-template-columns: 1fr 1.4fr 1.4fr 110px 110px 80px 70px 70px;
-  gap: 8px;
+  grid-template-columns: minmax(130px, 0.9fr) minmax(220px, 1.5fr) minmax(260px, 1.8fr) 110px 104px;
+  grid-template-areas:
+    "name base key enabled delete"
+    "total remaining sort enabled delete";
+  gap: 10px;
   align-items: center;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 8px;
-  background: rgba(248, 250, 252, 0.82);
+  background: color-mix(in srgb, var(--panel) 92%, var(--canvas));
+}
+
+.pool-account-row .el-input__wrapper {
+  min-height: 42px;
+}
+
+.pool-account-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pool-account-field span,
+.pool-account-enabled span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.pool-account-name {
+  grid-area: name;
+}
+
+.pool-account-base {
+  grid-area: base;
+}
+
+.pool-account-key {
+  grid-area: key;
+}
+
+.pool-account-quota {
+  grid-area: total;
+}
+
+.pool-account-remaining {
+  grid-area: remaining;
+}
+
+.pool-account-sort {
+  grid-area: sort;
+}
+
+.pool-account-enabled {
+  grid-area: enabled;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  align-self: stretch;
+  padding-top: 20px;
+}
+
+.pool-account-delete {
+  grid-area: delete;
+  justify-self: stretch;
+  align-self: end;
+  margin-bottom: 1px;
 }
 
 .key-usage-backdrop {
@@ -4615,7 +4678,14 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb {
 
 @media (max-width: 980px) {
   .pool-account-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "name name"
+      "base base"
+      "key key"
+      "total remaining"
+      "sort enabled"
+      "delete delete";
   }
 
   .key-usage-summary {
@@ -6662,7 +6732,8 @@ html[data-theme="dark"] .admin-sidebar {
 html[data-theme="dark"] .list-row,
 html[data-theme="dark"] .key-card,
 html[data-theme="dark"] .plan-mini,
-html[data-theme="dark"] .nav-editor-card {
+html[data-theme="dark"] .nav-editor-card,
+html[data-theme="dark"] .pool-account-row {
   border-color: rgba(71, 84, 110, 0.74);
   background: rgba(17, 24, 39, 0.78);
 }
