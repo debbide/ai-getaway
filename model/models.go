@@ -55,6 +55,9 @@ const (
 	RedeemCodeStatusUnused   = "unused"
 	RedeemCodeStatusRedeemed = "redeemed"
 	RedeemCodeStatusDisabled = "disabled"
+
+	OAuthProviderGitHub = "github"
+	OAuthProviderGoogle = "google"
 )
 
 type User struct {
@@ -69,6 +72,17 @@ type User struct {
 	Plan                  *Plan
 	ExpiresAt             *time.Time
 	SubscriptionStartedAt *time.Time
+}
+
+type OAuthAccount struct {
+	gorm.Model
+	UserID         uint   `gorm:"uniqueIndex:idx_oauth_user_provider;not null"`
+	User           User   `gorm:"constraint:OnDelete:CASCADE"`
+	Provider       string `gorm:"size:32;uniqueIndex:idx_oauth_provider_subject;uniqueIndex:idx_oauth_user_provider;index;not null"`
+	ProviderUserID string `gorm:"size:191;uniqueIndex:idx_oauth_provider_subject;not null"`
+	Email          string `gorm:"size:128;index"`
+	DisplayName    string `gorm:"size:128"`
+	AvatarURL      string `gorm:"size:512"`
 }
 
 type Plan struct {
@@ -318,6 +332,12 @@ type SystemSetting struct {
 	ManualPaymentQRCode            string `gorm:"type:longtext"`
 	MockAPIOnlineEnabled           bool   `gorm:"default:false"`
 	MockAPIOnlineBase              int    `gorm:"default:0"`
+	GitHubOAuthEnabled             bool   `gorm:"default:false"`
+	GitHubOAuthClientID            string `gorm:"size:191"`
+	GitHubOAuthClientSecret        string `gorm:"size:255" json:"-"`
+	GoogleOAuthEnabled             bool   `gorm:"default:false"`
+	GoogleOAuthClientID            string `gorm:"size:191"`
+	GoogleOAuthClientSecret        string `gorm:"size:255" json:"-"`
 }
 
 type EmailTemplate struct {

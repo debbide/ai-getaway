@@ -212,6 +212,14 @@ const settings = reactive({
   manual_payment_enabled: true,
   mock_api_online_enabled: false,
   mock_api_online_base: 0,
+  github_oauth_enabled: false,
+  github_oauth_client_id: '',
+  github_oauth_client_secret: '',
+  github_oauth_client_secret_configured: false,
+  google_oauth_enabled: false,
+  google_oauth_client_id: '',
+  google_oauth_client_secret: '',
+  google_oauth_client_secret_configured: false,
   manual_payment_qr_code: '',
   smtp_password_configured: false,
   epay_key_configured: false,
@@ -530,7 +538,7 @@ async function loadAll() {
     applyListData('announcements', announcements, responseData(announcementsRes, { items: [] }))
     emailTemplates.value = templateData?.items || []
     emailTemplateVariables.value = templateData?.variables || []
-    Object.assign(settings, responseData(settingsRes, {}), { smtp_password: '', epay_key: '' })
+    Object.assign(settings, responseData(settingsRes, {}), { smtp_password: '', epay_key: '', github_oauth_client_secret: '', google_oauth_client_secret: '' })
     setNavigationDraft(settings.navigation_items)
     setAPIEndpointDraft(settings.api_endpoints)
     const loadErrors = collectLoadErrors(results)
@@ -708,7 +716,7 @@ async function loadEmailTemplatesData() {
 
 async function loadSettingsData() {
   const res = await api.get('/admin/settings')
-  Object.assign(settings, res.data, { smtp_password: '', epay_key: '' })
+  Object.assign(settings, res.data, { smtp_password: '', epay_key: '', github_oauth_client_secret: '', google_oauth_client_secret: '' })
   setNavigationDraft(settings.navigation_items)
   setAPIEndpointDraft(settings.api_endpoints)
 }
@@ -1533,6 +1541,8 @@ async function saveSettings() {
     })
     settings.smtp_password = ''
     settings.epay_key = ''
+    settings.github_oauth_client_secret = ''
+    settings.google_oauth_client_secret = ''
     notice.value = '系统设置已保存'
   }, false)
 }
@@ -3402,6 +3412,7 @@ function submitModal() {
               { label: 'API 端点', value: 'endpoints' },
               { label: 'SMTP 配置', value: 'smtp' },
               { label: '通知开关', value: 'notifications' },
+              { label: '第三方登录', value: 'oauth' },
               { label: '易支付配置', value: 'epay' },
               { label: '人工支付', value: 'manualPayment' }
             ]"
@@ -3520,6 +3531,46 @@ function submitModal() {
               </el-form-item>
               <el-form-item label="到期前提醒天数">
                 <el-input-number v-model="settings.subscription_expire_remind_days" :min="1" :max="365" class="w-full" />
+              </el-form-item>
+            </div>
+          </section>
+
+          <section v-if="settingsTab === 'oauth'" class="panel-surface p-5">
+            <div class="section-head mb-5">
+              <div>
+                <p class="section-kicker">OAuth</p>
+                <h3>第三方登录</h3>
+                <span>回调地址使用 /api/auth/oauth/{provider}/callback，生产环境请配置 PUBLIC_BASE_URL。</span>
+              </div>
+            </div>
+            <div class="form-grid">
+              <el-form-item class="md:col-span-2" label="GitHub 登录">
+                <el-switch v-model="settings.github_oauth_enabled" active-text="开启 GitHub 第三方登录" />
+              </el-form-item>
+              <el-form-item label="GitHub Client ID">
+                <el-input v-model="settings.github_oauth_client_id" placeholder="GitHub OAuth App Client ID" />
+              </el-form-item>
+              <el-form-item label="GitHub Client Secret">
+                <el-input
+                  v-model="settings.github_oauth_client_secret"
+                  type="password"
+                  show-password
+                  :placeholder="settings.github_oauth_client_secret_configured ? '已配置，留空不修改' : '请输入 Client Secret'"
+                />
+              </el-form-item>
+              <el-form-item class="md:col-span-2" label="Google 登录">
+                <el-switch v-model="settings.google_oauth_enabled" active-text="开启 Google 第三方登录" />
+              </el-form-item>
+              <el-form-item label="Google Client ID">
+                <el-input v-model="settings.google_oauth_client_id" placeholder="Google OAuth Client ID" />
+              </el-form-item>
+              <el-form-item label="Google Client Secret">
+                <el-input
+                  v-model="settings.google_oauth_client_secret"
+                  type="password"
+                  show-password
+                  :placeholder="settings.google_oauth_client_secret_configured ? '已配置，留空不修改' : '请输入 Client Secret'"
+                />
               </el-form-item>
             </div>
           </section>

@@ -52,6 +52,12 @@ type updateSettingsRequest struct {
 	ManualPaymentQRCode            string `json:"manual_payment_qr_code"`
 	MockAPIOnlineEnabled           bool   `json:"mock_api_online_enabled"`
 	MockAPIOnlineBase              int    `json:"mock_api_online_base"`
+	GitHubOAuthEnabled             bool   `json:"github_oauth_enabled"`
+	GitHubOAuthClientID            string `json:"github_oauth_client_id"`
+	GitHubOAuthClientSecret        string `json:"github_oauth_client_secret"`
+	GoogleOAuthEnabled             bool   `json:"google_oauth_enabled"`
+	GoogleOAuthClientID            string `json:"google_oauth_client_id"`
+	GoogleOAuthClientSecret        string `json:"google_oauth_client_secret"`
 }
 
 type testSMTPRequest struct {
@@ -85,6 +91,7 @@ func (s *SettingsController) Public(c *gin.Context) {
 		"manual_payment_enabled":  setting.ManualPaymentEnabled,
 		"mock_api_online_enabled": setting.MockAPIOnlineEnabled,
 		"mock_api_online_base":    normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase),
+		"oauth_providers":         publicOAuthProviders(setting),
 	})
 }
 
@@ -111,37 +118,43 @@ func (s *SettingsController) Get(c *gin.Context) {
 	}
 	setting := loadSettings(s.db)
 	response.OK(c, gin.H{
-		"id":                                setting.ID,
-		"site_title":                        setting.SiteTitle,
-		"contact_email":                     setting.ContactEmail,
-		"api_endpoints":                     setting.APIEndpoints,
-		"navigation_items":                  setting.NavigationItems,
-		"pricing_title":                     setting.PricingTitle,
-		"pricing_subtitle":                  setting.PricingSubtitle,
-		"pricing_notice":                    setting.PricingNotice,
-		"allow_registration":                setting.AllowRegistration,
-		"email_whitelist":                   setting.EmailWhitelist,
-		"smtp_host":                         setting.SMTPHost,
-		"smtp_port":                         setting.SMTPPort,
-		"smtp_username":                     setting.SMTPUsername,
-		"smtp_from_email":                   setting.SMTPFromEmail,
-		"smtp_from_name":                    setting.SMTPFromName,
-		"smtp_use_tls":                      setting.SMTPUseTLS,
-		"order_payment_admin_email_enabled": setting.OrderPaymentAdminEmailEnabled,
-		"order_approved_user_email_enabled": setting.OrderApprovedUserEmailEnabled,
-		"subscription_expire_email_enabled": setting.SubscriptionExpireEmailEnabled,
-		"subscription_expire_remind_days":   setting.SubscriptionExpireRemindDays,
-		"smtp_password_configured":          setting.SMTPPassword != "",
-		"epay_pid":                          setting.EpayPID,
-		"epay_notify_url":                   setting.EpayNotifyURL,
-		"epay_return_url":                   setting.EpayReturnURL,
-		"epay_submit_url":                   setting.EpaySubmitURL,
-		"online_payment_enabled":            setting.OnlinePaymentEnabled,
-		"manual_payment_enabled":            setting.ManualPaymentEnabled,
-		"epay_key_configured":               setting.EpayKey != "",
-		"manual_payment_qr_code":            setting.ManualPaymentQRCode,
-		"mock_api_online_enabled":           setting.MockAPIOnlineEnabled,
-		"mock_api_online_base":              normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase),
+		"id":                                    setting.ID,
+		"site_title":                            setting.SiteTitle,
+		"contact_email":                         setting.ContactEmail,
+		"api_endpoints":                         setting.APIEndpoints,
+		"navigation_items":                      setting.NavigationItems,
+		"pricing_title":                         setting.PricingTitle,
+		"pricing_subtitle":                      setting.PricingSubtitle,
+		"pricing_notice":                        setting.PricingNotice,
+		"allow_registration":                    setting.AllowRegistration,
+		"email_whitelist":                       setting.EmailWhitelist,
+		"smtp_host":                             setting.SMTPHost,
+		"smtp_port":                             setting.SMTPPort,
+		"smtp_username":                         setting.SMTPUsername,
+		"smtp_from_email":                       setting.SMTPFromEmail,
+		"smtp_from_name":                        setting.SMTPFromName,
+		"smtp_use_tls":                          setting.SMTPUseTLS,
+		"order_payment_admin_email_enabled":     setting.OrderPaymentAdminEmailEnabled,
+		"order_approved_user_email_enabled":     setting.OrderApprovedUserEmailEnabled,
+		"subscription_expire_email_enabled":     setting.SubscriptionExpireEmailEnabled,
+		"subscription_expire_remind_days":       setting.SubscriptionExpireRemindDays,
+		"smtp_password_configured":              setting.SMTPPassword != "",
+		"epay_pid":                              setting.EpayPID,
+		"epay_notify_url":                       setting.EpayNotifyURL,
+		"epay_return_url":                       setting.EpayReturnURL,
+		"epay_submit_url":                       setting.EpaySubmitURL,
+		"online_payment_enabled":                setting.OnlinePaymentEnabled,
+		"manual_payment_enabled":                setting.ManualPaymentEnabled,
+		"epay_key_configured":                   setting.EpayKey != "",
+		"manual_payment_qr_code":                setting.ManualPaymentQRCode,
+		"mock_api_online_enabled":               setting.MockAPIOnlineEnabled,
+		"mock_api_online_base":                  normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase),
+		"github_oauth_enabled":                  setting.GitHubOAuthEnabled,
+		"github_oauth_client_id":                setting.GitHubOAuthClientID,
+		"github_oauth_client_secret_configured": setting.GitHubOAuthClientSecret != "",
+		"google_oauth_enabled":                  setting.GoogleOAuthEnabled,
+		"google_oauth_client_id":                setting.GoogleOAuthClientID,
+		"google_oauth_client_secret_configured": setting.GoogleOAuthClientSecret != "",
 	})
 }
 
@@ -186,12 +199,22 @@ func (s *SettingsController) Update(c *gin.Context) {
 		"manual_payment_qr_code":            req.ManualPaymentQRCode,
 		"mock_api_online_enabled":           req.MockAPIOnlineEnabled,
 		"mock_api_online_base":              normalizeMockAPIOnlineBase(req.MockAPIOnlineBase),
+		"github_oauth_enabled":              req.GitHubOAuthEnabled,
+		"github_oauth_client_id":            strings.TrimSpace(req.GitHubOAuthClientID),
+		"google_oauth_enabled":              req.GoogleOAuthEnabled,
+		"google_oauth_client_id":            strings.TrimSpace(req.GoogleOAuthClientID),
 	}
 	if req.SMTPPassword != "" {
 		updates["smtp_password"] = req.SMTPPassword
 	}
 	if req.EpayKey != "" {
 		updates["epay_key"] = req.EpayKey
+	}
+	if strings.TrimSpace(req.GitHubOAuthClientSecret) != "" {
+		updates["github_oauth_client_secret"] = strings.TrimSpace(req.GitHubOAuthClientSecret)
+	}
+	if strings.TrimSpace(req.GoogleOAuthClientSecret) != "" {
+		updates["google_oauth_client_secret"] = strings.TrimSpace(req.GoogleOAuthClientSecret)
 	}
 	if err := s.db.Model(&setting).Updates(updates).Error; err != nil {
 		response.Error(c, 500, "failed to update settings")
@@ -260,6 +283,12 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 		"manual_payment_qr_code":            "LONGTEXT",
 		"mock_api_online_enabled":           "BOOLEAN DEFAULT FALSE",
 		"mock_api_online_base":              "INT DEFAULT 0",
+		"github_oauth_enabled":              "BOOLEAN DEFAULT FALSE",
+		"github_oauth_client_id":            "VARCHAR(191)",
+		"github_oauth_client_secret":        "VARCHAR(255)",
+		"google_oauth_enabled":              "BOOLEAN DEFAULT FALSE",
+		"google_oauth_client_id":            "VARCHAR(191)",
+		"google_oauth_client_secret":        "VARCHAR(255)",
 		"order_payment_admin_email_enabled": "BOOLEAN DEFAULT FALSE",
 		"order_approved_user_email_enabled": "BOOLEAN DEFAULT FALSE",
 		"subscription_expire_email_enabled": "BOOLEAN DEFAULT FALSE",
@@ -378,6 +407,17 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 	setting.EmailWhitelist = normalizeEmailWhitelistJSON(setting.EmailWhitelist)
 	setting.MockAPIOnlineBase = normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase)
 	return setting
+}
+
+func publicOAuthProviders(setting model.SystemSetting) []gin.H {
+	providers := []gin.H{}
+	if setting.GitHubOAuthEnabled && strings.TrimSpace(setting.GitHubOAuthClientID) != "" && strings.TrimSpace(setting.GitHubOAuthClientSecret) != "" {
+		providers = append(providers, gin.H{"provider": model.OAuthProviderGitHub, "label": "GitHub"})
+	}
+	if setting.GoogleOAuthEnabled && strings.TrimSpace(setting.GoogleOAuthClientID) != "" && strings.TrimSpace(setting.GoogleOAuthClientSecret) != "" {
+		providers = append(providers, gin.H{"provider": model.OAuthProviderGoogle, "label": "Google"})
+	}
+	return providers
 }
 
 func normalizeRemindDays(value int) int {

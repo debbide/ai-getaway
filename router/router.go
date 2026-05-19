@@ -46,6 +46,8 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 		api.POST("/auth/email-code", authController.SendEmailCode)
 		api.POST("/auth/register", authController.Register)
 		api.POST("/auth/login", authController.Login)
+		api.GET("/auth/oauth/:provider/start", authController.StartOAuthLogin)
+		api.GET("/auth/oauth/:provider/callback", authController.OAuthCallback)
 		api.GET("/plans", planController.List)
 		api.GET("/models", modelController.List)
 		api.GET("/docs", docsController.PublicList)
@@ -58,6 +60,9 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 		{
 			authed.GET("/auth/me", authController.Me)
 			authed.PATCH("/auth/password", authController.ChangePassword)
+			authed.GET("/auth/oauth/accounts", authController.OAuthAccounts)
+			authed.GET("/auth/oauth/:provider/bind", authController.StartOAuthBind)
+			authed.DELETE("/auth/oauth/:provider", authController.UnbindOAuthAccount)
 			authed.POST("/orders", orderController.Create)
 			authed.POST("/redeem-codes/redeem", redeemCodeController.Redeem)
 			authed.GET("/orders", orderController.ListMine)

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from './api/client'
 import { useAuthStore } from './stores/auth'
 import AuthModal from './components/AuthModal.vue'
@@ -32,7 +32,8 @@ const defaultSettings = {
   online_payment_enabled: true,
   manual_payment_enabled: true,
   mock_api_online_enabled: false,
-  mock_api_online_base: 0
+  mock_api_online_base: 0,
+  oauth_providers: []
 }
 const manualPaymentConfirmMessage = '请确认已成功支付，恶意创建人工支付订单且未支付的用户将会遭到封禁处理，请知悉。'
 
@@ -51,6 +52,8 @@ const passwordModalOpen = ref(false)
 const passwordSaving = ref(false)
 const passwordError = ref('')
 const passwordNotice = ref('')
+const oauthAccounts = ref([])
+const oauthAccountsLoading = ref(false)
 const pricingTab = ref('daily')
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
 const apiOnlineWidgetCollapsed = ref(localStorage.getItem('apiOnlineWidgetCollapsed') === '1')
@@ -101,6 +104,7 @@ const onlinePaymentEnabled = computed(() => publicSettings.value.online_payment_
 const manualPaymentEnabled = computed(() => publicSettings.value.manual_payment_enabled !== false)
 const mockAPIOnlineEnabled = computed(() => publicSettings.value.mock_api_online_enabled === true)
 const mockAPIOnlineBase = computed(() => Math.max(0, Number(publicSettings.value.mock_api_online_base || 0)))
+const oauthProviders = computed(() => Array.isArray(publicSettings.value.oauth_providers) ? publicSettings.value.oauth_providers : [])
 const hasEnabledPaymentMethod = computed(() => onlinePaymentEnabled.value || manualPaymentEnabled.value)
 const visiblePricingPlans = computed(() => {
   if (pricingTab.value === 'daily') return dailyPlans.value
@@ -125,6 +129,7 @@ onMounted(async () => {
   await loadPublicSettings()
   await loadPlans()
   syncMockAPIOnlineWidget()
+  await handleOAuthCallbackResult()
 })
 
 watch(currentPath, () => {
@@ -169,8 +174,12 @@ async function loadPublicSettings() {
 }
 
 async function refreshAppData() {
-  await Promise.allSettled([loadPublicSettings(), loadPlans(), auth.loadMe()])
+  await Promise.allSettled([loadPublicSettings(), loadPlans(), auth.loadMe(), loadOAuthAccounts()])
 }
+
+watch(accountMenuOpen, (open) => {
+  if (open) loadOAuthAccounts()
+})
 
 function toggleAPIOnlineWidget() {
   apiOnlineWidgetCollapsed.value = !apiOnlineWidgetCollapsed.value
@@ -421,6 +430,67 @@ function openPasswordModal() {
   passwordNotice.value = ''
   Object.assign(passwordForm, { oldPassword: '', newPassword: '', confirmPassword: '' })
   passwordModalOpen.value = true
+}
+
+async function handleOAuthCallbackResult() {
+  const params = new URLSearchParams(window.location.search)
+  const token = params.get('oauth_token')
+  const oauthError = params.get('oauth_error')
+  if (!token && !oauthError) return
+  params.delete('oauth_token')
+  params.delete('oauth_error')
+  const nextQuery = params.toString()
+  window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash}`)
+  if (token) {
+    auth.token = token
+    localStorage.setItem('token', token)
+    await auth.loadMe()
+    await loadOAuthAccounts()
+    ElMessage.success('第三方账号登录成功')
+    return
+  }
+  ElMessage.error(oauthError || '第三方登录失败')
+}
+
+async function loadOAuthAccounts() {
+  if (!auth.loggedIn || oauthAccountsLoading.value) return
+  oauthAccountsLoading.value = true
+  try {
+    const res = await api.get('/auth/oauth/accounts')
+    oauthAccounts.value = Array.isArray(res.data) ? res.data : []
+  } catch {
+    oauthAccounts.value = []
+  } finally {
+    oauthAccountsLoading.value = false
+  }
+}
+
+function oauthAccountFor(provider) {
+  const name = typeof provider === 'string' ? provider : provider?.provider
+  return oauthAccounts.value.find((item) => item.provider === name)
+}
+
+async function bindOAuth(provider) {
+  const name = typeof provider === 'string' ? provider : provider?.provider
+  if (!name) return
+  try {
+    const res = await api.get(`/auth/oauth/${name}/bind`)
+    if (res.data?.url) window.location.href = res.data.url
+  } catch (err) {
+    ElMessage.error(err.message)
+  }
+}
+
+async function unbindOAuth(provider) {
+  const name = typeof provider === 'string' ? provider : provider?.provider
+  if (!name) return
+  try {
+    await api.delete(`/auth/oauth/${name}`)
+    await loadOAuthAccounts()
+    ElMessage.success('第三方账号已解绑')
+  } catch (err) {
+    ElMessage.error(err.message)
+  }
 }
 
 function closePasswordModal() {
@@ -914,6 +984,16 @@ function planSubtitle(index) {
                       <small>{{ accountEmail }}</small>
                     </div>
                   </div>
+                  <div v-if="oauthProviders.length" class="account-oauth-list">
+                    <div v-for="provider in oauthProviders" :key="provider.provider" class="account-oauth-row">
+                      <div>
+                        <strong>{{ provider.label || provider.provider }}</strong>
+                        <small>{{ oauthAccountFor(provider)?.email || '未绑定' }}</small>
+                      </div>
+                      <button v-if="oauthAccountFor(provider)" type="button" @click="unbindOAuth(provider)">解绑</button>
+                      <button v-else type="button" @click="bindOAuth(provider)">绑定</button>
+                    </div>
+                  </div>
                   <button class="account-menu-item" @click="openPasswordModal">
                     <span class="account-icon">⚿</span>
                     修改密码
@@ -1213,7 +1293,13 @@ function planSubtitle(index) {
       </div>
     </Transition>
 
-    <AuthModal v-model:open="authOpen" v-model:mode="authMode" :allow-registration="publicSettings.allow_registration" :email-whitelist="publicSettings.email_whitelist" />
+    <AuthModal
+      v-model:open="authOpen"
+      v-model:mode="authMode"
+      :allow-registration="publicSettings.allow_registration"
+      :email-whitelist="publicSettings.email_whitelist"
+      :oauth-providers="oauthProviders"
+    />
 
     <Transition name="modal-fade">
       <div v-if="orderModal.open" class="modal-backdrop" @click.self="closeOrderModal">

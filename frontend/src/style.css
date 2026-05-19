@@ -3053,6 +3053,61 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
   background: linear-gradient(135deg, #e7a07a, #d77e58);
 }
 
+.oauth-login-group {
+  display: grid;
+  gap: 10px;
+}
+
+.oauth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.oauth-divider::before,
+.oauth-divider::after {
+  flex: 1;
+  height: 1px;
+  background: rgba(148, 163, 184, 0.32);
+  content: "";
+}
+
+.oauth-login-button {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 14px;
+  background: #ffffff;
+  color: #172033;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.oauth-login-button:hover {
+  border-color: rgba(215, 126, 88, 0.44);
+  background: rgba(250, 247, 244, 0.88);
+  transform: none;
+}
+
+.oauth-logo {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 50%;
+  background: #172033;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
 .modal-card {
   overflow: hidden;
   display: flex;
@@ -6515,36 +6570,36 @@ html[data-theme="light"] .mobile-menu-button span {
 
 .account-menu {
   position: absolute;
-  top: calc(100% + 16px);
+  top: calc(100% + 10px);
   right: 0;
   z-index: 70;
   overflow: hidden;
-  width: 300px;
-  border: 1px solid rgba(71, 84, 110, 0.72);
-  border-radius: 20px;
+  width: 260px;
+  border: 1px solid rgba(71, 84, 110, 0.54);
+  border-radius: 12px;
   background: rgba(17, 24, 39, 0.98);
   color: #f8fafc;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(18px);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
 }
 
 .account-card-head {
   display: grid;
-  grid-template-columns: 56px 1fr;
-  gap: 16px;
+  grid-template-columns: 38px 1fr;
+  gap: 10px;
   align-items: center;
-  padding: 18px 22px;
+  padding: 12px 14px;
 }
 
 .account-avatar {
   display: grid;
-  width: 56px;
-  height: 56px;
+  width: 38px;
+  height: 38px;
   place-items: center;
   border-radius: 50%;
   background: linear-gradient(180deg, #d77e58, #c96d49);
   color: #fff;
-  font-size: 22px;
+  font-size: 14px;
   font-weight: 950;
 }
 
@@ -6559,27 +6614,74 @@ html[data-theme="light"] .mobile-menu-button span {
 
 .account-card-head strong {
   color: #f8fafc;
-  font-size: 20px;
+  font-size: 14px;
   font-weight: 900;
 }
 
 .account-card-head small {
-  margin-top: 4px;
+  margin-top: 2px;
   color: #aeb8ca;
-  font-size: 16px;
+  font-size: 12px;
   font-weight: 700;
+}
+
+.account-oauth-list {
+  display: grid;
+  border-top: 1px solid rgba(71, 84, 110, 0.54);
+  padding: 6px 0;
+}
+
+.account-oauth-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 12px 7px 14px;
+}
+
+.account-oauth-row strong,
+.account-oauth-row small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-oauth-row strong {
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.account-oauth-row small {
+  margin-top: 2px;
+  color: #9aa6ba;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.account-oauth-row button {
+  min-width: 44px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f8fafc;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .account-menu-item {
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 16px;
-  border-top: 1px solid rgba(71, 84, 110, 0.72);
+  gap: 10px;
+  border-top: 1px solid rgba(71, 84, 110, 0.54);
   color: #f8fafc;
-  padding: 18px 24px;
+  padding: 10px 14px;
   text-align: left;
-  font-size: 20px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -6590,10 +6692,10 @@ html[data-theme="light"] .mobile-menu-button span {
 
 .account-icon {
   display: grid;
-  width: 30px;
+  width: 20px;
   place-items: center;
   color: #aeb8ca;
-  font-size: 28px;
+  font-size: 17px;
   line-height: 1;
 }
 
@@ -8914,17 +9016,29 @@ html[data-theme="light"] .account-menu {
 }
 
 html[data-theme="light"] .account-card-head strong,
-html[data-theme="light"] .account-menu-item {
+html[data-theme="light"] .account-menu-item,
+html[data-theme="light"] .account-oauth-row strong {
   color: #172033;
 }
 
 html[data-theme="light"] .account-card-head small,
-html[data-theme="light"] .account-icon {
+html[data-theme="light"] .account-icon,
+html[data-theme="light"] .account-oauth-row small {
   color: #647085;
 }
 
 html[data-theme="light"] .account-menu-item {
   border-top-color: rgba(228, 217, 207, 0.92);
+}
+
+html[data-theme="light"] .account-oauth-list {
+  border-top-color: rgba(228, 217, 207, 0.92);
+}
+
+html[data-theme="light"] .account-oauth-row button {
+  border-color: rgba(215, 126, 88, 0.24);
+  background: rgba(215, 126, 88, 0.08);
+  color: #9a5438;
 }
 
 html[data-theme="light"] .account-menu-item:hover {

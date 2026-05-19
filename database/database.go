@@ -40,6 +40,7 @@ func AutoMigrate(db *gorm.DB) {
 	backfillOrderPaymentRefs(db)
 	if err := db.AutoMigrate(
 		&model.User{},
+		&model.OAuthAccount{},
 		&model.Plan{},
 		&model.Order{},
 		&model.RedeemCode{},

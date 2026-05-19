@@ -9,7 +9,8 @@ const open = defineModel('open', { type: Boolean, default: false })
 const mode = defineModel('mode', { type: String, default: 'login' })
 const props = defineProps({
   allowRegistration: { type: Boolean, default: true },
-  emailWhitelist: { type: [String, Array], default: '[]' }
+  emailWhitelist: { type: [String, Array], default: '[]' },
+  oauthProviders: { type: Array, default: () => [] }
 })
 const auth = useAuthStore()
 const form = reactive({ username: '', email: '', password: '', emailCode: '' })
@@ -41,6 +42,7 @@ const emailWhitelistTip = computed(() => {
   if (mode.value !== 'register' || allowedEmailDomains.value.length === 0) return ''
   return `请使用 ${allowedEmailDomains.value.map((item) => `@${item}`).join('、')} 后缀邮箱注册`
 })
+const visibleOAuthProviders = computed(() => Array.isArray(props.oauthProviders) ? props.oauthProviders : [])
 
 watch([open, mode], () => {
   const registrationBlocked = mode.value === 'register' && !props.allowRegistration
@@ -232,6 +234,18 @@ async function submitWithCaptcha() {
   }
 }
 
+async function startOAuth(provider) {
+  const name = typeof provider === 'string' ? provider : provider?.provider
+  if (!name) return
+  error.value = ''
+  try {
+    const res = await api.get(`/auth/oauth/${name}/start`)
+    if (res.data?.url) window.location.href = res.data.url
+  } catch (err) {
+    error.value = err.message
+  }
+}
+
 function parseEmailWhitelist(value) {
   const raw = Array.isArray(value) ? value : safeParseWhitelist(value)
   const seen = new Set()
@@ -307,6 +321,20 @@ function emailAllowedByWhitelist(email) {
             {{ loading ? '处理中' : mode === 'login' ? '登录' : '创建账号' }}
           </el-button>
         </el-form>
+
+        <div v-if="mode === 'login' && visibleOAuthProviders.length" class="oauth-login-group">
+          <div class="oauth-divider"><span>或使用第三方账号登录</span></div>
+          <button
+            v-for="provider in visibleOAuthProviders"
+            :key="provider.provider"
+            class="oauth-login-button"
+            type="button"
+            @click="startOAuth(provider)"
+          >
+            <span class="oauth-logo">{{ provider.provider === 'github' ? 'GH' : 'G' }}</span>
+            使用 {{ provider.label || provider.provider }} 登录
+          </button>
+        </div>
       </div>
 
       <el-dialog v-model="securityOpen" class="security-el-dialog" modal-class="security-overlay" width="min(430px, calc(100vw - 32px))" append-to-body align-center :show-close="false">
