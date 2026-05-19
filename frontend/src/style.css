@@ -4649,6 +4649,31 @@ html[data-theme="dark"] .endpoint-admin-item .el-button.is-disabled {
   color: var(--muted);
 }
 
+.admin-table-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.admin-app-shell .admin-table-actions .el-button {
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+}
+
+.admin-table-actions .el-button + .el-button {
+  margin-left: 0;
+}
+
+.admin-table-actions--wide {
+  gap: 5px;
+}
+
+.admin-app-shell .admin-table-actions--wide .el-button {
+  width: 32px;
+  min-width: 32px;
+}
+
 .plan-snapshot-times {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

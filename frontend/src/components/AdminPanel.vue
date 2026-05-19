@@ -3,11 +3,15 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Bell,
+  Check,
+  CircleClose,
   Connection,
   Cpu,
   CreditCard,
   DataAnalysis,
+  Delete,
   Document,
+  Edit,
   Finished,
   FullScreen,
   Menu as MenuIcon,
@@ -16,7 +20,9 @@ import {
   ScaleToOriginal,
   Setting,
   ShoppingCart,
+  SwitchButton,
   Tickets,
+  TurnOff,
   User
 } from '@element-plus/icons-vue'
 import { api } from '../api/client'
@@ -2257,7 +2263,7 @@ function submitModal() {
                     <strong>#{{ order.ID }} · {{ order.User?.Email || '未知用户' }}</strong>
                     <span>{{ order.Plan?.Name || '未关联套餐' }} · {{ money(order.AmountCents) }}</span>
                   </div>
-                  <el-button type="primary" size="small" @click="openApproveModal(order)">审核</el-button>
+                  <el-button type="primary" size="small" :icon="Check" aria-label="审核订单" title="审核订单" @click="openApproveModal(order)" />
                 </article>
               </div>
             </section>
@@ -2367,9 +2373,9 @@ function submitModal() {
                 </el-table-column>
                 <el-table-column label="操作" width="150" fixed="right">
                   <template #default="{ row: plan }">
-                    <div class="table-actions">
-                      <el-button size="small" @click="openPlanModal(plan)">编辑</el-button>
-                      <el-button type="danger" size="small" @click="confirmDeletePlan(plan)">删除</el-button>
+                    <div class="table-actions admin-table-actions">
+                      <el-button size="small" :icon="Edit" aria-label="编辑套餐" title="编辑套餐" @click="openPlanModal(plan)" />
+                      <el-button type="danger" size="small" :icon="Delete" aria-label="删除套餐" title="删除套餐" @click="confirmDeletePlan(plan)" />
                     </div>
                   </template>
                 </el-table-column>
@@ -2456,7 +2462,9 @@ function submitModal() {
                 </el-table-column>
                 <el-table-column label="操作" width="120" fixed="right">
                   <template #default="{ row: code }">
-                    <el-button v-if="code.Status === 'unused'" type="warning" size="small" @click="confirmDisableRedeemCode(code)">停用</el-button>
+                    <div v-if="code.Status === 'unused'" class="table-actions admin-table-actions">
+                      <el-button type="warning" size="small" :icon="TurnOff" aria-label="停用兑换码" title="停用兑换码" @click="confirmDisableRedeemCode(code)" />
+                    </div>
                     <span v-else class="text-muted">-</span>
                   </template>
                 </el-table-column>
@@ -2539,15 +2547,15 @@ function submitModal() {
                 <el-table-column label="状态" width="130">
                   <template #default="{ row: order }"><el-tag>{{ statusLabel(order.Status) }}</el-tag></template>
                 </el-table-column>
-                <el-table-column label="操作" width="360" fixed="right">
+                <el-table-column label="操作" width="248" fixed="right">
                   <template #default="{ row: order }">
-                    <div class="table-actions">
-                      <el-button size="small" @click="openEditOrderModal(order)">编辑</el-button>
-                      <el-button v-if="order.Status === 'pending_payment'" type="primary" size="small" @click="completeOrderPayment(order)">完成支付</el-button>
-                      <el-button v-if="reviewableOrderStatuses.includes(order.Status)" size="small" @click="openApproveModal(order)">审核</el-button>
-                      <el-button v-if="reviewableOrderStatuses.includes(order.Status)" type="danger" size="small" @click="openRejectModal(order)">拒绝</el-button>
-                      <el-button v-if="order.Status !== 'approved' && order.Status !== 'rejected' && order.Status !== 'payment_timeout'" type="warning" size="small" @click="confirmCloseOrder(order)">关闭</el-button>
-                      <el-button v-if="order.Status !== 'approved'" type="danger" plain size="small" @click="confirmDeleteOrder(order)">删除</el-button>
+                    <div class="table-actions admin-table-actions admin-table-actions--wide">
+                      <el-button size="small" :icon="Edit" aria-label="编辑订单" title="编辑订单" @click="openEditOrderModal(order)" />
+                      <el-button v-if="order.Status === 'pending_payment'" type="primary" size="small" :icon="CreditCard" aria-label="完成支付" title="完成支付" @click="completeOrderPayment(order)" />
+                      <el-button v-if="reviewableOrderStatuses.includes(order.Status)" size="small" :icon="Check" aria-label="审核通过" title="审核通过" @click="openApproveModal(order)" />
+                      <el-button v-if="reviewableOrderStatuses.includes(order.Status)" type="danger" size="small" :icon="CircleClose" aria-label="拒绝订单" title="拒绝订单" @click="openRejectModal(order)" />
+                      <el-button v-if="order.Status !== 'approved' && order.Status !== 'rejected' && order.Status !== 'payment_timeout'" type="warning" size="small" :icon="TurnOff" aria-label="关闭订单" title="关闭订单" @click="confirmCloseOrder(order)" />
+                      <el-button v-if="order.Status !== 'approved'" type="danger" plain size="small" :icon="Delete" aria-label="删除订单" title="删除订单" @click="confirmDeleteOrder(order)" />
                     </div>
                   </template>
                 </el-table-column>
@@ -2593,7 +2601,7 @@ function submitModal() {
                 <el-table-column label="展示卡片" width="110"><template #default="{ row: item }"><el-tag :type="item.Featured ? 'success' : 'info'">{{ item.Featured ? '展示' : '不展示' }}</el-tag></template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: item }"><el-tag :type="item.Status === 'active' ? 'success' : 'info'">{{ modelStatusLabel(item.Status) }}</el-tag></template></el-table-column>
                 <el-table-column label="同步时间" min-width="150"><template #default="{ row: item }">{{ formatSyncTime(item.OfficialSyncedAt) }}</template></el-table-column>
-                <el-table-column label="操作" width="150" fixed="right"><template #default="{ row: item }"><div class="table-actions"><el-button size="small" @click="openModelModal(item)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteModel(item)">删除</el-button></div></template></el-table-column>
+                <el-table-column label="操作" width="112" fixed="right"><template #default="{ row: item }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑模型" title="编辑模型" @click="openModelModal(item)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除模型" title="删除模型" @click="confirmDeleteModel(item)" /></div></template></el-table-column>
               </el-table>
             </div>
             <div class="p-4 flex justify-end">
@@ -2668,7 +2676,7 @@ function submitModal() {
                 <el-table-column label="API 地址" min-width="260" prop="BaseURL" />
                 <el-table-column label="支持协议" min-width="150"><template #default="{ row: channel }"><div class="table-actions"><el-tag v-for="tag in protocolTags(channel)" :key="tag" size="small">{{ tag }}</el-tag></div></template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled ? 'success' : 'info'">{{ channel.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
-                <el-table-column label="操作" width="150"><template #default="{ row: channel }"><div class="table-actions"><el-button size="small" @click="openChannelModal(channel)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteChannel(channel)">删除</el-button></div></template></el-table-column>
+                <el-table-column label="操作" width="112" fixed="right"><template #default="{ row: channel }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑上游渠道" title="编辑上游渠道" @click="openChannelModal(channel)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除上游渠道" title="删除上游渠道" @click="confirmDeleteChannel(channel)" /></div></template></el-table-column>
               </el-table>
             </div>
             <div class="p-4 flex justify-end">
@@ -2707,7 +2715,7 @@ function submitModal() {
                 <el-table-column label="支持协议" min-width="150"><template #default="{ row: channel }"><div class="table-actions"><el-tag v-for="tag in protocolTags(channel)" :key="tag" size="small">{{ tag }}</el-tag></div></template></el-table-column>
                 <el-table-column label="剩余额度 / 总额度" min-width="160"><template #default="{ row: channel }">{{ channelQuotaText(channel) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled && channel.RemainingUSDCents > 0 ? 'success' : 'info'">{{ channel.RemainingUSDCents <= 0 ? '售罄' : (channel.Enabled ? '已启用' : '已停用') }}</el-tag></template></el-table-column>
-                <el-table-column label="操作" width="150"><template #default="{ row: channel }"><div class="table-actions"><el-button size="small" @click="openPublicChannelModal(channel)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeletePublicChannel(channel)">删除</el-button></div></template></el-table-column>
+                <el-table-column label="操作" width="112" fixed="right"><template #default="{ row: channel }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑公共渠道" title="编辑公共渠道" @click="openPublicChannelModal(channel)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除公共渠道" title="删除公共渠道" @click="confirmDeletePublicChannel(channel)" /></div></template></el-table-column>
               </el-table>
             </div>
             <div class="p-4 flex justify-end">
@@ -2746,7 +2754,7 @@ function submitModal() {
                 <el-table-column label="账号数量" width="110"><template #default="{ row: pool }">{{ pool.Accounts?.length || 0 }}</template></el-table-column>
                 <el-table-column label="剩余额度 / 总额度" min-width="160"><template #default="{ row: pool }">{{ channelQuotaText(pool) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: pool }"><el-tag :type="pool.Enabled && pool.RemainingUSDCents > 0 ? 'success' : 'info'">{{ pool.RemainingUSDCents <= 0 ? '售罄' : (pool.Enabled ? '已启用' : '已停用') }}</el-tag></template></el-table-column>
-                <el-table-column label="操作" width="150"><template #default="{ row: pool }"><div class="table-actions"><el-button size="small" @click="openPollingPoolModal(pool)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeletePollingPool(pool)">删除</el-button></div></template></el-table-column>
+                <el-table-column label="操作" width="112" fixed="right"><template #default="{ row: pool }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑轮询号池" title="编辑轮询号池" @click="openPollingPoolModal(pool)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除轮询号池" title="删除轮询号池" @click="confirmDeletePollingPool(pool)" /></div></template></el-table-column>
               </el-table>
             </div>
             <div class="p-4 flex justify-end">
@@ -2837,7 +2845,15 @@ function submitModal() {
                     <span v-else class="text-muted">未订阅</span>
                   </template>
                 </el-table-column>
-                <el-table-column label="操作" width="190"><template #default="{ row: user }"><div class="table-actions"><el-button size="small" @click="openUserModal(user)">编辑</el-button><el-button size="small" @click="openUserUpstreamModal(user)">渠道</el-button><el-button type="danger" size="small" @click="confirmDeleteUser(user)">删除</el-button></div></template></el-table-column>
+                <el-table-column label="操作" width="150" fixed="right">
+                  <template #default="{ row: user }">
+                    <div class="table-actions admin-table-actions">
+                      <el-button size="small" :icon="Edit" aria-label="编辑用户" title="编辑用户" @click="openUserModal(user)" />
+                      <el-button size="small" :icon="Connection" aria-label="渠道配置" title="渠道配置" @click="openUserUpstreamModal(user)" />
+                      <el-button type="danger" size="small" :icon="Delete" aria-label="删除用户" title="删除用户" @click="confirmDeleteUser(user)" />
+                    </div>
+                  </template>
+                </el-table-column>
               </el-table>
             </div>
             <div class="p-4 flex justify-end">
@@ -2876,7 +2892,7 @@ function submitModal() {
                 <el-table-column label="前缀" min-width="120"><template #default="{ row: key }">{{ apiKeyPrefix(key.KeyPrefix) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: key }"><el-tag>{{ apiKeyStatusLabel(key.Status) }}</el-tag></template></el-table-column>
                 <el-table-column label="更新时间" min-width="160"><template #default="{ row: key }">{{ formatDate(key.UpdatedAt || key.CreatedAt) }}</template></el-table-column>
-                <el-table-column label="操作" width="200"><template #default="{ row: key }"><div class="table-actions"><el-button size="small" @click="openApiKeyModal(key)">编辑</el-button><el-button size="small" @click="toggleApiKeyStatus(key)">{{ key.Status === 'active' ? '停用' : '启用' }}</el-button><el-button type="danger" size="small" @click="confirmDeleteApiKey(key)">删除</el-button></div></template></el-table-column>
+                <el-table-column label="操作" width="150" fixed="right"><template #default="{ row: key }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑 API Key" title="编辑 API Key" @click="openApiKeyModal(key)" /><el-button size="small" :icon="SwitchButton" :aria-label="key.Status === 'active' ? '停用 API Key' : '启用 API Key'" :title="key.Status === 'active' ? '停用 API Key' : '启用 API Key'" @click="toggleApiKeyStatus(key)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除 API Key" title="删除 API Key" @click="confirmDeleteApiKey(key)" /></div></template></el-table-column>
               </el-table>
             </div>
             <div class="p-4 flex justify-end">
@@ -3039,7 +3055,7 @@ function submitModal() {
                 <el-table-column label="发布时间" min-width="160"><template #default="{ row: item }">{{ formatDate(item.PublishedAt || item.CreatedAt) }}</template></el-table-column>
                 <el-table-column label="排序" width="90" prop="SortOrder" />
                 <el-table-column label="状态" width="150"><template #default="{ row: item }"><el-tag :type="item.Enabled ? 'success' : 'info'">{{ item.Enabled ? '已启用' : '已停用' }}</el-tag><el-tag v-if="item.Pinned" class="ml-1">置顶</el-tag></template></el-table-column>
-                <el-table-column label="操作" width="150"><template #default="{ row: item }"><div class="table-actions"><el-button size="small" @click="openAnnouncementModal(item)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteAnnouncement(item)">删除</el-button></div></template></el-table-column>
+                <el-table-column label="操作" width="112" fixed="right"><template #default="{ row: item }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑公告" title="编辑公告" @click="openAnnouncementModal(item)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除公告" title="删除公告" @click="confirmDeleteAnnouncement(item)" /></div></template></el-table-column>
               </el-table>
             </div>
             <div class="p-4 flex justify-end">
@@ -3096,7 +3112,7 @@ function submitModal() {
                 <el-table-column label="Slug" min-width="150"><template #default="{ row: doc }"><code>{{ doc.Slug }}</code></template></el-table-column>
                 <el-table-column label="排序" width="90" prop="SortOrder" />
                 <el-table-column label="状态" width="110"><template #default="{ row: doc }"><el-tag :type="doc.Enabled ? 'success' : 'info'">{{ doc.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
-                <el-table-column label="操作" width="150"><template #default="{ row: doc }"><div class="table-actions"><el-button size="small" @click="openDocModal(doc)">编辑</el-button><el-button type="danger" size="small" @click="confirmDeleteDoc(doc)">删除</el-button></div></template></el-table-column>
+                <el-table-column label="操作" width="112" fixed="right"><template #default="{ row: doc }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑文档" title="编辑文档" @click="openDocModal(doc)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除文档" title="删除文档" @click="confirmDeleteDoc(doc)" /></div></template></el-table-column>
               </el-table>
             </div>
             <div class="p-4 flex justify-end">
@@ -3130,7 +3146,7 @@ function submitModal() {
                 <el-table-column label="模板" min-width="220"><template #default="{ row: item }"><strong>{{ item.Name }}</strong><small>{{ item.Description || item.Type }}</small></template></el-table-column>
                 <el-table-column label="邮件标题" min-width="260" prop="Subject" />
                 <el-table-column label="状态" width="110"><template #default="{ row: item }"><el-tag :type="item.Enabled ? 'success' : 'info'">{{ item.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
-                <el-table-column label="操作" width="100"><template #default="{ row: item }"><el-button size="small" @click="openEmailTemplateModal(item)">编辑</el-button></template></el-table-column>
+                <el-table-column label="操作" width="76" fixed="right"><template #default="{ row: item }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑邮件模板" title="编辑邮件模板" @click="openEmailTemplateModal(item)" /></div></template></el-table-column>
               </el-table>
             </div>
           </section>
