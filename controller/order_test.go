@@ -306,3 +306,26 @@ func TestUpgradeKeepsExistingExpiry(t *testing.T) {
 		t.Fatalf("expiresAt = %v, want %v", got, expiresAt)
 	}
 }
+
+func TestPublicPlanWithoutDurationHasNoExpiry(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	plan := model.Plan{DurationDays: 0, PlanType: model.PlanTypePublic}
+
+	got := subscriptionExpiresAtForOrder(model.User{}, plan, model.OrderTypePurchase, now)
+
+	if got != nil {
+		t.Fatalf("expiresAt = %v, want nil", got)
+	}
+}
+
+func TestPublicPlanWithDurationExpiresByDuration(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	plan := model.Plan{DurationDays: 7, PlanType: model.PlanTypePublic}
+
+	got := subscriptionExpiresAtForOrder(model.User{}, plan, model.OrderTypePurchase, now)
+	want := now.AddDate(0, 0, 7)
+
+	if got == nil || !got.Equal(want) {
+		t.Fatalf("expiresAt = %v, want %v", got, want)
+	}
+}

@@ -332,6 +332,7 @@ function emptyPlan() {
     price_cents: 990,
     settlement_usd_cents: 2000,
     duration_days: 30,
+    public_expires_enabled: false,
     description: '',
     is_lottery: false,
     lottery_url: '',
@@ -853,6 +854,7 @@ function openPlanModal(plan = null) {
       price_cents: plan.PriceCents,
       settlement_usd_cents: plan.SettlementUSDCents,
       duration_days: plan.DurationDays,
+      public_expires_enabled: (plan.PlanType === 'public' || plan.QuotaPeriod === 'public') && Number(plan.DurationDays || 0) > 0,
       description: plan.Description,
       is_lottery: Boolean(plan.IsLottery),
       lottery_url: plan.LotteryURL || '',
@@ -1730,7 +1732,7 @@ function normalizePlan(plan) {
     polling_pool_id: usePool ? Number(plan.polling_pool_id || 0) : null,
     price_cents: plan.is_lottery || plan.is_free ? 0 : amountToCents(plan.price_rmb),
     settlement_usd_cents: amountToCents(plan.period_usd_quota),
-    duration_days: isPublic ? 1 : Number(plan.duration_days || 1),
+    duration_days: isPublic ? (plan.public_expires_enabled ? Number(plan.duration_days || 1) : 0) : Number(plan.duration_days || 1),
     description: plan.description.trim(),
     is_lottery: Boolean(plan.is_lottery),
     lottery_url: plan.lottery_url.trim(),
@@ -2101,6 +2103,11 @@ function publicChannelName(plan) {
   return plan.PublicChannel?.Name || publicChannels.value.find((channel) => channel.ID === plan.PublicChannelID)?.Name || '未绑定公共渠道'
 }
 
+function publicPlanDurationText(plan) {
+  const days = Number(plan?.DurationDays || 0)
+  return days > 0 ? `${days} 天有效` : '额度用完即止'
+}
+
 function protocolTags(item) {
   const tags = []
   if (item?.SupportsGPT !== false) tags.push('GPT')
@@ -2439,7 +2446,7 @@ function submitModal() {
                   <template #default="{ row: plan }">
                     <div class="plan-delivery-cell">
                       <span v-if="plan.IsLottery">{{ plan.LotteryURL || '未设置跳转地址' }}</span>
-                      <span v-else-if="plan.QuotaPeriod === 'public'">{{ publicChannelName(plan) }}</span>
+                      <span v-else-if="plan.QuotaPeriod === 'public'">{{ publicChannelName(plan) }} · {{ publicPlanDurationText(plan) }}</span>
                       <span v-else>{{ plan.DurationDays }} 天</span>
                       <el-tag :type="plan.Enabled ? 'success' : 'info'">{{ plan.Enabled ? '已启用' : '已停用' }}</el-tag>
                     </div>
@@ -3555,6 +3562,8 @@ function submitModal() {
           <el-form-item v-if="planForm.is_free" label="每人领取上限"><el-input v-model.number="planForm.free_per_user_limit" type="number" min="1" step="1" required /></el-form-item>
           <el-form-item v-if="planForm.is_free" label="总领取上限"><el-input v-model.number="planForm.free_total_limit" type="number" min="0" step="1" placeholder="0 表示不限" /></el-form-item>
           <el-form-item :label="planForm.quota_period === 'public' ? '预计总美元额度' : (planForm.quota_period === 'daily' ? '每日美元额度' : '每周美元额度')"><el-input v-model.number="planForm.period_usd_quota" type="number" min="0" step="0.01" /></el-form-item>
+          <el-form-item v-if="planForm.quota_period === 'public'" label="设定有效期"><el-switch v-model="planForm.public_expires_enabled" active-text="启用" inactive-text="用完即止" /></el-form-item>
+          <el-form-item v-if="planForm.quota_period === 'public' && planForm.public_expires_enabled" label="有效期（天）"><el-input v-model.number="planForm.duration_days" type="number" min="1" required /></el-form-item>
           <el-form-item v-if="planForm.quota_period !== 'public'" label="有效期（天）"><el-input v-model.number="planForm.duration_days" type="number" min="1" required /></el-form-item>
           <el-form-item v-if="planForm.quota_period !== 'public'" label="预计总美元额度"><el-input :model-value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></el-form-item>
           <el-form-item class="md:col-span-2" label="套餐说明"><el-input v-model="planForm.description" type="textarea" :rows="3" /></el-form-item>

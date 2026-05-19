@@ -786,8 +786,8 @@ func subscriptionStartedAtBeforeOrder(db *gorm.DB, user model.User, order *model
 
 func subscriptionExpiresAtForOrder(user model.User, plan model.Plan, orderType string, now time.Time) *time.Time {
 	durationDays := plan.DurationDays
-	if plan.PlanType == model.PlanTypePublic {
-		durationDays = 36500
+	if plan.PlanType == model.PlanTypePublic && durationDays <= 0 {
+		return nil
 	}
 	if durationDays < 1 {
 		durationDays = 1

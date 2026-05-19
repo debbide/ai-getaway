@@ -414,8 +414,10 @@ func (a *AdminController) CreateUser(c *gin.Context) {
 			response.Error(c, 404, "plan not found")
 			return
 		}
-		expiresAt := time.Now().AddDate(0, 0, plan.DurationDays)
-		user.ExpiresAt = &expiresAt
+		if plan.PlanType != model.PlanTypePublic || plan.DurationDays > 0 {
+			expiresAt := time.Now().AddDate(0, 0, fallbackDurationDays(planRequest{PlanType: plan.PlanType, DurationDays: plan.DurationDays}))
+			user.ExpiresAt = &expiresAt
+		}
 	}
 	if err := a.db.Create(&user).Error; err != nil {
 		response.Error(c, 409, "email already exists")
@@ -486,9 +488,13 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 			updates["plan_id"] = plan.ID
 			if shouldResetSubscription {
 				startedAt := now
-				expiresAt := now.AddDate(0, 0, plan.DurationDays)
 				updates["subscription_started_at"] = &startedAt
-				updates["expires_at"] = &expiresAt
+				if plan.PlanType == model.PlanTypePublic && plan.DurationDays <= 0 {
+					updates["expires_at"] = nil
+				} else {
+					expiresAt := now.AddDate(0, 0, fallbackDurationDays(planRequest{PlanType: plan.PlanType, DurationDays: plan.DurationDays}))
+					updates["expires_at"] = &expiresAt
+				}
 			}
 		}
 	}
@@ -1290,7 +1296,10 @@ func fallbackQuotaPeriod(value string) string {
 
 func fallbackDurationDays(req planRequest) int {
 	if fallbackPlanType(req.PlanType) == model.PlanTypePublic {
-		return 1
+		if req.DurationDays < 1 {
+			return 0
+		}
+		return req.DurationDays
 	}
 	if req.DurationDays < 1 {
 		return 1
@@ -1343,6 +1352,9 @@ func (a *AdminController) validatePlanRequest(req planRequest) error {
 	if planType == model.PlanTypePublic {
 		if fallbackQuotaPeriod(req.QuotaPeriod) != model.QuotaPeriodPublic {
 			return errors.New("public plan quota period required")
+		}
+		if req.DurationDays < 0 {
+			return errors.New("duration days invalid")
 		}
 		hasPublicChannel := req.PublicChannelID != nil && *req.PublicChannelID > 0
 		hasPollingPool := req.PollingPoolID != nil && *req.PollingPoolID > 0

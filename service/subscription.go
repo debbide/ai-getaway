@@ -15,6 +15,9 @@ func HasActiveSubscription(user model.User, now time.Time) bool {
 	if user.PlanID == nil {
 		return false
 	}
+	if user.Plan != nil && user.Plan.PlanType == model.PlanTypePublic && user.Plan.DurationDays <= 0 {
+		return true
+	}
 	if user.ExpiresAt == nil {
 		return false
 	}
