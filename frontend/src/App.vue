@@ -45,6 +45,7 @@ const publicSettings = ref({ ...defaultSettings })
 const themeMode = ref(localStorage.getItem('themeMode') || 'dark')
 const themeMenuOpen = ref(false)
 const accountMenuOpen = ref(false)
+const mobileMenuOpen = ref(false)
 const passwordModalOpen = ref(false)
 const passwordSaving = ref(false)
 const passwordError = ref('')
@@ -122,6 +123,9 @@ onMounted(async () => {
 })
 
 watch(currentPath, () => {
+  mobileMenuOpen.value = false
+  accountMenuOpen.value = false
+  themeMenuOpen.value = false
   refreshAppData()
 })
 
@@ -323,6 +327,9 @@ function syncPath() {
 
 function navigate(path) {
   if (!path || path === '#') return
+  mobileMenuOpen.value = false
+  accountMenuOpen.value = false
+  themeMenuOpen.value = false
   if (/^https?:\/\//i.test(path)) {
     window.open(path, '_blank', 'noopener,noreferrer')
     return
@@ -351,6 +358,7 @@ function navigateSection(id) {
 
 function navigateItem(item) {
   if (!item?.path || item.path === '#') return
+  mobileMenuOpen.value = false
   if (item.external && !item.path.startsWith('#')) {
     window.open(item.path, '_blank', 'noopener,noreferrer')
     return
@@ -359,6 +367,9 @@ function navigateItem(item) {
 }
 
 function openAuth(mode) {
+  mobileMenuOpen.value = false
+  accountMenuOpen.value = false
+  themeMenuOpen.value = false
   if (mode === 'register' && !publicSettings.value.allow_registration) {
     error.value = '当前站点暂未开放新用户注册'
     mode = 'login'
@@ -395,6 +406,7 @@ function setTheme(mode) {
   themeMode.value = mode
   localStorage.setItem('themeMode', mode)
   themeMenuOpen.value = false
+  mobileMenuOpen.value = false
   applyTheme()
 }
 
@@ -895,7 +907,61 @@ function planSubtitle(index) {
           </template>
           <button v-else class="login-pill" @click="openAuth('login')">登录</button>
         </div>
+
+        <button
+          class="mobile-menu-button"
+          :class="{ active: mobileMenuOpen }"
+          type="button"
+          :aria-expanded="mobileMenuOpen"
+          aria-label="打开导航菜单"
+          @click="mobileMenuOpen = !mobileMenuOpen"
+        >
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
       </div>
+
+      <Transition name="mobile-nav">
+        <div v-if="mobileMenuOpen" class="mobile-nav-panel mx-auto max-w-7xl px-4 sm:px-6">
+          <div class="mobile-nav-card">
+            <nav class="mobile-nav-links" aria-label="移动端导航">
+              <template v-for="item in navItems" :key="item.label">
+                <button type="button" @click="navigateItem(item)">{{ item.label }}</button>
+                <button
+                  v-for="child in item.children || []"
+                  :key="`${item.label}-${child.label}`"
+                  class="mobile-sub-link"
+                  type="button"
+                  @click="navigateItem(child)"
+                >
+                  {{ child.label }}
+                </button>
+              </template>
+            </nav>
+
+            <div class="mobile-nav-actions">
+              <template v-if="auth.loggedIn">
+                <button class="console-link" type="button" @click="enterConsole">控制台</button>
+                <button v-if="auth.isAdmin" class="console-link" type="button" @click="enterAdmin">管理后台</button>
+                <button class="console-link" type="button" @click="openPasswordModal">修改密码</button>
+                <button class="console-link" type="button" @click="logoutAccount">退出登录</button>
+              </template>
+              <template v-else>
+                <button class="console-link" type="button" @click="openAuth('login')">登录</button>
+                <button
+                  v-if="publicSettings.allow_registration"
+                  class="console-link mobile-primary-action"
+                  type="button"
+                  @click="openAuth('register')"
+                >
+                  注册
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+      </Transition>
     </header>
 
     <DocsPage v-if="isDocsPage" :key="currentPath" />

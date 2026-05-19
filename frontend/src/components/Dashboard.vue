@@ -707,7 +707,7 @@ function statusLabel(value) {
     <div class="console-stack">
       <div class="console-dashboard-grid">
         <div class="console-dashboard-main">
-          <section v-if="currentAnnouncement" class="announcement-card" :class="{ 'announcement-card--collapsed': !announcementExpanded }">
+          <section v-if="currentAnnouncement" class="announcement-card console-mobile-contained" :class="{ 'announcement-card--collapsed': !announcementExpanded }">
             <div class="announcement-icon" aria-hidden="true">i</div>
             <div class="announcement-main">
               <div class="announcement-head">
@@ -730,7 +730,7 @@ function statusLabel(value) {
           </section>
 
           <!-- API Key -->
-          <section class="panel-surface dashboard-card p-4">
+          <section class="panel-surface dashboard-card console-mobile-contained p-4">
             <div class="section-head">
               <div>
                 <p class="section-kicker">Keys</p>
@@ -806,7 +806,7 @@ function statusLabel(value) {
           </section>
 
           <!-- 订单 -->
-          <section class="panel-surface dashboard-card p-5">
+          <section class="panel-surface dashboard-card console-mobile-contained p-5">
             <div class="section-head">
               <div>
                 <p class="section-kicker">Orders</p>
