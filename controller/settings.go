@@ -411,10 +411,10 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 
 func publicOAuthProviders(setting model.SystemSetting) []gin.H {
 	providers := []gin.H{}
-	if setting.GitHubOAuthEnabled && strings.TrimSpace(setting.GitHubOAuthClientID) != "" && strings.TrimSpace(setting.GitHubOAuthClientSecret) != "" {
+	if setting.GitHubOAuthEnabled {
 		providers = append(providers, gin.H{"provider": model.OAuthProviderGitHub, "label": "GitHub"})
 	}
-	if setting.GoogleOAuthEnabled && strings.TrimSpace(setting.GoogleOAuthClientID) != "" && strings.TrimSpace(setting.GoogleOAuthClientSecret) != "" {
+	if setting.GoogleOAuthEnabled {
 		providers = append(providers, gin.H{"provider": model.OAuthProviderGoogle, "label": "Google"})
 	}
 	return providers

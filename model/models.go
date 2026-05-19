@@ -332,12 +332,12 @@ type SystemSetting struct {
 	ManualPaymentQRCode            string `gorm:"type:longtext"`
 	MockAPIOnlineEnabled           bool   `gorm:"default:false"`
 	MockAPIOnlineBase              int    `gorm:"default:0"`
-	GitHubOAuthEnabled             bool   `gorm:"default:false"`
-	GitHubOAuthClientID            string `gorm:"size:191"`
-	GitHubOAuthClientSecret        string `gorm:"size:255" json:"-"`
-	GoogleOAuthEnabled             bool   `gorm:"default:false"`
-	GoogleOAuthClientID            string `gorm:"size:191"`
-	GoogleOAuthClientSecret        string `gorm:"size:255" json:"-"`
+	GitHubOAuthEnabled             bool   `gorm:"column:github_oauth_enabled;default:false"`
+	GitHubOAuthClientID            string `gorm:"column:github_oauth_client_id;size:191"`
+	GitHubOAuthClientSecret        string `gorm:"column:github_oauth_client_secret;size:255" json:"-"`
+	GoogleOAuthEnabled             bool   `gorm:"column:google_oauth_enabled;default:false"`
+	GoogleOAuthClientID            string `gorm:"column:google_oauth_client_id;size:191"`
+	GoogleOAuthClientSecret        string `gorm:"column:google_oauth_client_secret;size:255" json:"-"`
 }
 
 type EmailTemplate struct {

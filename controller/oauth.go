@@ -69,7 +69,7 @@ func (a *AuthController) startOAuth(c *gin.Context, mode string, userID uint) {
 	setting := loadSettings(a.db)
 	provider, ok := a.oauthProvider(c.Param("provider"), setting)
 	if !ok {
-		response.Error(c, 404, "oauth provider unavailable")
+		response.Error(c, 400, a.oauthProviderUnavailableMessage(c.Param("provider"), setting))
 		return
 	}
 	nonce, err := randomHex(16)
@@ -129,7 +129,7 @@ func (a *AuthController) OAuthCallback(c *gin.Context) {
 	setting := loadSettings(a.db)
 	provider, ok := a.oauthProvider(providerName, setting)
 	if !ok {
-		c.Redirect(http.StatusFound, a.oauthResultURL(c, "", "第三方登录未开启"))
+		c.Redirect(http.StatusFound, a.oauthResultURL(c, "", a.oauthProviderUnavailableMessage(providerName, setting)))
 		return
 	}
 	profile, err := fetchOAuthProfile(provider, code, a.oauthRedirectURL(c, provider.Provider))
@@ -351,6 +351,29 @@ func (a *AuthController) oauthProvider(providerName string, setting model.System
 		}, true
 	default:
 		return oauthProviderConfig{}, false
+	}
+}
+
+func (a *AuthController) oauthProviderUnavailableMessage(providerName string, setting model.SystemSetting) string {
+	switch normalizeOAuthProvider(providerName) {
+	case model.OAuthProviderGitHub:
+		if !setting.GitHubOAuthEnabled {
+			return "GitHub 第三方登录未开启，请先在后台系统设置中开启"
+		}
+		if strings.TrimSpace(setting.GitHubOAuthClientID) == "" || strings.TrimSpace(setting.GitHubOAuthClientSecret) == "" {
+			return "GitHub 第三方登录配置不完整，请在后台填写 Client ID 和 Client Secret 后再试"
+		}
+		return "GitHub 第三方登录暂不可用，请检查后台配置"
+	case model.OAuthProviderGoogle:
+		if !setting.GoogleOAuthEnabled {
+			return "Google 第三方登录未开启，请先在后台系统设置中开启"
+		}
+		if strings.TrimSpace(setting.GoogleOAuthClientID) == "" || strings.TrimSpace(setting.GoogleOAuthClientSecret) == "" {
+			return "Google 第三方登录配置不完整，请在后台填写 Client ID 和 Client Secret 后再试"
+		}
+		return "Google 第三方登录暂不可用，请检查后台配置"
+	default:
+		return "不支持的第三方登录方式"
 	}
 }
 

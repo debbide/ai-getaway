@@ -1544,6 +1544,7 @@ async function saveSettings() {
     settings.github_oauth_client_secret = ''
     settings.google_oauth_client_secret = ''
     notice.value = '系统设置已保存'
+    window.dispatchEvent(new Event('app-data-updated'))
   }, false)
 }
 
@@ -3540,13 +3541,16 @@ function submitModal() {
               <div>
                 <p class="section-kicker">OAuth</p>
                 <h3>第三方登录</h3>
-                <span>回调地址使用 /api/auth/oauth/{provider}/callback，生产环境请配置 PUBLIC_BASE_URL。</span>
+                <span>生产环境请先配置 PUBLIC_BASE_URL，第三方平台回调地址按下方提示填写。</span>
               </div>
             </div>
             <div class="form-grid">
               <el-form-item class="md:col-span-2" label="GitHub 登录">
                 <el-switch v-model="settings.github_oauth_enabled" active-text="开启 GitHub 第三方登录" />
               </el-form-item>
+              <div class="md:col-span-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
+                GitHub OAuth App 回调地址：/api/auth/oauth/github/callback
+              </div>
               <el-form-item label="GitHub Client ID">
                 <el-input v-model="settings.github_oauth_client_id" placeholder="GitHub OAuth App Client ID" />
               </el-form-item>
@@ -3561,6 +3565,9 @@ function submitModal() {
               <el-form-item class="md:col-span-2" label="Google 登录">
                 <el-switch v-model="settings.google_oauth_enabled" active-text="开启 Google 第三方登录" />
               </el-form-item>
+              <div class="md:col-span-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
+                Google OAuth Client 回调地址：/api/auth/oauth/google/callback
+              </div>
               <el-form-item label="Google Client ID">
                 <el-input v-model="settings.google_oauth_client_id" placeholder="Google OAuth Client ID" />
               </el-form-item>
