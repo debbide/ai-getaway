@@ -8,7 +8,8 @@ import { useAuthStore } from '../stores/auth'
 const open = defineModel('open', { type: Boolean, default: false })
 const mode = defineModel('mode', { type: String, default: 'login' })
 const props = defineProps({
-  allowRegistration: { type: Boolean, default: true }
+  allowRegistration: { type: Boolean, default: true },
+  emailWhitelist: { type: [String, Array], default: '[]' }
 })
 const auth = useAuthStore()
 const form = reactive({ username: '', email: '', password: '', emailCode: '' })
@@ -35,6 +36,11 @@ const slideButtonStyle = computed(() => {
   return { left: `calc(${progress * 100}% - ${progress * 56}px)` }
 })
 const captchaX = computed(() => Math.round(Math.min(captcha.trackWidth, Math.max(0, Number(captcha.x) || 0))))
+const allowedEmailDomains = computed(() => parseEmailWhitelist(props.emailWhitelist))
+const emailWhitelistTip = computed(() => {
+  if (mode.value !== 'register' || allowedEmailDomains.value.length === 0) return ''
+  return `请使用 ${allowedEmailDomains.value.map((item) => `@${item}`).join('、')} 后缀邮箱注册`
+})
 
 watch([open, mode], () => {
   const registrationBlocked = mode.value === 'register' && !props.allowRegistration
@@ -157,6 +163,10 @@ function sendEmailCode() {
     error.value = '请先填写邮箱'
     return
   }
+  if (!emailAllowedByWhitelist(form.email)) {
+    error.value = emailWhitelistTip.value || '请更换为白名单后缀邮箱'
+    return
+  }
   if (sendingCode.value || emailCodeCooldown.value > 0) return
   requestSecurity('email')
 }
@@ -182,6 +192,10 @@ async function sendEmailCodeWithCaptcha() {
 function submit() {
   if (mode.value === 'register' && !props.allowRegistration) {
     error.value = '当前站点暂未开放新用户注册'
+    return
+  }
+  if (mode.value === 'register' && !emailAllowedByWhitelist(form.email)) {
+    error.value = emailWhitelistTip.value || '请更换为白名单后缀邮箱'
     return
   }
   requestSecurity('submit')
@@ -217,6 +231,32 @@ async function submitWithCaptcha() {
     securityBusy.value = false
   }
 }
+
+function parseEmailWhitelist(value) {
+  const raw = Array.isArray(value) ? value : safeParseWhitelist(value)
+  const seen = new Set()
+  return raw
+    .map((item) => String(item || '').trim().toLowerCase().replace(/^@/, ''))
+    .filter((item) => {
+      if (!item || !item.includes('.') || item.includes('@') || item.includes('/') || item.includes('\\') || item.startsWith('.') || item.endsWith('.') || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+}
+
+function safeParseWhitelist(value) {
+  try {
+    return JSON.parse(value || '[]')
+  } catch {
+    return String(value || '').split(/[\s,;]+/)
+  }
+}
+
+function emailAllowedByWhitelist(email) {
+  if (mode.value !== 'register' || allowedEmailDomains.value.length === 0) return true
+  const domain = String(email || '').trim().toLowerCase().split('@').pop()
+  return allowedEmailDomains.value.includes(domain)
+}
 </script>
 
 <template>
@@ -248,6 +288,7 @@ async function submitWithCaptcha() {
           <el-form-item label="邮箱" required>
             <el-input v-model="form.email" type="email" />
           </el-form-item>
+          <p v-if="emailWhitelistTip" class="auth-field-tip">{{ emailWhitelistTip }}</p>
           <el-form-item label="密码" required>
             <el-input v-model="form.password" type="password" minlength="8" show-password />
           </el-form-item>

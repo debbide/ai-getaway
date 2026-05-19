@@ -2576,6 +2576,27 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
   gap: 14px;
 }
 
+.email-whitelist-select {
+  width: 100%;
+}
+
+.email-whitelist-select .el-select__wrapper {
+  min-height: 42px;
+  height: auto;
+  align-items: flex-start;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.email-whitelist-select .el-select__selection {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.email-whitelist-select .el-tag {
+  margin: 0;
+}
+
 .field {
   display: grid;
   gap: 7px;
@@ -2972,6 +2993,13 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
 
 .auth-card .el-form-item {
   margin-bottom: 0;
+}
+
+.auth-field-tip {
+  margin: -9px 0 0;
+  color: #9a6a3e;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .auth-card .el-form-item__label {
@@ -8492,6 +8520,10 @@ html[data-theme="dark"] .auth-card .auth-tabs {
 
 html[data-theme="dark"] .auth-card .auth-tabs.el-segmented {
   background: rgba(9, 14, 25, 0.72);
+}
+
+html[data-theme="dark"] .auth-field-tip {
+  color: #f1b989;
 }
 
 /* Element Plus dialogs already provide the modal shell; keep nested forms as content only. */

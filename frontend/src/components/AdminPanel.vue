@@ -56,6 +56,29 @@ const roleOptions = [
   { value: 'admin', label: '管理员' }
 ]
 
+const emailWhitelistOptions = [
+  'qq.com',
+  'gmail.com',
+  'outlook.com',
+  'hotmail.com',
+  '163.com',
+  '126.com',
+  'yeah.net',
+  'foxmail.com',
+  'icloud.com',
+  'me.com',
+  'live.com',
+  'msn.com',
+  'yahoo.com',
+  'proton.me',
+  'protonmail.com',
+  'sina.com',
+  'sohu.com',
+  'aliyun.com',
+  '189.cn',
+  '139.com'
+]
+
 const defaultNavigation = [
   { label: '首页', path: '/' },
   { label: '教程 ↗', path: '/docs' },
@@ -167,6 +190,7 @@ const settings = reactive({
   pricing_subtitle: '',
   pricing_notice: '',
   allow_registration: true,
+  email_whitelist: '[]',
   smtp_host: '',
   smtp_port: 587,
   smtp_username: '',
@@ -213,6 +237,12 @@ const enabledEmailTemplates = computed(() => emailTemplates.value.filter((item) 
 const pendingReviewOrders = computed(() => orders.value.filter((order) => reviewableOrderStatuses.includes(order.Status)))
 const overviewPlans = computed(() => plans.value.slice(0, 4))
 const hasMorePlans = computed(() => plans.value.length > 4)
+const selectedEmailWhitelist = computed({
+  get: () => parseEmailWhitelistSetting(settings.email_whitelist),
+  set: (value) => {
+    settings.email_whitelist = JSON.stringify(normalizeEmailWhitelist(value))
+  }
+})
 const filteredApiKeys = computed(() => {
   const keyword = String(apiKeySearch.keyword || '').trim().toLowerCase()
   const status = String(apiKeySearch.status || '')
@@ -1480,6 +1510,7 @@ async function deleteOrder() {
 
 async function saveSettings() {
   syncAPIEndpointSetting()
+  settings.email_whitelist = JSON.stringify(normalizeEmailWhitelist(selectedEmailWhitelist.value))
   await runAction(async () => {
     await api.put('/admin/settings', {
       ...settings,
@@ -1489,6 +1520,26 @@ async function saveSettings() {
     settings.epay_key = ''
     notice.value = '系统设置已保存'
   }, false)
+}
+
+function parseEmailWhitelistSetting(value) {
+  if (Array.isArray(value)) return normalizeEmailWhitelist(value)
+  try {
+    return normalizeEmailWhitelist(JSON.parse(value || '[]'))
+  } catch {
+    return normalizeEmailWhitelist(String(value || '').split(/[\s,;]+/))
+  }
+}
+
+function normalizeEmailWhitelist(value) {
+  const seen = new Set()
+  return (Array.isArray(value) ? value : [])
+    .map((item) => String(item || '').trim().toLowerCase().replace(/^@/, ''))
+    .filter((item) => {
+      if (!item || !item.includes('.') || item.includes('@') || item.includes('/') || item.includes('\\') || item.startsWith('.') || item.endsWith('.') || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
 }
 
 function handleManualPaymentQRUpload(event) {
@@ -3357,6 +3408,19 @@ function submitModal() {
               </el-form-item>
               <el-form-item class="md:col-span-2" label="允许新用户注册">
                 <el-switch v-model="settings.allow_registration" />
+              </el-form-item>
+              <el-form-item class="md:col-span-2" label="邮箱白名单">
+                <el-select
+                  class="email-whitelist-select"
+                  v-model="selectedEmailWhitelist"
+                  multiple
+                  filterable
+                  allow-create
+                  default-first-option
+                  placeholder="不选择则允许任意邮箱后缀"
+                >
+                  <el-option v-for="domain in emailWhitelistOptions" :key="domain" :label="domain" :value="domain" />
+                </el-select>
               </el-form-item>
               <el-form-item label="模拟在线API人数">
                 <el-switch v-model="settings.mock_api_online_enabled" />

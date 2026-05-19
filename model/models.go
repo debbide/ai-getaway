@@ -293,6 +293,7 @@ type SystemSetting struct {
 	PricingSubtitle                string `gorm:"size:255;default:保质保量无降智不掺假"`
 	PricingNotice                  string `gorm:"size:512;default:本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转"`
 	AllowRegistration              bool   `gorm:"default:true"`
+	EmailWhitelist                 string `gorm:"type:text"`
 	SMTPHost                       string `gorm:"size:128"`
 	SMTPPort                       int    `gorm:"default:587"`
 	SMTPUsername                   string `gorm:"size:128"`

@@ -30,6 +30,7 @@ type updateSettingsRequest struct {
 	PricingSubtitle                string `json:"pricing_subtitle"`
 	PricingNotice                  string `json:"pricing_notice"`
 	AllowRegistration              bool   `json:"allow_registration"`
+	EmailWhitelist                 string `json:"email_whitelist"`
 	SMTPHost                       string `json:"smtp_host"`
 	SMTPPort                       int    `json:"smtp_port"`
 	SMTPUsername                   string `json:"smtp_username"`
@@ -71,16 +72,17 @@ func (s *SettingsController) Public(c *gin.Context) {
 	}
 	setting := loadSettings(s.db)
 	response.OK(c, gin.H{
-		"site_title":             setting.SiteTitle,
-		"contact_email":          setting.ContactEmail,
-		"api_endpoints":          setting.APIEndpoints,
-		"navigation_items":       setting.NavigationItems,
-		"pricing_title":          setting.PricingTitle,
-		"pricing_subtitle":       setting.PricingSubtitle,
-		"pricing_notice":         setting.PricingNotice,
-		"allow_registration":     setting.AllowRegistration,
-		"online_payment_enabled": setting.OnlinePaymentEnabled,
-		"manual_payment_enabled": setting.ManualPaymentEnabled,
+		"site_title":              setting.SiteTitle,
+		"contact_email":           setting.ContactEmail,
+		"api_endpoints":           setting.APIEndpoints,
+		"navigation_items":        setting.NavigationItems,
+		"pricing_title":           setting.PricingTitle,
+		"pricing_subtitle":        setting.PricingSubtitle,
+		"pricing_notice":          setting.PricingNotice,
+		"allow_registration":      setting.AllowRegistration,
+		"email_whitelist":         setting.EmailWhitelist,
+		"online_payment_enabled":  setting.OnlinePaymentEnabled,
+		"manual_payment_enabled":  setting.ManualPaymentEnabled,
 		"mock_api_online_enabled": setting.MockAPIOnlineEnabled,
 		"mock_api_online_base":    normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase),
 	})
@@ -118,6 +120,7 @@ func (s *SettingsController) Get(c *gin.Context) {
 		"pricing_subtitle":                  setting.PricingSubtitle,
 		"pricing_notice":                    setting.PricingNotice,
 		"allow_registration":                setting.AllowRegistration,
+		"email_whitelist":                   setting.EmailWhitelist,
 		"smtp_host":                         setting.SMTPHost,
 		"smtp_port":                         setting.SMTPPort,
 		"smtp_username":                     setting.SMTPUsername,
@@ -163,6 +166,7 @@ func (s *SettingsController) Update(c *gin.Context) {
 		"pricing_subtitle":                  req.PricingSubtitle,
 		"pricing_notice":                    req.PricingNotice,
 		"allow_registration":                req.AllowRegistration,
+		"email_whitelist":                   normalizeEmailWhitelistJSON(req.EmailWhitelist),
 		"smtp_host":                         req.SMTPHost,
 		"smtp_port":                         req.SMTPPort,
 		"smtp_username":                     req.SMTPUsername,
@@ -245,6 +249,7 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 		"pricing_subtitle":                  "VARCHAR(255)",
 		"pricing_notice":                    "VARCHAR(512)",
 		"allow_registration":                "BOOLEAN DEFAULT TRUE",
+		"email_whitelist":                   "TEXT",
 		"epay_pid":                          "VARCHAR(128)",
 		"epay_key":                          "VARCHAR(255)",
 		"epay_notify_url":                   "VARCHAR(512)",
@@ -370,6 +375,7 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 	if setting.SubscriptionExpireRemindDays <= 0 {
 		setting.SubscriptionExpireRemindDays = 3
 	}
+	setting.EmailWhitelist = normalizeEmailWhitelistJSON(setting.EmailWhitelist)
 	setting.MockAPIOnlineBase = normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase)
 	return setting
 }
@@ -426,6 +432,72 @@ func normalizeAPIEndpointsJSON(value string) string {
 		return defaultAPIEndpointsJSON()
 	}
 	return mustMarshalAPIEndpoints(normalized)
+}
+
+func normalizeEmailWhitelistJSON(value string) string {
+	domains := parseEmailWhitelist(value)
+	if len(domains) == 0 {
+		return "[]"
+	}
+	body, err := json.Marshal(domains)
+	if err != nil {
+		return "[]"
+	}
+	return string(body)
+}
+
+func parseEmailWhitelist(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	var rawItems []string
+	if err := json.Unmarshal([]byte(value), &rawItems); err != nil {
+		rawItems = strings.FieldsFunc(value, func(r rune) bool {
+			return r == ',' || r == '\n' || r == ';' || r == ' '
+		})
+	}
+	seen := map[string]bool{}
+	domains := make([]string, 0, len(rawItems))
+	for _, item := range rawItems {
+		domain := normalizeEmailDomain(item)
+		if domain == "" || seen[domain] {
+			continue
+		}
+		seen[domain] = true
+		domains = append(domains, domain)
+	}
+	return domains
+}
+
+func normalizeEmailDomain(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.TrimPrefix(value, "@")
+	if value == "" || strings.Contains(value, "@") || strings.ContainsAny(value, "/\\") || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") || !strings.Contains(value, ".") {
+		return ""
+	}
+	return value
+}
+
+func emailAllowedByWhitelist(email string, whitelistJSON string) bool {
+	domains := parseEmailWhitelist(whitelistJSON)
+	if len(domains) == 0 {
+		return true
+	}
+	_, domain, ok := strings.Cut(strings.ToLower(strings.TrimSpace(email)), "@")
+	if !ok {
+		return false
+	}
+	domain = normalizeEmailDomain(domain)
+	if domain == "" {
+		return false
+	}
+	for _, allowed := range domains {
+		if domain == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 func mustMarshalAPIEndpoints(endpoints []apiEndpointSetting) string {

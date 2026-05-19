@@ -84,6 +84,11 @@ api.interceptors.response.use(
     if (status === 403 && rawMessage.includes('user disabled')) {
       return expireAuth(messageMap[rawMessage] || normalizeMessage(rawMessage))
     }
+    if (rawMessage.startsWith('email domain not allowed:')) {
+      const domains = rawMessage.replace('email domain not allowed:', '').split(',').map((item) => item.trim()).filter(Boolean)
+      const message = domains.length ? `请使用 ${domains.map((item) => `@${item}`).join('、')} 后缀邮箱注册` : '请更换为白名单后缀邮箱'
+      return Promise.reject(apiError(message, { status, rawMessage }))
+    }
     const message = messageMap[rawMessage] || normalizeMessage(rawMessage)
     return Promise.reject(apiError(message, { status, rawMessage }))
   }

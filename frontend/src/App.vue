@@ -28,6 +28,7 @@ const defaultSettings = {
   pricing_subtitle: '保质保量无降智不掺假',
   pricing_notice: '本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；',
   allow_registration: true,
+  email_whitelist: '[]',
   online_payment_enabled: true,
   manual_payment_enabled: true,
   mock_api_online_enabled: false,
@@ -1192,7 +1193,7 @@ function planSubtitle(index) {
       </div>
     </Transition>
 
-    <AuthModal v-model:open="authOpen" v-model:mode="authMode" :allow-registration="publicSettings.allow_registration" />
+    <AuthModal v-model:open="authOpen" v-model:mode="authMode" :allow-registration="publicSettings.allow_registration" :email-whitelist="publicSettings.email_whitelist" />
 
     <Transition name="modal-fade">
       <div v-if="orderModal.open" class="modal-backdrop" @click.self="closeOrderModal">

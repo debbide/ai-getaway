@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"ai-gateway/config"
@@ -60,7 +61,8 @@ func (a *AuthController) SendEmailCode(c *gin.Context) {
 		response.Error(c, 500, "failed to load settings")
 		return
 	}
-	if !loadSettings(a.db).AllowRegistration {
+	setting := loadSettings(a.db)
+	if !setting.AllowRegistration {
 		response.Error(c, 403, "registration disabled")
 		return
 	}
@@ -72,6 +74,10 @@ func (a *AuthController) SendEmailCode(c *gin.Context) {
 	}
 	if !VerifySlideCaptcha(a.redisClient, req.ChallengeID, req.CaptchaX) {
 		response.Error(c, 400, "invalid slide captcha")
+		return
+	}
+	if !emailAllowedByWhitelist(req.Email, setting.EmailWhitelist) {
+		response.Error(c, 400, emailWhitelistErrorMessage(setting.EmailWhitelist))
 		return
 	}
 
@@ -91,7 +97,6 @@ func (a *AuthController) SendEmailCode(c *gin.Context) {
 		return
 	}
 
-	setting := loadSettings(a.db)
 	if err := service.NewMailer(setting).SendVerification(req.Email, code); err != nil {
 		response.Error(c, 500, "failed to send email: "+err.Error())
 		return
@@ -105,7 +110,8 @@ func (a *AuthController) Register(c *gin.Context) {
 		response.Error(c, 500, "failed to load settings")
 		return
 	}
-	if !loadSettings(a.db).AllowRegistration {
+	setting := loadSettings(a.db)
+	if !setting.AllowRegistration {
 		response.Error(c, 403, "registration disabled")
 		return
 	}
@@ -117,6 +123,10 @@ func (a *AuthController) Register(c *gin.Context) {
 	}
 	if !VerifySlideCaptcha(a.redisClient, req.ChallengeID, req.CaptchaX) {
 		response.Error(c, 400, "invalid slide captcha")
+		return
+	}
+	if !emailAllowedByWhitelist(req.Email, setting.EmailWhitelist) {
+		response.Error(c, 400, emailWhitelistErrorMessage(setting.EmailWhitelist))
 		return
 	}
 	if !a.verifyEmailCode(req.Email, req.EmailCode, "register") {
@@ -144,6 +154,14 @@ func (a *AuthController) Register(c *gin.Context) {
 	}
 
 	response.Created(c, gin.H{"id": user.ID, "status": user.Status})
+}
+
+func emailWhitelistErrorMessage(whitelistJSON string) string {
+	domains := parseEmailWhitelist(whitelistJSON)
+	if len(domains) == 0 {
+		return "email domain not allowed"
+	}
+	return "email domain not allowed: " + strings.Join(domains, ", ")
 }
 
 func (a *AuthController) Login(c *gin.Context) {
