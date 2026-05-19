@@ -4636,6 +4636,19 @@ html[data-theme="dark"] .endpoint-admin-item .el-button.is-disabled {
   background: linear-gradient(90deg, #f97316, #eab308);
 }
 
+.admin-user-quota {
+  width: 100%;
+  min-width: 180px;
+}
+
+.admin-user-quota .quota-progress-track {
+  margin: 6px 0;
+}
+
+.admin-user-quota .quota-progress-foot {
+  color: var(--muted);
+}
+
 .plan-snapshot-times {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

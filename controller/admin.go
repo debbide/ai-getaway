@@ -195,7 +195,10 @@ type orderResponse struct {
 
 type adminUserResponse struct {
 	model.User
-	Upstream *adminUpstreamResponse `json:"Upstream,omitempty"`
+	Upstream         *adminUpstreamResponse `json:"Upstream,omitempty"`
+	QuotaUsage       *service.QuotaUsage    `json:"quota_usage,omitempty"`
+	TotalQuotaUsage  *service.QuotaUsage    `json:"total_quota_usage,omitempty"`
+	SubscriptionFrom *time.Time             `json:"subscription_started_at,omitempty"`
 }
 
 type adminUpstreamResponse struct {
@@ -323,11 +326,22 @@ func (a *AdminController) Users(c *gin.Context) {
 		upstreamByUserID[upstream.UserID] = upstream
 	}
 
+	now := time.Now()
 	items := make([]adminUserResponse, 0, len(users))
 	for _, user := range users {
 		item := adminUserResponse{User: user}
 		if upstream, ok := upstreamByUserID[user.ID]; ok {
 			item.Upstream = mapAdminUpstream(upstream)
+		}
+		if user.PlanID != nil && user.Plan != nil {
+			subscriptionStartedAt := service.SubscriptionStartAt(a.db, user, now)
+			item.SubscriptionFrom = subscriptionStartedAt
+			quotaUsage := service.PlanQuotaUsageFrom(a.db, user.ID, user.Plan, subscriptionStartedAt, now)
+			item.QuotaUsage = &quotaUsage
+			if subscriptionStartedAt != nil && user.ExpiresAt != nil {
+				totalQuotaUsage := service.PlanTotalQuotaUsage(a.db, user.ID, user.Plan, *subscriptionStartedAt, *user.ExpiresAt)
+				item.TotalQuotaUsage = &totalQuotaUsage
+			}
 		}
 		items = append(items, item)
 	}

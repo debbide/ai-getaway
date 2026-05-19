@@ -2070,7 +2070,31 @@ function roleLabel(value) {
 }
 
 function planLabel(user) {
-  return user.Plan?.Name || '未分配'
+  return user.Plan?.Name || '未订阅'
+}
+
+function userQuotaUsage(user) {
+  return user?.total_quota_usage || user?.quota_usage || null
+}
+
+function userQuotaPeriodUsage(user) {
+  return user?.quota_usage || null
+}
+
+function userQuotaProgressStyle(user) {
+  return { '--quota-progress': `${Number(userQuotaUsage(user)?.percent || 0).toFixed(2)}%` }
+}
+
+function userQuotaText(user) {
+  const usage = userQuotaUsage(user)
+  if (!usage) return '未订阅'
+  return `${usd(usage.used_usd_cents)} / ${usd(usage.limit_usd_cents)}`
+}
+
+function userQuotaPeriodText(user) {
+  const usage = userQuotaPeriodUsage(user)
+  if (!usage) return ''
+  return `${quotaPeriodLabel(usage.period)} ${usd(usage.used_usd_cents)} / ${usd(usage.limit_usd_cents)}`
 }
 
 function apiKeyStatusLabel(value) {
@@ -2795,7 +2819,24 @@ function submitModal() {
                 <el-table-column label="角色" width="110"><template #default="{ row: user }">{{ roleLabel(user.Role) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: user }"><el-tag>{{ statusLabel(user.Status) }}</el-tag></template></el-table-column>
                 <el-table-column label="套餐" min-width="150"><template #default="{ row: user }">{{ planLabel(user) }}</template></el-table-column>
-                <el-table-column label="订阅额度" min-width="160"><template #default="{ row: user }">{{ user.Plan ? `${usd(user.Plan.SettlementUSDCents)} / ${user.Plan.QuotaPeriod === 'daily' ? '日' : '周'}` : '未分配' }}</template></el-table-column>
+                <el-table-column label="套餐消耗" min-width="240">
+                  <template #default="{ row: user }">
+                    <div v-if="userQuotaUsage(user)" class="admin-user-quota">
+                      <div class="quota-progress-meta">
+                        <span>{{ userQuotaText(user) }}</span>
+                        <strong>{{ percent(userQuotaUsage(user).percent) }}</strong>
+                      </div>
+                      <div class="quota-progress-track quota-progress-track--total" :style="userQuotaProgressStyle(user)">
+                        <span class="quota-progress-fill"></span>
+                      </div>
+                      <div class="quota-progress-foot">
+                        <span>{{ userQuotaPeriodText(user) }}</span>
+                        <span>{{ user.Plan?.QuotaPeriod === 'public' ? '总额度' : '套餐总额度' }}</span>
+                      </div>
+                    </div>
+                    <span v-else class="text-muted">未订阅</span>
+                  </template>
+                </el-table-column>
                 <el-table-column label="操作" width="190"><template #default="{ row: user }"><div class="table-actions"><el-button size="small" @click="openUserModal(user)">编辑</el-button><el-button size="small" @click="openUserUpstreamModal(user)">渠道</el-button><el-button type="danger" size="small" @click="confirmDeleteUser(user)">删除</el-button></div></template></el-table-column>
               </el-table>
             </div>
