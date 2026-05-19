@@ -2004,11 +2004,16 @@ function validateUserForm(user) {
 }
 
 function requiresUserUpstreamRebind(user) {
-  return user.id && String(user.plan_id || '') !== String(user.original_plan_id || '') && String(user.plan_id || '') !== ''
+  return user.id && String(user.plan_id || '') !== String(user.original_plan_id || '') && String(user.plan_id || '') !== '' && !selectedUserPlanIsPublic(user)
 }
 
 function shouldEditUserUpstream(user) {
-  return Boolean(user.id) && (Boolean(user.has_upstream) || requiresUserUpstreamRebind(user))
+  return Boolean(user.id) && !selectedUserPlanIsPublic(user) && (Boolean(user.has_upstream) || requiresUserUpstreamRebind(user))
+}
+
+function selectedUserPlanIsPublic(user) {
+  const plan = plans.value.find((item) => String(item.ID) === String(user.plan_id || ''))
+  return Boolean(plan && (plan.PlanType === 'public' || plan.QuotaPeriod === 'public'))
 }
 
 function money(cents, currency = '￥') {

@@ -474,6 +474,7 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 	now := time.Now()
 	planChanged := req.PlanIDPresent && !sameUintPointer(user.PlanID, req.PlanID)
 	shouldResetSubscription := req.ResetSubscription || planChanged
+	var selectedPlan *model.Plan
 	if req.PlanIDPresent {
 		if req.PlanID == nil {
 			updates["plan_id"] = nil
@@ -485,6 +486,7 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 				response.Error(c, 404, "plan not found")
 				return
 			}
+			selectedPlan = &plan
 			updates["plan_id"] = plan.ID
 			if shouldResetSubscription {
 				startedAt := now
@@ -503,8 +505,9 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		return
 	}
 	upstreamUpdateRequested := req.ChannelID != 0 || req.UpstreamUsername != "" || req.UpstreamPassword != "" || req.APIKey != ""
+	upstreamRebindRequired := planChanged && req.PlanID != nil && selectedPlan != nil && selectedPlan.PlanType != model.PlanTypePublic
 	var selectedChannel *model.UpstreamChannel
-	if upstreamUpdateRequested || (planChanged && req.PlanID != nil) {
+	if upstreamUpdateRequested || upstreamRebindRequired {
 		if req.ChannelID == 0 || strings.TrimSpace(req.UpstreamUsername) == "" || req.UpstreamPassword == "" || req.APIKey == "" {
 			response.Error(c, 400, "upstream rebinding required after plan change")
 			return
