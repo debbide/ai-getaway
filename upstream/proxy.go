@@ -27,18 +27,22 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 		apiKey := c.MustGet("api_key").(model.APIKey)
 		upstreamBaseURL := ""
 		upstreamAPIKey := ""
+		groupMultipliers := ""
 		if publicChannelValue, ok := c.Get("public_channel"); ok {
 			publicChannel := publicChannelValue.(model.PublicChannel)
 			upstreamBaseURL = publicChannel.BaseURL
 			upstreamAPIKey = publicChannel.APIKey
+			groupMultipliers = publicChannel.GroupMultipliers
 		} else if poolAccountValue, ok := c.Get("pool_account"); ok {
 			poolAccount := poolAccountValue.(model.PollingPoolAccount)
 			upstreamBaseURL = poolAccount.BaseURL
 			upstreamAPIKey = poolAccount.APIKey
+			groupMultipliers = poolAccount.GroupMultipliers
 		} else {
 			upstreamAccount := c.MustGet("upstream").(model.UpstreamAccount)
 			upstreamBaseURL = upstreamAccount.BaseURL
 			upstreamAPIKey = upstreamAccount.APIKey
+			groupMultipliers = upstreamAccount.GroupMultipliers
 		}
 
 		target, err := url.Parse(strings.TrimRight(upstreamBaseURL, "/"))
@@ -82,21 +86,22 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 			}
 			if isEventStream(resp) {
 				resp.Body = &usageStreamReadCloser{
-					ReadCloser: resp.Body,
-					start:      start,
-					log:        &log,
-					db:         db,
-					hub:        hub,
+					ReadCloser:  resp.Body,
+					start:       start,
+					log:         &log,
+					db:          db,
+					hub:         hub,
+					multipliers: groupMultipliers,
 				}
 			} else {
 				body, err := io.ReadAll(resp.Body)
 				if err == nil {
-					fillUsage(db, &log, body)
-					finalizeUsageLog(db, hub, &log, start)
+					fillUsage(db, &log, body, groupMultipliers)
+					finalizeUsageLog(db, hub, &log, start, groupMultipliers)
 					resp.Body = io.NopCloser(bytes.NewReader(body))
 					return nil
 				}
-				finalizeUsageLog(db, hub, &log, start)
+				finalizeUsageLog(db, hub, &log, start, groupMultipliers)
 			}
 			return nil
 		}
@@ -143,7 +148,7 @@ func parseRequestInfo(req *http.Request) requestInfo {
 	return requestInfo{Model: payload.Model, Stream: payload.Stream}
 }
 
-func fillUsage(db *gorm.DB, log *model.APILog, body []byte) {
+func fillUsage(db *gorm.DB, log *model.APILog, body []byte, groupMultipliers ...any) {
 	var payload usagePayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return
@@ -152,7 +157,7 @@ func fillUsage(db *gorm.DB, log *model.APILog, body []byte) {
 		payload.Model = firstNonEmpty(payload.Response.Model, payload.Model)
 		payload.Usage = payload.Response.Usage
 	}
-	applyUsage(db, log, payload.Model, payload.Usage)
+	applyUsage(db, log, payload.Model, payload.Usage, firstGroupMultipliers(groupMultipliers))
 }
 
 type usagePayload struct {
@@ -181,7 +186,7 @@ type tokenDetails struct {
 	CachedTokens int64 `json:"cached_tokens"`
 }
 
-func applyUsage(db *gorm.DB, log *model.APILog, modelName string, usage responseUsage) {
+func applyUsage(db *gorm.DB, log *model.APILog, modelName string, usage responseUsage, groupMultipliers any) {
 	if modelName != "" {
 		log.ModelName = modelName
 	}
@@ -213,21 +218,22 @@ func applyUsage(db *gorm.DB, log *model.APILog, modelName string, usage response
 	if totalTokens > 0 {
 		log.TotalTokens = totalTokens
 	}
-	if applyUpstreamCost(log, usage) {
+	if applyUpstreamCost(log, usage, groupMultipliers) {
 		return
 	}
-	applyBillingResult(log, service.BillUsage(db, log.ModelName, promptTokens, cachedInputTokens, completionTokens, totalTokens))
+	applyBillingResult(log, service.BillUsageWithGroupMultipliers(db, log.ModelName, promptTokens, cachedInputTokens, completionTokens, totalTokens, groupMultipliers))
 }
 
 type usageStreamReadCloser struct {
 	io.ReadCloser
-	start      time.Time
-	log        *model.APILog
-	db         *gorm.DB
-	hub        *service.LogHub
-	buf        bytes.Buffer
-	firstToken bool
-	closed     bool
+	start       time.Time
+	log         *model.APILog
+	db          *gorm.DB
+	hub         *service.LogHub
+	multipliers any
+	buf         bytes.Buffer
+	firstToken  bool
+	closed      bool
 }
 
 func (r *usageStreamReadCloser) Read(p []byte) (int, error) {
@@ -255,11 +261,11 @@ func (r *usageStreamReadCloser) finish() {
 		return
 	}
 	r.closed = true
-	fillStreamUsage(r.db, r.log, r.buf.Bytes())
-	finalizeUsageLog(r.db, r.hub, r.log, r.start)
+	fillStreamUsage(r.db, r.log, r.buf.Bytes(), r.multipliers)
+	finalizeUsageLog(r.db, r.hub, r.log, r.start, r.multipliers)
 }
 
-func fillStreamUsage(db *gorm.DB, log *model.APILog, body []byte) {
+func fillStreamUsage(db *gorm.DB, log *model.APILog, body []byte, groupMultipliers ...any) {
 	scanner := bufio.NewScanner(bytes.NewReader(body))
 	scanner.Buffer(make([]byte, 1024), 1024*1024*10)
 	for scanner.Scan() {
@@ -271,11 +277,11 @@ func fillStreamUsage(db *gorm.DB, log *model.APILog, body []byte) {
 		if data == "" || data == "[DONE]" {
 			continue
 		}
-		fillUsage(db, log, []byte(data))
+		fillUsage(db, log, []byte(data), firstGroupMultipliers(groupMultipliers))
 	}
 }
 
-func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start time.Time) {
+func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start time.Time, groupMultipliers ...any) {
 	if log.RequestType == "" {
 		log.RequestType = requestType(log.Path, false)
 	}
@@ -283,7 +289,7 @@ func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start
 		log.CompletionTokens = log.TotalTokens - log.PromptTokens
 	}
 	if log.EstimatedUSDMicros <= 0 {
-		applyBillingResult(log, service.BillUsage(db, log.ModelName, log.PromptTokens, log.CachedInputTokens, log.CompletionTokens, log.TotalTokens))
+		applyBillingResult(log, service.BillUsageWithGroupMultipliers(db, log.ModelName, log.PromptTokens, log.CachedInputTokens, log.CompletionTokens, log.TotalTokens, firstGroupMultipliers(groupMultipliers)))
 	}
 	log.LatencyMs = time.Since(start).Milliseconds()
 	db.Create(log)
@@ -347,24 +353,34 @@ func applyBillingResult(log *model.APILog, result service.BillingResult) {
 	log.CachedInputUSDPerMillion = result.CachedInputUSDPerMillion
 	log.OutputUSDPerMillion = result.OutputUSDPerMillion
 	log.BillingMultiplier = result.BillingMultiplier
+	log.GroupMultiplier = result.GroupMultiplier
 	log.BillingSource = result.BillingSource
 }
 
-func applyUpstreamCost(log *model.APILog, usage responseUsage) bool {
+func applyUpstreamCost(log *model.APILog, usage responseUsage, groupMultipliers any) bool {
 	costUSD := upstreamCostUSD(usage)
 	if costUSD <= 0 {
 		return false
 	}
 
-	micros := int64(costUSD*1_000_000 + 0.5)
+	multiplier := service.ResolveGroupMultiplier(model.ModelPricing{ModelName: log.ModelName, GroupMultiplier: 1}, groupMultipliers)
+	micros := int64(costUSD*multiplier*1_000_000 + 0.5)
 	log.InputUSDMicros = 0
 	log.CachedInputUSDMicros = 0
 	log.OutputUSDMicros = 0
 	log.EstimatedUSDMicros = micros
 	log.EstimatedUSDCents = service.USDmicrosToCents(micros)
-	log.BillingMultiplier = 1
+	log.BillingMultiplier = multiplier
+	log.GroupMultiplier = multiplier
 	log.BillingSource = "upstream_cost"
 	return true
+}
+
+func firstGroupMultipliers(values []any) any {
+	if len(values) == 0 {
+		return nil
+	}
+	return values[0]
 }
 
 func upstreamCostUSD(usage responseUsage) float64 {

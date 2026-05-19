@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -20,6 +21,7 @@ type OfficialModelPrice struct {
 	CachedInputUSDPerMillion float64
 	OutputUSDPerMillion      float64
 	Notes                    string
+	GroupMultiplier          float64
 }
 
 type BillingResult struct {
@@ -35,6 +37,7 @@ type BillingResult struct {
 	CachedInputUSDPerMillion float64
 	OutputUSDPerMillion      float64
 	BillingMultiplier        float64
+	GroupMultiplier          float64
 	BillingSource            string
 }
 
@@ -74,6 +77,7 @@ func SyncOfficialOpenAIModelPrices(db *gorm.DB) (int, error) {
 			CachedInputUSDPerMillion: item.CachedInputUSDPerMillion,
 			OutputUSDPerMillion:      item.OutputUSDPerMillion,
 			BillingMultiplier:        1,
+			GroupMultiplier:          1,
 			Status:                   model.ModelPricingStatusActive,
 			Official:                 true,
 			OfficialSource:           OpenAIPricingSourceURL,
@@ -85,6 +89,10 @@ func SyncOfficialOpenAIModelPrices(db *gorm.DB) (int, error) {
 			if multiplier <= 0 {
 				multiplier = 1
 			}
+			groupMultiplier := existing.GroupMultiplier
+			if groupMultiplier <= 0 {
+				groupMultiplier = 1
+			}
 			updates := map[string]interface{}{
 				"display_name":                 pricing.DisplayName,
 				"provider":                     pricing.Provider,
@@ -92,6 +100,7 @@ func SyncOfficialOpenAIModelPrices(db *gorm.DB) (int, error) {
 				"cached_input_usd_per_million": pricing.CachedInputUSDPerMillion,
 				"output_usd_per_million":       pricing.OutputUSDPerMillion,
 				"billing_multiplier":           multiplier,
+				"group_multiplier":             groupMultiplier,
 				"official":                     true,
 				"official_source":              pricing.OfficialSource,
 				"official_synced_at":           pricing.OfficialSyncedAt,
@@ -118,6 +127,10 @@ func SyncOfficialOpenAIModelPrices(db *gorm.DB) (int, error) {
 }
 
 func BillUsage(db *gorm.DB, modelName string, inputTokens, cachedInputTokens, outputTokens, totalTokens int64) BillingResult {
+	return BillUsageWithGroupMultipliers(db, modelName, inputTokens, cachedInputTokens, outputTokens, totalTokens, nil)
+}
+
+func BillUsageWithGroupMultipliers(db *gorm.DB, modelName string, inputTokens, cachedInputTokens, outputTokens, totalTokens int64, groupMultipliers any) BillingResult {
 	if outputTokens <= 0 && totalTokens > inputTokens {
 		outputTokens = totalTokens - inputTokens
 	}
@@ -133,6 +146,8 @@ func BillUsage(db *gorm.DB, modelName string, inputTokens, cachedInputTokens, ou
 	if multiplier <= 0 {
 		multiplier = 1
 	}
+	groupMultiplier := ResolveGroupMultiplier(pricing, groupMultipliers)
+	effectiveMultiplier := multiplier * groupMultiplier
 
 	uncachedInputTokens := inputTokens
 	if cachedInputTokens > 0 && totalTokens < inputTokens+cachedInputTokens+outputTokens {
@@ -145,9 +160,9 @@ func BillUsage(db *gorm.DB, modelName string, inputTokens, cachedInputTokens, ou
 		uncachedInputTokens = inputTokens
 		cachedInputTokens = 0
 	}
-	inputMicros := priceMicros(uncachedInputTokens, pricing.InputUSDPerMillion, multiplier)
-	cachedMicros := priceMicros(cachedInputTokens, pricing.CachedInputUSDPerMillion, multiplier)
-	outputMicros := priceMicros(outputTokens, pricing.OutputUSDPerMillion, multiplier)
+	inputMicros := priceMicros(uncachedInputTokens, pricing.InputUSDPerMillion, effectiveMultiplier)
+	cachedMicros := priceMicros(cachedInputTokens, pricing.CachedInputUSDPerMillion, effectiveMultiplier)
+	outputMicros := priceMicros(outputTokens, pricing.OutputUSDPerMillion, effectiveMultiplier)
 	totalMicros := inputMicros + cachedMicros + outputMicros
 
 	return BillingResult{
@@ -162,9 +177,78 @@ func BillUsage(db *gorm.DB, modelName string, inputTokens, cachedInputTokens, ou
 		InputUSDPerMillion:       pricing.InputUSDPerMillion,
 		CachedInputUSDPerMillion: pricing.CachedInputUSDPerMillion,
 		OutputUSDPerMillion:      pricing.OutputUSDPerMillion,
-		BillingMultiplier:        multiplier,
+		BillingMultiplier:        effectiveMultiplier,
+		GroupMultiplier:          groupMultiplier,
 		BillingSource:            source,
 	}
+}
+
+func normalizeGroupMultipliers(values any) map[string]float64 {
+	switch typed := values.(type) {
+	case nil:
+		return nil
+	case map[string]float64:
+		return typed
+	case string:
+		return ParseGroupMultipliers(typed)
+	default:
+		return nil
+	}
+}
+
+func ResolveGroupMultiplier(pricing model.ModelPricing, groupMultipliers any) float64 {
+	values := normalizeGroupMultipliers(groupMultipliers)
+	if values != nil {
+		if multiplier := matchedGroupMultiplier(pricing.ModelName, values); multiplier > 0 {
+			return multiplier
+		}
+	}
+	if pricing.GroupMultiplier > 0 {
+		return pricing.GroupMultiplier
+	}
+	return 1
+}
+
+func ParseGroupMultipliers(raw string) map[string]float64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var values map[string]float64
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return nil
+	}
+	normalized := make(map[string]float64, len(values))
+	for modelName, multiplier := range values {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" || multiplier <= 0 {
+			continue
+		}
+		normalized[modelName] = multiplier
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+func EncodeGroupMultipliers(values map[string]float64) string {
+	normalized := make(map[string]float64, len(values))
+	for modelName, multiplier := range values {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" || multiplier <= 0 {
+			continue
+		}
+		normalized[modelName] = multiplier
+	}
+	if len(normalized) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func FindModelPricing(db *gorm.DB, modelName string) (model.ModelPricing, string) {
@@ -184,6 +268,7 @@ func FindModelPricing(db *gorm.DB, modelName string) (model.ModelPricing, string
 			CachedInputUSDPerMillion: item.CachedInputUSDPerMillion,
 			OutputUSDPerMillion:      item.OutputUSDPerMillion,
 			BillingMultiplier:        1,
+			GroupMultiplier:          1,
 			Status:                   model.ModelPricingStatusActive,
 			Official:                 true,
 			OfficialSource:           OpenAIPricingSourceURL,
@@ -198,6 +283,7 @@ func FindModelPricing(db *gorm.DB, modelName string) (model.ModelPricing, string
 		CachedInputUSDPerMillion: cached,
 		OutputUSDPerMillion:      output,
 		BillingMultiplier:        1,
+		GroupMultiplier:          1,
 		Status:                   model.ModelPricingStatusActive,
 	}, "fallback"
 }
@@ -221,6 +307,29 @@ func findOfficialModelPrice(modelName string) (OfficialModelPrice, bool) {
 		}
 	}
 	return matched, matchedLen > 0
+}
+
+func matchedGroupMultiplier(modelName string, groupMultipliers map[string]float64) float64 {
+	name := strings.ToLower(strings.TrimSpace(modelName))
+	if name == "" {
+		return 0
+	}
+	var matched float64
+	matchedLen := 0
+	for key, multiplier := range groupMultipliers {
+		key = strings.ToLower(strings.TrimSpace(key))
+		if key == "" || multiplier <= 0 {
+			continue
+		}
+		if name != key && !strings.HasPrefix(name, key+"-") {
+			continue
+		}
+		if len(key) > matchedLen {
+			matched = multiplier
+			matchedLen = len(key)
+		}
+	}
+	return matched
 }
 
 func USDmicrosToCents(micros int64) int64 {

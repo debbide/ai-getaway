@@ -191,3 +191,47 @@ func TestFillUsagePrefersUpstreamCost(t *testing.T) {
 		t.Fatalf("BillingSource = %q, want upstream_cost", log.BillingSource)
 	}
 }
+
+func TestFillUsageAppliesGroupMultiplierToUpstreamCost(t *testing.T) {
+	log := model.APILog{}
+
+	fillUsage(nil, &log, []byte(`{
+		"model": "gpt-4o-mini",
+		"usage": {
+			"prompt_tokens": 10,
+			"completion_tokens": 7,
+			"total_tokens": 17,
+			"cost_usd": 0.017485
+		}
+	}`), map[string]float64{"gpt-4o-mini": 2})
+
+	if log.EstimatedUSDMicros != 34970 {
+		t.Fatalf("EstimatedUSDMicros = %d, want 34970", log.EstimatedUSDMicros)
+	}
+	if log.GroupMultiplier != 2 {
+		t.Fatalf("GroupMultiplier = %.2f, want 2", log.GroupMultiplier)
+	}
+}
+
+func TestFillUsageAppliesChannelGroupMultiplier(t *testing.T) {
+	log := model.APILog{}
+
+	fillUsage(nil, &log, []byte(`{
+		"model": "gpt-4o-mini",
+		"usage": {
+			"prompt_tokens": 10,
+			"completion_tokens": 7,
+			"total_tokens": 17
+		}
+	}`), `{"gpt-4o-mini":2}`)
+
+	if log.GroupMultiplier != 2 {
+		t.Fatalf("GroupMultiplier = %.2f, want 2", log.GroupMultiplier)
+	}
+	if log.BillingMultiplier != 2 {
+		t.Fatalf("BillingMultiplier = %.2f, want 2", log.BillingMultiplier)
+	}
+	if log.EstimatedUSDMicros != 11 {
+		t.Fatalf("EstimatedUSDMicros = %d, want 11", log.EstimatedUSDMicros)
+	}
+}

@@ -136,26 +136,29 @@ type RedeemCode struct {
 
 type UpstreamAccount struct {
 	gorm.Model
-	UserID         uint `gorm:"uniqueIndex;not null"`
-	User           User
-	Channel        string `gorm:"size:64;not null"`
-	BaseURL        string `gorm:"size:255;not null"`
-	Username       string `gorm:"size:128"`
-	Password       string `gorm:"size:255" json:"-"`
-	APIKey         string `gorm:"size:512;not null" json:"-"`
-	SupportsGPT    bool   `gorm:"default:true"`
-	SupportsClaude bool   `gorm:"default:false"`
-	Status         string `gorm:"size:32;default:active;index"`
-	LastUsedAt     *time.Time
+	UserID           uint `gorm:"uniqueIndex;not null"`
+	User             User
+	ChannelID        *uint  `gorm:"index"`
+	Channel          string `gorm:"size:64;not null"`
+	BaseURL          string `gorm:"size:255;not null"`
+	Username         string `gorm:"size:128"`
+	Password         string `gorm:"size:255" json:"-"`
+	APIKey           string `gorm:"size:512;not null" json:"-"`
+	SupportsGPT      bool   `gorm:"default:true"`
+	SupportsClaude   bool   `gorm:"default:false"`
+	GroupMultipliers string `gorm:"type:text"`
+	Status           string `gorm:"size:32;default:active;index"`
+	LastUsedAt       *time.Time
 }
 
 type UpstreamChannel struct {
 	gorm.Model
-	Name           string `gorm:"size:64;uniqueIndex;not null"`
-	BaseURL        string `gorm:"size:255;not null"`
-	SupportsGPT    bool   `gorm:"default:true"`
-	SupportsClaude bool   `gorm:"default:false"`
-	Enabled        bool   `gorm:"default:true;index"`
+	Name             string `gorm:"size:64;uniqueIndex;not null"`
+	BaseURL          string `gorm:"size:255;not null"`
+	SupportsGPT      bool   `gorm:"default:true"`
+	SupportsClaude   bool   `gorm:"default:false"`
+	GroupMultipliers string `gorm:"type:text"`
+	Enabled          bool   `gorm:"default:true;index"`
 }
 
 type PublicChannel struct {
@@ -165,6 +168,7 @@ type PublicChannel struct {
 	APIKey            string `gorm:"size:512;not null" json:"-"`
 	SupportsGPT       bool   `gorm:"default:true"`
 	SupportsClaude    bool   `gorm:"default:false"`
+	GroupMultipliers  string `gorm:"type:text"`
 	TotalUSDCents     int64  `gorm:"default:0"`
 	RemainingUSDCents int64  `gorm:"default:0;index"`
 	Enabled           bool   `gorm:"default:true;index"`
@@ -187,6 +191,7 @@ type PollingPoolAccount struct {
 	Name              string `gorm:"size:64;not null"`
 	BaseURL           string `gorm:"size:255;not null"`
 	APIKey            string `gorm:"size:512;not null" json:"-"`
+	GroupMultipliers  string `gorm:"type:text"`
 	TotalUSDCents     int64  `gorm:"default:0"`
 	RemainingUSDCents int64  `gorm:"default:0;index"`
 	Enabled           bool   `gorm:"default:true;index"`
@@ -239,6 +244,7 @@ type ModelPricing struct {
 	CachedInputUSDPerMillion float64
 	OutputUSDPerMillion      float64
 	BillingMultiplier        float64 `gorm:"default:1"`
+	GroupMultiplier          float64 `gorm:"default:1"`
 	Status                   string  `gorm:"size:32;default:active;index"`
 	Featured                 bool    `gorm:"default:false;index"`
 	Official                 bool    `gorm:"default:false;index"`
@@ -270,6 +276,7 @@ type APILog struct {
 	CachedInputUSDPerMillion float64 `gorm:"default:0"`
 	OutputUSDPerMillion      float64 `gorm:"default:0"`
 	BillingMultiplier        float64 `gorm:"default:1"`
+	GroupMultiplier          float64 `gorm:"default:1"`
 	BillingSource            string  `gorm:"size:64"`
 	FirstTokenMs             int64
 	LatencyMs                int64

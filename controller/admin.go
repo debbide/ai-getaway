@@ -138,22 +138,24 @@ type updateOrderRequest struct {
 }
 
 type upstreamChannelRequest struct {
-	Name           string `json:"name" binding:"required,min=2,max=64"`
-	BaseURL        string `json:"base_url" binding:"required,url"`
-	SupportsGPT    bool   `json:"supports_gpt"`
-	SupportsClaude bool   `json:"supports_claude"`
-	Enabled        bool   `json:"enabled"`
+	Name             string             `json:"name" binding:"required,min=2,max=64"`
+	BaseURL          string             `json:"base_url" binding:"required,url"`
+	SupportsGPT      bool               `json:"supports_gpt"`
+	SupportsClaude   bool               `json:"supports_claude"`
+	GroupMultipliers map[string]float64 `json:"group_multipliers"`
+	Enabled          bool               `json:"enabled"`
 }
 
 type publicChannelRequest struct {
-	Name              string `json:"name" binding:"required,min=2,max=64"`
-	BaseURL           string `json:"base_url" binding:"required,url"`
-	APIKey            string `json:"api_key"`
-	SupportsGPT       bool   `json:"supports_gpt"`
-	SupportsClaude    bool   `json:"supports_claude"`
-	TotalUSDCents     int64  `json:"total_usd_cents" binding:"min=0"`
-	RemainingUSDCents int64  `json:"remaining_usd_cents" binding:"min=0"`
-	Enabled           bool   `json:"enabled"`
+	Name              string             `json:"name" binding:"required,min=2,max=64"`
+	BaseURL           string             `json:"base_url" binding:"required,url"`
+	APIKey            string             `json:"api_key"`
+	SupportsGPT       bool               `json:"supports_gpt"`
+	SupportsClaude    bool               `json:"supports_claude"`
+	GroupMultipliers  map[string]float64 `json:"group_multipliers"`
+	TotalUSDCents     int64              `json:"total_usd_cents" binding:"min=0"`
+	RemainingUSDCents int64              `json:"remaining_usd_cents" binding:"min=0"`
+	Enabled           bool               `json:"enabled"`
 }
 
 type pollingPoolRequest struct {
@@ -165,14 +167,15 @@ type pollingPoolRequest struct {
 }
 
 type pollingPoolAccountRequest struct {
-	ID                uint   `json:"id"`
-	Name              string `json:"name"`
-	BaseURL           string `json:"base_url"`
-	APIKey            string `json:"api_key"`
-	TotalUSDCents     int64  `json:"total_usd_cents"`
-	RemainingUSDCents int64  `json:"remaining_usd_cents"`
-	Enabled           bool   `json:"enabled"`
-	SortOrder         int    `json:"sort_order"`
+	ID                uint               `json:"id"`
+	Name              string             `json:"name"`
+	BaseURL           string             `json:"base_url"`
+	APIKey            string             `json:"api_key"`
+	GroupMultipliers  map[string]float64 `json:"group_multipliers"`
+	TotalUSDCents     int64              `json:"total_usd_cents"`
+	RemainingUSDCents int64              `json:"remaining_usd_cents"`
+	Enabled           bool               `json:"enabled"`
+	SortOrder         int                `json:"sort_order"`
 }
 
 type modelPricingRequest struct {
@@ -183,6 +186,7 @@ type modelPricingRequest struct {
 	CachedInputUSDPerMillion float64 `json:"cached_input_usd_per_million" binding:"min=0"`
 	OutputUSDPerMillion      float64 `json:"output_usd_per_million" binding:"min=0"`
 	BillingMultiplier        float64 `json:"billing_multiplier" binding:"min=0"`
+	GroupMultiplier          float64 `json:"group_multiplier" binding:"min=0"`
 	Status                   string  `json:"status"`
 	Featured                 bool    `json:"featured"`
 	Notes                    string  `json:"notes"`
@@ -202,34 +206,39 @@ type adminUserResponse struct {
 }
 
 type adminUpstreamResponse struct {
-	ID             uint       `json:"ID"`
-	UserID         uint       `json:"UserID"`
-	Channel        string     `json:"Channel"`
-	BaseURL        string     `json:"BaseURL"`
-	Username       string     `json:"Username"`
-	Password       string     `json:"Password"`
-	APIKey         string     `json:"APIKey"`
-	SupportsGPT    bool       `json:"SupportsGPT"`
-	SupportsClaude bool       `json:"SupportsClaude"`
-	Status         string     `json:"Status"`
-	LastUsedAt     *time.Time `json:"LastUsedAt"`
-	CreatedAt      time.Time  `json:"CreatedAt"`
-	UpdatedAt      time.Time  `json:"UpdatedAt"`
+	ID                 uint               `json:"ID"`
+	UserID             uint               `json:"UserID"`
+	ChannelID          *uint              `json:"ChannelID"`
+	Channel            string             `json:"Channel"`
+	BaseURL            string             `json:"BaseURL"`
+	Username           string             `json:"Username"`
+	Password           string             `json:"Password"`
+	APIKey             string             `json:"APIKey"`
+	SupportsGPT        bool               `json:"SupportsGPT"`
+	SupportsClaude     bool               `json:"SupportsClaude"`
+	GroupMultipliers   string             `json:"GroupMultipliers"`
+	GroupMultiplierMap map[string]float64 `json:"group_multipliers"`
+	Status             string             `json:"Status"`
+	LastUsedAt         *time.Time         `json:"LastUsedAt"`
+	CreatedAt          time.Time          `json:"CreatedAt"`
+	UpdatedAt          time.Time          `json:"UpdatedAt"`
 }
 
 type adminPublicChannelResponse struct {
-	ID                uint       `json:"ID"`
-	Name              string     `json:"Name"`
-	BaseURL           string     `json:"BaseURL"`
-	APIKey            string     `json:"APIKey"`
-	SupportsGPT       bool       `json:"SupportsGPT"`
-	SupportsClaude    bool       `json:"SupportsClaude"`
-	TotalUSDCents     int64      `json:"TotalUSDCents"`
-	RemainingUSDCents int64      `json:"RemainingUSDCents"`
-	Enabled           bool       `json:"Enabled"`
-	LastUsedAt        *time.Time `json:"LastUsedAt"`
-	CreatedAt         time.Time  `json:"CreatedAt"`
-	UpdatedAt         time.Time  `json:"UpdatedAt"`
+	ID                 uint               `json:"ID"`
+	Name               string             `json:"Name"`
+	BaseURL            string             `json:"BaseURL"`
+	APIKey             string             `json:"APIKey"`
+	SupportsGPT        bool               `json:"SupportsGPT"`
+	SupportsClaude     bool               `json:"SupportsClaude"`
+	GroupMultipliers   string             `json:"GroupMultipliers"`
+	GroupMultiplierMap map[string]float64 `json:"group_multipliers"`
+	TotalUSDCents      int64              `json:"TotalUSDCents"`
+	RemainingUSDCents  int64              `json:"RemainingUSDCents"`
+	Enabled            bool               `json:"Enabled"`
+	LastUsedAt         *time.Time         `json:"LastUsedAt"`
+	CreatedAt          time.Time          `json:"CreatedAt"`
+	UpdatedAt          time.Time          `json:"UpdatedAt"`
 }
 
 type adminPollingPoolResponse struct {
@@ -246,17 +255,19 @@ type adminPollingPoolResponse struct {
 }
 
 type adminPollingPoolAccountResponse struct {
-	ID                uint       `json:"ID"`
-	Name              string     `json:"Name"`
-	BaseURL           string     `json:"BaseURL"`
-	APIKey            string     `json:"APIKey"`
-	TotalUSDCents     int64      `json:"TotalUSDCents"`
-	RemainingUSDCents int64      `json:"RemainingUSDCents"`
-	Enabled           bool       `json:"Enabled"`
-	SortOrder         int        `json:"SortOrder"`
-	LastUsedAt        *time.Time `json:"LastUsedAt"`
-	CreatedAt         time.Time  `json:"CreatedAt"`
-	UpdatedAt         time.Time  `json:"UpdatedAt"`
+	ID                 uint               `json:"ID"`
+	Name               string             `json:"Name"`
+	BaseURL            string             `json:"BaseURL"`
+	APIKey             string             `json:"APIKey"`
+	GroupMultipliers   string             `json:"GroupMultipliers"`
+	GroupMultiplierMap map[string]float64 `json:"group_multipliers"`
+	TotalUSDCents      int64              `json:"TotalUSDCents"`
+	RemainingUSDCents  int64              `json:"RemainingUSDCents"`
+	Enabled            bool               `json:"Enabled"`
+	SortOrder          int                `json:"SortOrder"`
+	LastUsedAt         *time.Time         `json:"LastUsedAt"`
+	CreatedAt          time.Time          `json:"CreatedAt"`
+	UpdatedAt          time.Time          `json:"UpdatedAt"`
 }
 
 type paginatedResponse struct {
@@ -514,14 +525,16 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		}
 		if err := a.db.Where(model.UpstreamAccount{UserID: user.ID}).
 			Assign(map[string]interface{}{
-				"channel":         selectedChannel.Name,
-				"base_url":        selectedChannel.BaseURL,
-				"username":        strings.TrimSpace(req.UpstreamUsername),
-				"password":        req.UpstreamPassword,
-				"api_key":         req.APIKey,
-				"supports_gpt":    selectedChannel.SupportsGPT,
-				"supports_claude": selectedChannel.SupportsClaude,
-				"status":          model.UpstreamStatusActive,
+				"channel_id":        selectedChannel.ID,
+				"channel":           selectedChannel.Name,
+				"base_url":          selectedChannel.BaseURL,
+				"username":          strings.TrimSpace(req.UpstreamUsername),
+				"password":          req.UpstreamPassword,
+				"api_key":           req.APIKey,
+				"supports_gpt":      selectedChannel.SupportsGPT,
+				"supports_claude":   selectedChannel.SupportsClaude,
+				"group_multipliers": selectedChannel.GroupMultipliers,
+				"status":            model.UpstreamStatusActive,
 			}).
 			FirstOrCreate(&upstream).Error; err != nil {
 			response.Error(c, 500, "failed to update user")
@@ -820,6 +833,7 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 		}
 		req.Channel = channel.Name
 		req.BaseURL = channel.BaseURL
+		req.ChannelID = channel.ID
 	}
 	if req.Channel == "" || req.BaseURL == "" {
 		response.Error(c, 400, "upstream channel is required")
@@ -859,6 +873,7 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 
 		upstream := model.UpstreamAccount{
 			UserID:         order.UserID,
+			ChannelID:      nil,
 			Channel:        req.Channel,
 			BaseURL:        req.BaseURL,
 			Username:       req.Username,
@@ -870,8 +885,10 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 		}
 		if req.ChannelID > 0 {
 			if channel, err := a.loadUpstreamChannel(req.ChannelID); err == nil {
+				upstream.ChannelID = &channel.ID
 				upstream.SupportsGPT = channel.SupportsGPT
 				upstream.SupportsClaude = channel.SupportsClaude
+				upstream.GroupMultipliers = channel.GroupMultipliers
 			}
 		}
 		return tx.Where(model.UpstreamAccount{UserID: order.UserID}).Assign(upstream).FirstOrCreate(&upstream).Error
@@ -1122,8 +1139,10 @@ func (a *AdminController) UpdateOrder(c *gin.Context) {
 		}
 		req.Channel = channel.Name
 		req.BaseURL = channel.BaseURL
+		upstreamUpdates["channel_id"] = channel.ID
 		upstreamUpdates["supports_gpt"] = channel.SupportsGPT
 		upstreamUpdates["supports_claude"] = channel.SupportsClaude
+		upstreamUpdates["group_multipliers"] = channel.GroupMultipliers
 	}
 
 	if req.Channel != "" {
@@ -1160,6 +1179,9 @@ func (a *AdminController) UpdateOrder(c *gin.Context) {
 			upstream := model.UpstreamAccount{
 				UserID: order.UserID,
 				Status: model.UpstreamStatusActive,
+			}
+			if req.ChannelID > 0 {
+				upstream.ChannelID = &req.ChannelID
 			}
 			if req.Channel != "" {
 				upstream.Channel = req.Channel
@@ -1471,36 +1493,41 @@ func (a *AdminController) Upstreams(c *gin.Context) {
 
 func mapAdminUpstream(upstream model.UpstreamAccount) *adminUpstreamResponse {
 	return &adminUpstreamResponse{
-		ID:             upstream.ID,
-		UserID:         upstream.UserID,
-		Channel:        upstream.Channel,
-		BaseURL:        upstream.BaseURL,
-		Username:       upstream.Username,
-		Password:       upstream.Password,
-		APIKey:         upstream.APIKey,
-		SupportsGPT:    upstream.SupportsGPT,
-		SupportsClaude: upstream.SupportsClaude,
-		Status:         upstream.Status,
-		LastUsedAt:     upstream.LastUsedAt,
-		CreatedAt:      upstream.CreatedAt,
-		UpdatedAt:      upstream.UpdatedAt,
+		ID:                 upstream.ID,
+		UserID:             upstream.UserID,
+		ChannelID:          upstream.ChannelID,
+		Channel:            upstream.Channel,
+		BaseURL:            upstream.BaseURL,
+		Username:           upstream.Username,
+		Password:           upstream.Password,
+		APIKey:             upstream.APIKey,
+		SupportsGPT:        upstream.SupportsGPT,
+		SupportsClaude:     upstream.SupportsClaude,
+		GroupMultipliers:   upstream.GroupMultipliers,
+		GroupMultiplierMap: service.ParseGroupMultipliers(upstream.GroupMultipliers),
+		Status:             upstream.Status,
+		LastUsedAt:         upstream.LastUsedAt,
+		CreatedAt:          upstream.CreatedAt,
+		UpdatedAt:          upstream.UpdatedAt,
 	}
 }
 
 func mapAdminPublicChannel(channel model.PublicChannel) adminPublicChannelResponse {
 	return adminPublicChannelResponse{
-		ID:                channel.ID,
-		Name:              channel.Name,
-		BaseURL:           channel.BaseURL,
-		APIKey:            channel.APIKey,
-		SupportsGPT:       channel.SupportsGPT,
-		SupportsClaude:    channel.SupportsClaude,
-		TotalUSDCents:     channel.TotalUSDCents,
-		RemainingUSDCents: channel.RemainingUSDCents,
-		Enabled:           channel.Enabled,
-		LastUsedAt:        channel.LastUsedAt,
-		CreatedAt:         channel.CreatedAt,
-		UpdatedAt:         channel.UpdatedAt,
+		ID:                 channel.ID,
+		Name:               channel.Name,
+		BaseURL:            channel.BaseURL,
+		APIKey:             channel.APIKey,
+		SupportsGPT:        channel.SupportsGPT,
+		SupportsClaude:     channel.SupportsClaude,
+		GroupMultipliers:   channel.GroupMultipliers,
+		GroupMultiplierMap: service.ParseGroupMultipliers(channel.GroupMultipliers),
+		TotalUSDCents:      channel.TotalUSDCents,
+		RemainingUSDCents:  channel.RemainingUSDCents,
+		Enabled:            channel.Enabled,
+		LastUsedAt:         channel.LastUsedAt,
+		CreatedAt:          channel.CreatedAt,
+		UpdatedAt:          channel.UpdatedAt,
 	}
 }
 
@@ -1514,17 +1541,19 @@ func mapAdminPollingPool(pool model.PollingPool) adminPollingPoolResponse {
 			remaining += account.RemainingUSDCents
 		}
 		items = append(items, adminPollingPoolAccountResponse{
-			ID:                account.ID,
-			Name:              account.Name,
-			BaseURL:           account.BaseURL,
-			APIKey:            account.APIKey,
-			TotalUSDCents:     account.TotalUSDCents,
-			RemainingUSDCents: account.RemainingUSDCents,
-			Enabled:           account.Enabled,
-			SortOrder:         account.SortOrder,
-			LastUsedAt:        account.LastUsedAt,
-			CreatedAt:         account.CreatedAt,
-			UpdatedAt:         account.UpdatedAt,
+			ID:                 account.ID,
+			Name:               account.Name,
+			BaseURL:            account.BaseURL,
+			APIKey:             account.APIKey,
+			GroupMultipliers:   account.GroupMultipliers,
+			GroupMultiplierMap: service.ParseGroupMultipliers(account.GroupMultipliers),
+			TotalUSDCents:      account.TotalUSDCents,
+			RemainingUSDCents:  account.RemainingUSDCents,
+			Enabled:            account.Enabled,
+			SortOrder:          account.SortOrder,
+			LastUsedAt:         account.LastUsedAt,
+			CreatedAt:          account.CreatedAt,
+			UpdatedAt:          account.UpdatedAt,
 		})
 	}
 	return adminPollingPoolResponse{
@@ -1641,6 +1670,7 @@ func (a *AdminController) CreateModelPricing(c *gin.Context) {
 		CachedInputUSDPerMillion: req.CachedInputUSDPerMillion,
 		OutputUSDPerMillion:      req.OutputUSDPerMillion,
 		BillingMultiplier:        fallbackMultiplier(req.BillingMultiplier),
+		GroupMultiplier:          fallbackMultiplier(req.GroupMultiplier),
 		Status:                   fallbackModelPricingStatus(req.Status),
 		Featured:                 req.Featured,
 		Notes:                    req.Notes,
@@ -1666,6 +1696,7 @@ func (a *AdminController) UpdateModelPricing(c *gin.Context) {
 		"cached_input_usd_per_million": req.CachedInputUSDPerMillion,
 		"output_usd_per_million":       req.OutputUSDPerMillion,
 		"billing_multiplier":           fallbackMultiplier(req.BillingMultiplier),
+		"group_multiplier":             fallbackMultiplier(req.GroupMultiplier),
 		"status":                       fallbackModelPricingStatus(req.Status),
 		"featured":                     req.Featured,
 		"notes":                        req.Notes,
@@ -1705,11 +1736,12 @@ func (a *AdminController) CreateUpstreamChannel(c *gin.Context) {
 	}
 
 	channel := model.UpstreamChannel{
-		Name:           req.Name,
-		BaseURL:        req.BaseURL,
-		SupportsGPT:    req.SupportsGPT,
-		SupportsClaude: req.SupportsClaude,
-		Enabled:        req.Enabled,
+		Name:             req.Name,
+		BaseURL:          req.BaseURL,
+		SupportsGPT:      req.SupportsGPT,
+		SupportsClaude:   req.SupportsClaude,
+		GroupMultipliers: service.EncodeGroupMultipliers(req.GroupMultipliers),
+		Enabled:          req.Enabled,
 	}
 	if err := a.db.Create(&channel).Error; err != nil {
 		response.Error(c, 500, "failed to create upstream channel")
@@ -1726,11 +1758,12 @@ func (a *AdminController) UpdateUpstreamChannel(c *gin.Context) {
 	}
 
 	updates := map[string]interface{}{
-		"name":            req.Name,
-		"base_url":        req.BaseURL,
-		"supports_gpt":    req.SupportsGPT,
-		"supports_claude": req.SupportsClaude,
-		"enabled":         req.Enabled,
+		"name":              req.Name,
+		"base_url":          req.BaseURL,
+		"supports_gpt":      req.SupportsGPT,
+		"supports_claude":   req.SupportsClaude,
+		"group_multipliers": service.EncodeGroupMultipliers(req.GroupMultipliers),
+		"enabled":           req.Enabled,
 	}
 	if err := a.db.Model(&model.UpstreamChannel{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
 		response.Error(c, 500, "failed to update upstream channel")
@@ -1771,6 +1804,7 @@ func (a *AdminController) CreatePublicChannel(c *gin.Context) {
 		APIKey:            req.APIKey,
 		SupportsGPT:       req.SupportsGPT,
 		SupportsClaude:    req.SupportsClaude,
+		GroupMultipliers:  service.EncodeGroupMultipliers(req.GroupMultipliers),
 		TotalUSDCents:     req.TotalUSDCents,
 		RemainingUSDCents: req.RemainingUSDCents,
 		Enabled:           req.Enabled,
@@ -1798,6 +1832,7 @@ func (a *AdminController) UpdatePublicChannel(c *gin.Context) {
 		"base_url":            req.BaseURL,
 		"supports_gpt":        req.SupportsGPT,
 		"supports_claude":     req.SupportsClaude,
+		"group_multipliers":   service.EncodeGroupMultipliers(req.GroupMultipliers),
 		"total_usd_cents":     req.TotalUSDCents,
 		"remaining_usd_cents": req.RemainingUSDCents,
 		"enabled":             req.Enabled,
@@ -1936,6 +1971,7 @@ func normalizePollingPoolAccounts(input []pollingPoolAccountRequest, _ bool) ([]
 			Name:              name,
 			BaseURL:           baseURL,
 			APIKey:            apiKey,
+			GroupMultipliers:  service.EncodeGroupMultipliers(item.GroupMultipliers),
 			TotalUSDCents:     item.TotalUSDCents,
 			RemainingUSDCents: item.RemainingUSDCents,
 			Enabled:           item.Enabled,

@@ -5388,6 +5388,7 @@ html[data-theme="dark"] .endpoint-admin-item .el-button.is-disabled {
   grid-template-columns: minmax(130px, 0.9fr) minmax(220px, 1.5fr) minmax(260px, 1.8fr) 110px 104px;
   grid-template-areas:
     "name base key enabled delete"
+    "multipliers multipliers multipliers multipliers multipliers"
     "total remaining sort enabled delete";
   gap: 10px;
   align-items: center;
@@ -5425,6 +5426,35 @@ html[data-theme="dark"] .endpoint-admin-item .el-button.is-disabled {
 
 .pool-account-key {
   grid-area: key;
+}
+
+.pool-account-multipliers {
+  grid-area: multipliers;
+}
+
+.pool-account-multiplier-grid,
+.group-multiplier-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.pool-account-multiplier-grid {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.pool-account-multiplier-grid label,
+.group-multiplier-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 118px;
+  gap: 8px;
+  align-items: center;
+}
+
+.group-multiplier-row > span,
+.pool-account-multiplier-grid label > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pool-account-quota {
@@ -5615,6 +5645,7 @@ html[data-theme="dark"] .endpoint-admin-item .el-button.is-disabled {
       "name name"
       "base base"
       "key key"
+      "multipliers multipliers"
       "total remaining"
       "sort enabled"
       "delete delete";

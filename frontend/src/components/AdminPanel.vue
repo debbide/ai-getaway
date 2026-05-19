@@ -382,6 +382,7 @@ function emptyChannel() {
     base_url: '',
     supports_gpt: true,
     supports_claude: false,
+    group_multipliers: defaultGroupMultipliers(),
     enabled: true
   }
 }
@@ -394,6 +395,7 @@ function emptyPublicChannel() {
     api_key: '',
     supports_gpt: true,
     supports_claude: false,
+    group_multipliers: defaultGroupMultipliers(),
     total_usd_quota: 400,
     remaining_usd_quota: 400,
     enabled: true
@@ -410,6 +412,7 @@ function emptyModel() {
     cached_input_usd_per_million: 0,
     output_usd_per_million: 0,
     billing_multiplier: 1,
+    group_multiplier: 1,
     status: 'active',
     featured: false,
     notes: ''
@@ -787,6 +790,7 @@ function emptyPollingPoolAccount() {
     name: '',
     base_url: '',
     api_key: '',
+    group_multipliers: defaultGroupMultipliers(),
     total_usd_quota: 300,
     remaining_usd_quota: 300,
     enabled: true,
@@ -921,6 +925,7 @@ function openModelModal(model = null) {
       cached_input_usd_per_million: model.CachedInputUSDPerMillion || 0,
       output_usd_per_million: model.OutputUSDPerMillion || 0,
       billing_multiplier: model.BillingMultiplier || 1,
+      group_multiplier: model.GroupMultiplier || 1,
       status: model.Status || 'active',
       featured: Boolean(model.Featured),
       notes: model.Notes || ''
@@ -969,6 +974,7 @@ function openChannelModal(channel = null) {
       base_url: channel.BaseURL,
       supports_gpt: channel.SupportsGPT !== false,
       supports_claude: Boolean(channel.SupportsClaude),
+      group_multipliers: normalizeGroupMultiplierRows(channel.group_multipliers || channel.GroupMultipliers),
       enabled: channel.Enabled
     })
   }
@@ -985,6 +991,7 @@ function openPublicChannelModal(channel = null) {
       api_key: channel.APIKey || '',
       supports_gpt: channel.SupportsGPT !== false,
       supports_claude: Boolean(channel.SupportsClaude),
+      group_multipliers: normalizeGroupMultiplierRows(channel.group_multipliers || channel.GroupMultipliers),
       total_usd_quota: centsToAmount(channel.TotalUSDCents),
       remaining_usd_quota: centsToAmount(channel.RemainingUSDCents),
       enabled: channel.Enabled
@@ -1007,6 +1014,7 @@ function openPollingPoolModal(pool = null) {
         name: account.Name || '',
         base_url: account.BaseURL || '',
         api_key: account.APIKey || '',
+        group_multipliers: normalizeGroupMultiplierRows(account.group_multipliers || account.GroupMultipliers),
         total_usd_quota: centsToAmount(account.TotalUSDCents),
         remaining_usd_quota: centsToAmount(account.RemainingUSDCents),
         enabled: account.Enabled,
@@ -1787,6 +1795,7 @@ function normalizePublicChannel(channel) {
     api_key: channel.api_key.trim(),
     supports_gpt: Boolean(channel.supports_gpt),
     supports_claude: Boolean(channel.supports_claude),
+    group_multipliers: groupMultiplierPayload(channel.group_multipliers),
     total_usd_cents: amountToCents(channel.total_usd_quota),
     remaining_usd_cents: amountToCents(channel.remaining_usd_quota),
     enabled: Boolean(channel.enabled)
@@ -1802,6 +1811,7 @@ function normalizeModel(item) {
     cached_input_usd_per_million: Number(item.cached_input_usd_per_million || 0),
     output_usd_per_million: Number(item.output_usd_per_million || 0),
     billing_multiplier: Number(item.billing_multiplier || 1),
+    group_multiplier: Number(item.group_multiplier || 1),
     status: item.status === 'disabled' ? 'disabled' : 'active',
     featured: Boolean(item.featured),
     notes: item.notes.trim()
@@ -1813,11 +1823,65 @@ function modelUnit(value) {
 }
 
 function modelActualUnit(item, field) {
-  return modelUnit((item[field] || 0) * (item.BillingMultiplier || 1))
+  return modelUnit((item[field] || 0) * (item.BillingMultiplier || 1) * (item.GroupMultiplier || 1))
 }
 
 function modelStatusLabel(value) {
   return value === 'disabled' ? '已停用' : '已启用'
+}
+
+function defaultGroupMultipliers() {
+  return models.value.map((item) => ({
+    model: item.ModelName || item.model || '',
+    multiplier: Number(item.GroupMultiplier || 1)
+  }))
+}
+
+function normalizeGroupMultiplierRows(value) {
+  const rows = []
+  const existing = value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : parseGroupMultipliers(value)
+  const names = new Set()
+  models.value.forEach((item) => {
+    const modelName = item.ModelName || item.model || ''
+    if (!modelName) return
+    const override = existing[modelName]
+    names.add(modelName)
+    rows.push({
+      model: modelName,
+      multiplier: Number(override === undefined ? (item.GroupMultiplier || 1) : override)
+    })
+  })
+  Object.entries(existing).forEach(([modelName, multiplier]) => {
+    if (!names.has(modelName)) rows.push({ model: modelName, multiplier: Number(multiplier || 1) })
+  })
+  return rows
+}
+
+function parseGroupMultipliers(value) {
+  if (!value) return {}
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return {}
+  }
+}
+
+function groupMultiplierPayload(rows = []) {
+  return Object.fromEntries(
+    rows
+      .map((row) => [String(row.model || '').trim(), Number(row.multiplier || 1)])
+      .filter(([modelName, multiplier]) => modelName && multiplier > 0)
+  )
+}
+
+function groupMultiplierText(value) {
+  const multipliers = parseGroupMultipliers(value)
+  const entries = Object.entries(multipliers)
+  if (!entries.length) return '默认'
+  return entries.map(([modelName, multiplier]) => `${modelName} ${Number(multiplier || 1).toFixed(2)}x`).join('，')
 }
 
 function formatSyncTime(value) {
@@ -1838,6 +1902,7 @@ function normalizeChannel(channel) {
     base_url: channel.base_url.trim(),
     supports_gpt: Boolean(channel.supports_gpt),
     supports_claude: Boolean(channel.supports_claude),
+    group_multipliers: groupMultiplierPayload(channel.group_multipliers),
     enabled: Boolean(channel.enabled)
   }
 }
@@ -1853,6 +1918,7 @@ function normalizePollingPool(pool) {
       name: String(account.name || '').trim() || `账号${index + 1}`,
       base_url: String(account.base_url || '').trim(),
       api_key: String(account.api_key || '').trim(),
+      group_multipliers: groupMultiplierPayload(account.group_multipliers),
       total_usd_cents: amountToCents(account.total_usd_quota),
       remaining_usd_cents: amountToCents(account.remaining_usd_quota),
       enabled: Boolean(account.enabled),
@@ -2605,7 +2671,8 @@ function submitModal() {
                 <el-table-column label="输入单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'InputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.InputUSDPerMillion) }}</small></div></template></el-table-column>
                 <el-table-column label="缓存读取" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'CachedInputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.CachedInputUSDPerMillion) }}</small></div></template></el-table-column>
                 <el-table-column label="输出单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'OutputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.OutputUSDPerMillion) }}</small></div></template></el-table-column>
-                <el-table-column label="倍率" width="90"><template #default="{ row: item }">{{ Number(item.BillingMultiplier || 1).toFixed(2) }}x</template></el-table-column>
+                <el-table-column label="扣费倍率" width="100"><template #default="{ row: item }">{{ Number(item.BillingMultiplier || 1).toFixed(2) }}x</template></el-table-column>
+                <el-table-column label="默认分组倍率" width="120"><template #default="{ row: item }">{{ Number(item.GroupMultiplier || 1).toFixed(2) }}x</template></el-table-column>
                 <el-table-column label="展示卡片" width="110"><template #default="{ row: item }"><el-tag :type="item.Featured ? 'success' : 'info'">{{ item.Featured ? '展示' : '不展示' }}</el-tag></template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: item }"><el-tag :type="item.Status === 'active' ? 'success' : 'info'">{{ modelStatusLabel(item.Status) }}</el-tag></template></el-table-column>
                 <el-table-column label="同步时间" min-width="150"><template #default="{ row: item }">{{ formatSyncTime(item.OfficialSyncedAt) }}</template></el-table-column>
@@ -2683,6 +2750,7 @@ function submitModal() {
                 <el-table-column label="渠道名称" min-width="160" prop="Name" />
                 <el-table-column label="API 地址" min-width="260" prop="BaseURL" />
                 <el-table-column label="支持协议" min-width="150"><template #default="{ row: channel }"><div class="table-actions"><el-tag v-for="tag in protocolTags(channel)" :key="tag" size="small">{{ tag }}</el-tag></div></template></el-table-column>
+                <el-table-column label="分组倍率" min-width="220"><template #default="{ row: channel }">{{ groupMultiplierText(channel.group_multipliers || channel.GroupMultipliers) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled ? 'success' : 'info'">{{ channel.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="112" :fixed="isMobileLayout ? false : 'right'"><template #default="{ row: channel }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑上游渠道" title="编辑上游渠道" @click="openChannelModal(channel)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除上游渠道" title="删除上游渠道" @click="confirmDeleteChannel(channel)" /></div></template></el-table-column>
               </el-table>
@@ -2721,6 +2789,7 @@ function submitModal() {
                 <el-table-column label="渠道名称" min-width="160" prop="Name" />
                 <el-table-column label="API 地址" min-width="260" prop="BaseURL" />
                 <el-table-column label="支持协议" min-width="150"><template #default="{ row: channel }"><div class="table-actions"><el-tag v-for="tag in protocolTags(channel)" :key="tag" size="small">{{ tag }}</el-tag></div></template></el-table-column>
+                <el-table-column label="分组倍率" min-width="220"><template #default="{ row: channel }">{{ groupMultiplierText(channel.group_multipliers || channel.GroupMultipliers) }}</template></el-table-column>
                 <el-table-column label="剩余额度 / 总额度" min-width="160"><template #default="{ row: channel }">{{ channelQuotaText(channel) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled && channel.RemainingUSDCents > 0 ? 'success' : 'info'">{{ channel.RemainingUSDCents <= 0 ? '售罄' : (channel.Enabled ? '已启用' : '已停用') }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="112" :fixed="isMobileLayout ? false : 'right'"><template #default="{ row: channel }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑公共渠道" title="编辑公共渠道" @click="openPublicChannelModal(channel)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除公共渠道" title="删除公共渠道" @click="confirmDeletePublicChannel(channel)" /></div></template></el-table-column>
@@ -3511,6 +3580,18 @@ function submitModal() {
           <el-form-item class="md:col-span-2" label="API 地址" required><el-input v-model="channelForm.base_url" placeholder="https://api.openai.com" /></el-form-item>
           <el-form-item label="GPT 协议"><el-switch v-model="channelForm.supports_gpt" active-text="支持" /></el-form-item>
           <el-form-item label="Claude 协议"><el-switch v-model="channelForm.supports_claude" active-text="支持" /></el-form-item>
+          <div class="md:col-span-2 group-multiplier-editor">
+            <div class="section-head">
+              <div>
+                <h3>分组倍率</h3>
+                <span>留用模型默认值即可，按渠道覆盖单个模型时修改对应倍率。</span>
+              </div>
+            </div>
+            <div v-for="row in channelForm.group_multipliers" :key="row.model" class="group-multiplier-row">
+              <span>{{ row.model }}</span>
+              <el-input v-model.number="row.multiplier" type="number" min="0.0001" step="0.01" />
+            </div>
+          </div>
           <el-form-item class="md:col-span-2" label="启用渠道"><el-switch v-model="channelForm.enabled" /></el-form-item>
         </div>
 
@@ -3522,6 +3603,18 @@ function submitModal() {
           </el-form-item>
           <el-form-item label="GPT 协议"><el-switch v-model="publicChannelForm.supports_gpt" active-text="支持" /></el-form-item>
           <el-form-item label="Claude 协议"><el-switch v-model="publicChannelForm.supports_claude" active-text="支持" /></el-form-item>
+          <div class="md:col-span-2 group-multiplier-editor">
+            <div class="section-head">
+              <div>
+                <h3>分组倍率</h3>
+                <span>公共渠道会按这里的倍率扣减用户套餐额度。</span>
+              </div>
+            </div>
+            <div v-for="row in publicChannelForm.group_multipliers" :key="row.model" class="group-multiplier-row">
+              <span>{{ row.model }}</span>
+              <el-input v-model.number="row.multiplier" type="number" min="0.0001" step="0.01" />
+            </div>
+          </div>
           <el-form-item label="渠道总额度（美元）"><el-input v-model.number="publicChannelForm.total_usd_quota" type="number" min="0" step="0.01" required /></el-form-item>
           <el-form-item label="剩余美元额度"><el-input v-model.number="publicChannelForm.remaining_usd_quota" type="number" min="0" step="0.01" required /></el-form-item>
           <el-form-item class="md:col-span-2" label="启用公共渠道"><el-switch v-model="publicChannelForm.enabled" /></el-form-item>
@@ -3553,6 +3646,15 @@ function submitModal() {
                 <span>API Key</span>
                 <el-input v-model="account.api_key" placeholder="请输入上游 API Key" />
               </div>
+              <div class="pool-account-field pool-account-multipliers">
+                <span>分组倍率</span>
+                <div class="pool-account-multiplier-grid">
+                  <label v-for="row in account.group_multipliers" :key="row.model">
+                    <span>{{ row.model }}</span>
+                    <el-input v-model.number="row.multiplier" type="number" min="0.0001" step="0.01" />
+                  </label>
+                </div>
+              </div>
               <div class="pool-account-field pool-account-quota">
                 <span>总额度（美元）</span>
                 <el-input v-model.number="account.total_usd_quota" type="number" min="0" step="0.01" placeholder="总额度" />
@@ -3582,6 +3684,7 @@ function submitModal() {
           <el-form-item label="缓存读取单价 / 1M Token"><el-input v-model.number="modelForm.cached_input_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
           <el-form-item label="输出单价 / 1M Token"><el-input v-model.number="modelForm.output_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
           <el-form-item label="扣费倍率"><el-input v-model.number="modelForm.billing_multiplier" type="number" min="0.0001" step="0.01" /></el-form-item>
+          <el-form-item label="默认分组倍率"><el-input v-model.number="modelForm.group_multiplier" type="number" min="0.0001" step="0.01" /></el-form-item>
           <el-form-item label="状态">
             <el-select v-model="modelForm.status">
               <el-option value="active" label="启用" />

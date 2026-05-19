@@ -421,6 +421,7 @@ function statusClass(code) {
                         <span>输出</span><b>{{ usdMicros(item.output_usd_micros) }}</b>
                         <span v-if="item.cached_input_usd_micros">缓存</span><b v-if="item.cached_input_usd_micros">{{ usdMicros(item.cached_input_usd_micros) }}</b>
                         <span>倍率</span><b>{{ Number(item.billing_multiplier || 1).toFixed(2) }}x</b>
+                        <span>分组倍率</span><b>{{ Number(item.group_multiplier || 1).toFixed(2) }}x</b>
                         <span>来源</span><b>{{ billingSourceLabel(item.billing_source) }}</b>
                       </span>
                       <span class="usage-tip-rate">{{ modelUnit(item.input_usd_per_million) }} 输入 / {{ modelUnit(item.output_usd_per_million) }} 输出</span>

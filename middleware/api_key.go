@@ -64,6 +64,7 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 		now := time.Now()
 		protocol := requestProtocol(c)
 		db.Model(&apiKey).Updates(map[string]interface{}{"last_used_at": &now})
+		channelMultiplierByName := loadEnabledChannelMultipliers(db)
 
 		c.Set("api_key", apiKey)
 		c.Set("protocol", protocol)
@@ -112,11 +113,35 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 				c.Abort()
 				return
 			}
+			if upstream.GroupMultipliers == "" {
+				if channelID := upstream.ChannelID; channelID != nil {
+					var channel model.UpstreamChannel
+					if db.Select("group_multipliers").Where("id = ?", *channelID).First(&channel).Error == nil {
+						upstream.GroupMultipliers = channel.GroupMultipliers
+					}
+				}
+				if upstream.GroupMultipliers == "" {
+					upstream.GroupMultipliers = channelMultiplierByName[upstream.Channel]
+				}
+			}
 			db.Model(&upstream).Updates(map[string]interface{}{"last_used_at": &now})
 			c.Set("upstream", upstream)
 		}
 		c.Next()
 	}
+}
+
+func loadEnabledChannelMultipliers(db *gorm.DB) map[string]string {
+	var channels []model.UpstreamChannel
+	db.Select("name", "group_multipliers").Where("enabled = ?", true).Find(&channels)
+	values := make(map[string]string, len(channels))
+	for _, channel := range channels {
+		if channel.GroupMultipliers == "" {
+			continue
+		}
+		values[channel.Name] = channel.GroupMultipliers
+	}
+	return values
 }
 
 func requestProtocol(c *gin.Context) string {
