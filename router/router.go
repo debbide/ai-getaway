@@ -90,6 +90,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			admin.GET("/plans", adminController.Plans)
 			admin.POST("/plans", adminController.CreatePlan)
 			admin.PUT("/plans/:id", adminController.UpdatePlan)
+			admin.POST("/plans/:id/draw-lottery", adminController.DrawLotteryPlan)
 			admin.DELETE("/plans/:id", adminController.DeletePlan)
 			admin.GET("/redeem-codes", adminController.RedeemCodes)
 			admin.POST("/redeem-codes", adminController.CreateRedeemCodes)

@@ -4,7 +4,7 @@
 
 不要做本地页面验证，只要构建通过就行，当前环境是Windows，请使用Windows相关的命令。
 
-This repository contains an AI Gateway with a Go backend at the root and a Vue frontend in `frontend/`.
+This repository contains an 星空 AI with a Go backend at the root and a Vue frontend in `frontend/`.
 
 - `main.go` starts the Gin API server.
 - `config/`, `database/`, `router/`, and `middleware/` handle bootstrapping, persistence, routing, and request guards.

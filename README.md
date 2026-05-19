@@ -1,4 +1,4 @@
-# AI Gateway
+# 星空 AI
 
 轻量级 AI API 中转系统，兼容 OpenAI API 格式，按用户绑定独立上游账号，实现订阅制多租户网关。
 

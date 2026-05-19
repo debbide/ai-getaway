@@ -88,6 +88,9 @@ type Plan struct {
 	Description        string `gorm:"size:255"`
 	IsLottery          bool   `gorm:"default:false;index"`
 	LotteryURL         string `gorm:"size:512"`
+	LotteryDrawn       bool   `gorm:"default:false;index"`
+	LotteryWinnerEmail string `gorm:"size:128" json:"-"`
+	LotteryWinnerMask  string `gorm:"-" json:"LotteryWinnerMask"`
 	FreePerUserLimit   int    `gorm:"default:1"`
 	FreeTotalLimit     int    `gorm:"default:0"`
 	FreeClaimedCount   int    `gorm:"default:0"`

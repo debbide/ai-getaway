@@ -64,6 +64,10 @@ const freeOverrideModal = reactive({
   open: false,
   plan: null
 })
+const lotteryResultModal = reactive({
+  open: false,
+  plan: null
+})
 const orderModal = reactive({
   open: false,
   loading: false,
@@ -520,6 +524,14 @@ function isLotteryPlan(plan) {
   return Boolean(plan?.IsLottery || plan?.is_lottery)
 }
 
+function lotteryDrawn(plan) {
+  return Boolean(plan?.LotteryDrawn || plan?.lottery_drawn)
+}
+
+function lotteryWinnerText(plan) {
+  return plan?.LotteryWinnerMask || plan?.lottery_winner_mask || ''
+}
+
 function isPublicPlan(plan) {
   return plan?.QuotaPeriod === 'public' || plan?.PlanType === 'public' || plan?.quota_period === 'public' || plan?.plan_type === 'public'
 }
@@ -614,7 +626,7 @@ function planSubscriptionAction(plan) {
 }
 
 function planActionText(plan) {
-  if (isLotteryPlan(plan)) return '参与抽奖'
+  if (isLotteryPlan(plan)) return lotteryDrawn(plan) ? '\u5df2\u5f00\u5956' : '\u53c2\u4e0e\u62bd\u5956'
   if (isFreePlan(plan) && publicQuotaInsufficient(plan)) return '额度不足等待补充'
   if (planSoldOut(plan)) return '售罄'
   if (hasClaimedFreePlan(plan)) return '已领取'
@@ -628,13 +640,17 @@ function planActionText(plan) {
 
 function planActionDisabled(plan) {
   if (planSoldOut(plan)) return true
-  if (isLotteryPlan(plan)) return !plan.LotteryURL
+  if (isLotteryPlan(plan)) return !lotteryDrawn(plan) && !plan.LotteryURL
   if (hasClaimedFreePlan(plan)) return true
   return planSubscriptionAction(plan) === 'blocked'
 }
 
 function openPlanAction(plan) {
   if (isLotteryPlan(plan)) {
+    if (lotteryDrawn(plan)) {
+      Object.assign(lotteryResultModal, { open: true, plan })
+      return
+    }
     const url = String(plan?.LotteryURL || '').trim()
     if (url) window.open(url, '_blank', 'noopener,noreferrer')
     return
@@ -671,6 +687,10 @@ function openFreeOverrideModal(plan) {
 
 function closeFreeOverrideModal() {
   Object.assign(freeOverrideModal, { open: false, plan: null })
+}
+
+function closeLotteryResultModal() {
+  Object.assign(lotteryResultModal, { open: false, plan: null })
 }
 
 function confirmFreeOverridePlan() {
@@ -1289,6 +1309,26 @@ function planSubtitle(index) {
           <div class="modal-actions upgrade-actions">
             <button type="button" class="ghost-button" @click="closeFreeOverrideModal">取消</button>
             <button type="button" class="primary-button" @click="confirmFreeOverridePlan">我知道了，继续订购</button>
+          </div>
+        </section>
+      </div>
+    </Transition>
+
+    <Transition name="modal-fade">
+      <div v-if="lotteryResultModal.open" class="modal-backdrop upgrade-backdrop" @click.self="closeLotteryResultModal">
+        <section class="modal-card upgrade-modal-card">
+          <div class="upgrade-modal-head">
+            <span class="upgrade-alert-icon">✓</span>
+            <div>
+              <p class="section-kicker">Lottery</p>
+              <h2>抽奖结果</h2>
+            </div>
+          </div>
+          <p class="upgrade-copy">
+            {{ lotteryWinnerText(lotteryResultModal.plan) ? `中奖人：${lotteryWinnerText(lotteryResultModal.plan)}` : '本次抽奖已流拍' }}
+          </p>
+          <div class="modal-actions upgrade-actions">
+            <button type="button" class="primary-button" @click="closeLotteryResultModal">知道了</button>
           </div>
         </section>
       </div>

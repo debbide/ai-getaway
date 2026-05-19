@@ -134,6 +134,7 @@ const modal = reactive({ open: false, type: '', title: '', actionLabel: '', dang
 const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountRmb: 0, status: '', planType: '', quotaPeriod: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
 const planForm = reactive(emptyPlan())
+const lotteryDrawForm = reactive({ planId: '', winnerEmail: '' })
 const redeemCodeForm = reactive(emptyRedeemCode())
 const modelForm = reactive(emptyModel())
 const channelForm = reactive(emptyChannel())
@@ -909,6 +910,20 @@ async function submitPlan() {
 
 function confirmDeletePlan(plan) {
   showModal('delete-plan', '删除套餐', '确认删除', { plan }, true)
+}
+
+function openLotteryDrawModal(plan) {
+  Object.assign(lotteryDrawForm, { planId: plan.ID, winnerEmail: plan.LotteryWinnerEmail || '' })
+  showModal('draw-lottery-plan', `开奖：${plan.Name}`, '确认开奖', { plan }, false)
+}
+
+async function drawLotteryPlan() {
+  await runAction(async () => {
+    await api.post(`/admin/plans/${lotteryDrawForm.planId}/draw-lottery`, {
+      winner_email: lotteryDrawForm.winnerEmail.trim()
+    })
+    notice.value = lotteryDrawForm.winnerEmail.trim() ? '抽奖套餐已开奖' : '抽奖套餐已流拍'
+  })
 }
 
 async function deletePlan() {
@@ -2264,6 +2279,7 @@ function submitModal() {
   const actions = {
     'create-plan': submitPlan,
     'edit-plan': submitPlan,
+    'draw-lottery-plan': drawLotteryPlan,
     'delete-plan': deletePlan,
     'create-redeem-code': submitRedeemCodes,
     'disable-redeem-code': disableRedeemCode,
@@ -2309,7 +2325,7 @@ function submitModal() {
         <span class="admin-brand-mark">AI</span>
         <div>
           <strong>管理后台</strong>
-          <small>AI Gateway</small>
+          <small>星空 AI</small>
         </div>
       </div>
       <nav class="admin-menu-list" aria-label="管理后台菜单">
@@ -2502,6 +2518,7 @@ function submitModal() {
                   <template #default="{ row: plan }">
                     <div class="plan-delivery-cell">
                       <span v-if="plan.IsLottery">{{ plan.LotteryURL || '未设置跳转地址' }}</span>
+                      <small v-if="plan.IsLottery && plan.LotteryDrawn">{{ plan.LotteryWinnerMask ? `中奖人 ${plan.LotteryWinnerMask}` : '流拍抽奖' }}</small>
                       <span v-else-if="plan.QuotaPeriod === 'public'">{{ publicChannelName(plan) }} · {{ publicPlanDurationText(plan) }}</span>
                       <span v-else>{{ plan.DurationDays }} 天</span>
                       <el-tag :type="plan.Enabled ? 'success' : 'info'">{{ plan.Enabled ? '已启用' : '已停用' }}</el-tag>
@@ -2512,6 +2529,7 @@ function submitModal() {
                   <template #default="{ row: plan }">
                     <div class="table-actions admin-table-actions">
                       <el-button size="small" :icon="Edit" aria-label="编辑套餐" title="编辑套餐" @click="openPlanModal(plan)" />
+                      <el-button v-if="plan.IsLottery && !plan.LotteryDrawn" type="warning" size="small" :icon="Finished" aria-label="开奖" title="开奖" @click="openLotteryDrawModal(plan)" />
                       <el-button type="danger" size="small" :icon="Delete" aria-label="删除套餐" title="删除套餐" @click="confirmDeletePlan(plan)" />
                     </div>
                   </template>
@@ -3392,7 +3410,7 @@ function submitModal() {
           <section v-if="settingsTab === 'basic'" class="panel-surface p-5">
             <div class="form-grid">
               <el-form-item label="网站标题">
-                <el-input v-model="settings.site_title" placeholder="AI Gateway" />
+                <el-input v-model="settings.site_title" placeholder="星空 AI" />
               </el-form-item>
               <el-form-item label="联系邮箱">
                 <el-input v-model="settings.contact_email" type="email" placeholder="support@example.com" />
@@ -3991,6 +4009,16 @@ function submitModal() {
         <div v-if="modal.type === 'delete-plan'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.plan?.Name }}」吗？</strong>
           <p>删除后该套餐不会再出现在管理列表和用户可购套餐中，请确认没有正在依赖它的运营流程。</p>
+        </div>
+
+        <div v-if="modal.type === 'draw-lottery-plan'" class="modal-body form-grid">
+          <div class="confirm-copy md:col-span-2">
+            <strong>确认关闭「{{ modal.payload?.plan?.Name }}」并开奖吗？</strong>
+            <p>填写中奖人邮箱后前端会展示脱敏邮箱；留空开奖将显示为流拍抽奖。</p>
+          </div>
+          <el-form-item class="md:col-span-2" label="中奖人邮箱">
+            <el-input v-model="lotteryDrawForm.winnerEmail" type="email" placeholder="留空则标记为流拍抽奖" />
+          </el-form-item>
         </div>
 
         <div v-if="modal.type === 'disable-redeem-code'" class="modal-body confirm-copy">

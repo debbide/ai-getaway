@@ -56,6 +56,10 @@ type planRequest struct {
 	Enabled            bool   `json:"enabled"`
 }
 
+type drawLotteryPlanRequest struct {
+	WinnerEmail string `json:"winner_email"`
+}
+
 type redeemCodeRequest struct {
 	PlanID uint   `json:"plan_id" binding:"required"`
 	Count  int    `json:"count"`
@@ -646,6 +650,9 @@ func (a *AdminController) Plans(c *gin.Context) {
 	query.Count(&total)
 	var plans []model.Plan
 	applyPagination(query, page, pageSize).Order("price_cents asc").Find(&plans)
+	for i := range plans {
+		hydrateLotteryPlanForAdmin(&plans[i])
+	}
 	response.OK(c, paginatedResponse{
 		Items:    plans,
 		Total:    total,
@@ -725,12 +732,74 @@ func (a *AdminController) UpdatePlan(c *gin.Context) {
 	response.OK(c, nil)
 }
 
+func (a *AdminController) DrawLotteryPlan(c *gin.Context) {
+	var req drawLotteryPlanRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	var plan model.Plan
+	if err := a.db.First(&plan, c.Param("id")).Error; err != nil {
+		response.Error(c, 404, "plan not found")
+		return
+	}
+	if !plan.IsLottery {
+		response.Error(c, 400, "plan is not lottery")
+		return
+	}
+	winnerEmail := strings.TrimSpace(strings.ToLower(req.WinnerEmail))
+	if winnerEmail != "" && !strings.Contains(winnerEmail, "@") {
+		response.Error(c, 400, "invalid winner email")
+		return
+	}
+	if err := a.db.Model(&plan).Updates(map[string]interface{}{
+		"lottery_drawn":        true,
+		"lottery_winner_email": winnerEmail,
+		"enabled":              false,
+	}).Error; err != nil {
+		response.Error(c, 500, "failed to draw lottery plan")
+		return
+	}
+	plan.LotteryDrawn = true
+	plan.LotteryWinnerEmail = winnerEmail
+	plan.Enabled = false
+	hydrateLotteryPlanForAdmin(&plan)
+	response.OK(c, plan)
+}
+
 func (a *AdminController) DeletePlan(c *gin.Context) {
 	if err := a.db.Delete(&model.Plan{}, c.Param("id")).Error; err != nil {
 		response.Error(c, 500, "failed to delete plan")
 		return
 	}
 	response.OK(c, nil)
+}
+
+func hydrateLotteryPlanForAdmin(plan *model.Plan) {
+	if plan == nil || !plan.IsLottery {
+		return
+	}
+	plan.LotteryWinnerMask = maskEmail(plan.LotteryWinnerEmail)
+}
+
+func hydrateLotteryPlanForPublic(plan *model.Plan) {
+	if plan == nil || !plan.IsLottery {
+		return
+	}
+	plan.LotteryWinnerMask = maskEmail(plan.LotteryWinnerEmail)
+	plan.LotteryWinnerEmail = ""
+}
+
+func maskEmail(email string) string {
+	email = strings.TrimSpace(strings.ToLower(email))
+	local, domain, ok := strings.Cut(email, "@")
+	if !ok || local == "" || domain == "" {
+		return ""
+	}
+	if len(local) <= 2 {
+		return local[:1] + "***@" + domain
+	}
+	return local[:3] + "***" + local[len(local)-1:] + "@" + domain
 }
 
 func (a *AdminController) RedeemCodes(c *gin.Context) {

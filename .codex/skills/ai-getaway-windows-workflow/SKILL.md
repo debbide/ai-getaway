@@ -3,7 +3,7 @@ name: ai-getaway-windows-workflow
 description: Windows-specific workflow notes for the D:\python\ai-getaway repository. Use when Codex works in this project to choose compatible search commands, Go cache settings, frontend build validation, and local verification behavior.
 ---
 
-# AI Gateway Windows Workflow
+# 星空 AI Windows Workflow
 
 Use these project-specific notes before running commands in `D:\python\ai-getaway`.
 

@@ -76,7 +76,7 @@ func (m *Mailer) SendVerification(email, code string) error {
 		return err
 	}
 	if err := tpl.Execute(&body, map[string]string{
-		"SiteTitle": fallback(m.settings.SiteTitle, "AI Gateway"),
+		"SiteTitle": fallback(m.settings.SiteTitle, "星空 AI"),
 		"Code":      code,
 	}); err != nil {
 		return err
@@ -91,7 +91,7 @@ func (m *Mailer) SendSMTPTest(email string) error {
 		return err
 	}
 	if err := tpl.Execute(&body, map[string]string{
-		"SiteTitle": fallback(m.settings.SiteTitle, "AI Gateway"),
+		"SiteTitle": fallback(m.settings.SiteTitle, "星空 AI"),
 		"SentAt":    time.Now().Format("2006-01-02 15:04:05"),
 	}); err != nil {
 		return err
@@ -396,7 +396,7 @@ func isDuplicateFingerprintError(err error) bool {
 
 func emailTemplateVariables(input EmailTemplateInput, extra map[string]string) map[string]string {
 	vars := map[string]string{
-		"site_title":    fallback(input.Settings.SiteTitle, "AI Gateway"),
+		"site_title":    fallback(input.Settings.SiteTitle, "星空 AI"),
 		"contact_email": input.Settings.ContactEmail,
 		"username":      "",
 		"email":         "",

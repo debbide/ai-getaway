@@ -18,6 +18,11 @@ func NewPlanController(db *gorm.DB) *PlanController {
 
 func (p *PlanController) List(c *gin.Context) {
 	var plans []model.Plan
-	p.db.Preload("PublicChannel").Preload("PollingPool.Accounts").Where("enabled = ?", true).Order("price_cents asc").Find(&plans)
+	p.db.Preload("PublicChannel").Preload("PollingPool.Accounts").
+		Where("enabled = ? OR (is_lottery = ? AND lottery_drawn = ?)", true, true, true).
+		Order("price_cents asc").Find(&plans)
+	for i := range plans {
+		hydrateLotteryPlanForPublic(&plans[i])
+	}
 	response.OK(c, plans)
 }

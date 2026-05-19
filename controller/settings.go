@@ -345,7 +345,7 @@ func systemSettingColumnExists(db *gorm.DB, column string) bool {
 func loadSettings(db *gorm.DB) model.SystemSetting {
 	var setting model.SystemSetting
 	if err := db.First(&setting, 1).Error; err != nil {
-		setting = model.SystemSetting{Model: gorm.Model{ID: 1}, SiteTitle: "AI Gateway", AllowRegistration: true, SMTPPort: 587, SMTPUseTLS: true}
+		setting = model.SystemSetting{Model: gorm.Model{ID: 1}, SiteTitle: "星空 AI", AllowRegistration: true, SMTPPort: 587, SMTPUseTLS: true}
 		db.FirstOrCreate(&setting, model.SystemSetting{Model: gorm.Model{ID: 1}})
 	}
 	if setting.SiteTitle == "" {

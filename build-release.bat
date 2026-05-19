@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 echo ========================================
-echo AI Gateway release build
+echo 星空 AI 发布构建
 echo ========================================
 echo Project: %CD%
 echo.
