@@ -3720,6 +3720,34 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
   border-radius: 18px;
 }
 
+.dashboard-card--orders,
+.dashboard-card--plan {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dashboard-card--orders {
+  overflow: hidden;
+}
+
+.dashboard-card--orders .order-table-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dashboard-card--orders .pagination-bar,
+.dashboard-card--plan .plan-card-actions {
+  flex: 0 0 auto;
+}
+
+.dashboard-card--plan .plan-snapshot-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 .announcement-card {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
@@ -4431,12 +4459,19 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
 
 @media (min-width: 1024px) {
   .console-dashboard-grid {
+    --dashboard-paired-card-height: 430px;
     grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
     align-items: start;
   }
 
   .console-dashboard-aside {
     order: unset;
+  }
+
+  .dashboard-card--orders,
+  .dashboard-card--plan {
+    height: var(--dashboard-paired-card-height);
+    max-height: var(--dashboard-paired-card-height);
   }
 }
 

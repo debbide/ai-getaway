@@ -33,7 +33,7 @@ const redeemForm = reactive({ code: '' })
 const redeeming = ref(false)
 const orderPage = ref(1)
 const nowMs = ref(Date.now())
-const orderPageSize = 5
+const orderPageSize = 3
 let orderTimer = null
 let paymentPollTimer = null
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', payload: null, danger: false })
@@ -808,7 +808,7 @@ function statusLabel(value) {
           </section>
 
           <!-- 订单 -->
-          <section class="panel-surface dashboard-card console-mobile-contained p-5">
+          <section class="panel-surface dashboard-card dashboard-card--orders console-mobile-contained p-5">
             <div class="section-head">
               <div>
                 <p class="section-kicker">Orders</p>
@@ -817,7 +817,7 @@ function statusLabel(value) {
               <el-button class="refresh-button" circle :icon="Refresh" :loading="loading.orders" aria-label="刷新" title="刷新" @click="refreshOrders" />
             </div>
 
-            <div class="mt-6">
+            <div class="mt-6 order-table-shell">
               <el-table :data="pagedOrders" border empty-text="暂无订单">
                 <el-table-column label="订单" width="90">
                   <template #default="{ row: order }">#{{ order.ID }}</template>
@@ -917,7 +917,7 @@ function statusLabel(value) {
           </section>
 
           <!-- 套餐管理：侧栏紧凑区 -->
-          <section class="panel-surface dashboard-card p-4">
+          <section class="panel-surface dashboard-card dashboard-card--plan p-4">
             <div class="section-head">
               <div>
                 <p class="section-kicker">Plan</p>
