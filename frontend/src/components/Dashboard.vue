@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Present, Refresh } from '@element-plus/icons-vue'
+import { Present, Refresh, Stopwatch } from '@element-plus/icons-vue'
 import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { plainTextFromMarkdown, renderMarkdown } from '../utils/markdown'
@@ -29,6 +29,7 @@ const claudeOSTab = ref('powershell')
 const usagePlainKey = ref('')
 const modalError = ref('')
 const loading = reactive({ announcements: false, keys: false, orders: false, plan: false })
+const endpointSpeedStates = reactive({})
 const redeemForm = reactive({ code: '' })
 const redeeming = ref(false)
 const orderPage = ref(1)
@@ -582,6 +583,27 @@ function defaultApiEndpoints() {
   return [{ label: '默认', description: '主线路', url: 'https://ai.itzkb.cn' }]
 }
 
+function endpointSpeedState(url) {
+  return endpointSpeedStates[url] || null
+}
+
+async function testEndpointSpeed(endpoint) {
+  const url = String(endpoint?.url || '').trim()
+  if (!url) return
+  endpointSpeedStates[url] = { loading: true, value: '', error: '' }
+  try {
+    const res = await fetch(`https://v2.xxapi.cn/api/speed?url=${encodeURIComponent(url)}`)
+    const data = await res.json()
+    if (!res.ok || Number(data?.code) !== 200 || !data?.data) {
+      throw new Error(data?.msg || '测速失败')
+    }
+    endpointSpeedStates[url] = { loading: false, value: String(data.data), error: '' }
+  } catch (err) {
+    endpointSpeedStates[url] = { loading: false, value: '', error: err.message || '测速失败' }
+    showNotice('测速失败，请稍后重试', 'error')
+  }
+}
+
 async function copyKey(text, showSuccessModal = false) {
   try {
     await navigator.clipboard.writeText(text)
@@ -908,10 +930,31 @@ function statusLabel(value) {
                     <span v-if="endpoint.description">{{ endpoint.description }}</span>
                   </div>
                   <code>{{ endpoint.url }}</code>
+                  <span
+                    v-if="endpointSpeedState(endpoint.url)?.value || endpointSpeedState(endpoint.url)?.error"
+                    class="endpoint-speed-result"
+                    :class="{ 'endpoint-speed-result--error': endpointSpeedState(endpoint.url)?.error }"
+                  >
+                    {{ endpointSpeedState(endpoint.url)?.value || '\u6d4b\u901f\u5931\u8d25' }}
+                  </span>
                 </div>
-                <button type="button" class="endpoint-copy-button" aria-label="复制 API 端点" title="复制 API 端点" @click="copyKey(endpoint.url)">
-                  ⧉
-                </button>
+                <div class="endpoint-actions">
+                  <button
+                    type="button"
+                    class="endpoint-tool-button endpoint-speed-button"
+                    :class="{ 'is-loading': endpointSpeedState(endpoint.url)?.loading }"
+                    :disabled="endpointSpeedState(endpoint.url)?.loading"
+                    aria-label="Test API endpoint speed"
+                    title="Test API endpoint speed"
+                    @click="testEndpointSpeed(endpoint)"
+                  >
+                    <Stopwatch />
+                    <span>{{ endpointSpeedState(endpoint.url)?.loading ? '\u6d4b\u901f\u4e2d' : '\u6d4b\u901f' }}</span>
+                  </button>
+                  <button type="button" class="endpoint-tool-button endpoint-copy-button" aria-label="复制 API 端点" title="复制 API 端点" @click="copyKey(endpoint.url)">
+                    ⧉
+                  </button>
+                </div>
               </article>
             </div>
           </section>

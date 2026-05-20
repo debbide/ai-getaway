@@ -4599,7 +4599,7 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
 
 .endpoint-item {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 34px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   border: 1px solid rgba(148, 163, 184, 0.18);
@@ -4660,20 +4660,74 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
   white-space: nowrap;
 }
 
-.endpoint-copy-button {
-  display: grid;
-  width: 34px;
+.endpoint-speed-result {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 8px;
+  border: 1px solid rgba(34, 197, 94, 0.26);
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.endpoint-speed-result--error {
+  border-color: rgba(248, 113, 113, 0.28);
+  background: rgba(248, 113, 113, 0.12);
+  color: #fca5a5;
+}
+
+.endpoint-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.endpoint-tool-button {
+  display: inline-flex;
   height: 34px;
-  place-items: center;
+  align-items: center;
+  justify-content: center;
   border-radius: 8px;
   color: #8da1bd;
-  font-size: 20px;
   font-weight: 900;
 }
 
-.endpoint-copy-button:hover {
+.endpoint-tool-button:hover:not(:disabled) {
   background: rgba(148, 163, 184, 0.12);
   color: var(--ink);
+}
+
+.endpoint-tool-button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.endpoint-speed-button {
+  gap: 4px;
+  min-width: 70px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.endpoint-speed-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.endpoint-speed-button.is-loading svg {
+  animation: refresh-spin 0.9s linear infinite;
+}
+
+.endpoint-copy-button {
+  width: 34px;
+  padding: 0;
+  font-size: 20px;
 }
 
 .endpoint-admin-list {
@@ -4742,7 +4796,7 @@ html[data-theme="dark"] .endpoint-admin-item .el-button.is-disabled {
 
 @media (max-width: 640px) {
   .endpoint-item {
-    grid-template-columns: 42px minmax(0, 1fr) 32px;
+    grid-template-columns: 42px minmax(0, 1fr);
     gap: 10px;
   }
 
@@ -4759,6 +4813,11 @@ html[data-theme="dark"] .endpoint-admin-item .el-button.is-disabled {
 
   .endpoint-card code {
     font-size: 13px;
+  }
+
+  .endpoint-actions {
+    grid-column: 2;
+    justify-content: flex-start;
   }
 
   .endpoint-admin-item {
