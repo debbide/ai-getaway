@@ -235,3 +235,32 @@ func TestFillUsageAppliesChannelGroupMultiplier(t *testing.T) {
 		t.Fatalf("EstimatedUSDMicros = %d, want 11", log.EstimatedUSDMicros)
 	}
 }
+
+func TestCapResponseToQuotaMarksExceeded(t *testing.T) {
+	log := model.APILog{EstimatedUSDMicros: 9_000_000}
+
+	if !capResponseToQuota(&log, 1_000_000) {
+		t.Fatal("capResponseToQuota() = false, want true")
+	}
+	if log.ErrorMessage != "subscription quota reached during request" {
+		t.Fatalf("ErrorMessage = %q", log.ErrorMessage)
+	}
+}
+
+func TestStreamExceedsQuotaAtBudgetBoundary(t *testing.T) {
+	log := model.APILog{}
+	body := []byte("data: {\"model\":\"gpt-4o-mini\",\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":7,\"total_tokens\":17,\"cost_usd\":0.017485}}\n\n")
+
+	if !streamExceedsQuota(nil, &log, body, nil, 17485) {
+		t.Fatal("streamExceedsQuota() = false, want true at quota boundary")
+	}
+}
+
+func TestEstimatedTokensFromBytesRoundsConservatively(t *testing.T) {
+	if got := estimatedTokensFromBytes(1); got != 1 {
+		t.Fatalf("estimatedTokensFromBytes(1) = %d, want 1", got)
+	}
+	if got := estimatedTokensFromBytes(3); got != 2 {
+		t.Fatalf("estimatedTokensFromBytes(3) = %d, want 2", got)
+	}
+}

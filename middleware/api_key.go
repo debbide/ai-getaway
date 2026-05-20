@@ -160,9 +160,11 @@ func allowPlanQuota(db *gorm.DB, user model.User) bool {
 		return false
 	}
 	now := time.Now()
-	startedAt := service.SubscriptionStartAt(db, user, now)
-	usage := service.PlanQuotaUsageFrom(db, user.ID, user.Plan, startedAt, now)
-	if usage.LimitUSDCents > 0 && usage.UsedUSDCents >= usage.LimitUSDCents {
+	usage, ok := service.UserPlanQuotaUsage(db, user, now)
+	if !ok {
+		return false
+	}
+	if !service.QuotaAllowsRequest(usage) {
 		return false
 	}
 	return true

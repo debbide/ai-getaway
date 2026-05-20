@@ -39,6 +39,18 @@ func TestQuotaUsagePercentCapsAtPlanLimit(t *testing.T) {
 	}
 }
 
+func TestQuotaAllowsRequestRequiresMoreThanMinimumRemaining(t *testing.T) {
+	if QuotaAllowsRequest(QuotaUsage{LimitUSDCents: 2000, RemainingCents: MinQuotaRemainingUSDCents}) {
+		t.Fatal("QuotaAllowsRequest() = true, want false at minimum remaining threshold")
+	}
+	if !QuotaAllowsRequest(QuotaUsage{LimitUSDCents: 2000, RemainingCents: MinQuotaRemainingUSDCents + 1}) {
+		t.Fatal("QuotaAllowsRequest() = false, want true above minimum remaining threshold")
+	}
+	if !QuotaAllowsRequest(QuotaUsage{}) {
+		t.Fatal("QuotaAllowsRequest() = false, want true for unlimited quota")
+	}
+}
+
 func TestCapAPILogCostCapsSingleRequestOverflow(t *testing.T) {
 	log := model.APILog{
 		APIKeyID:           1,

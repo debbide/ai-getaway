@@ -4,6 +4,8 @@
 
 不要做本地页面验证，只要构建通过就行，当前环境是Windows，请使用Windows相关的命令。
 
+npm run build 因本机 C:\Users\63138\AppData\Roaming\npm\node_modules\npm\bin\npm-cli.js 缺失失败，用项目本地 Vite 入口完成等价构建验证。
+
 This repository contains an 星空 AI with a Go backend at the root and a Vue frontend in `frontend/`.
 
 - `main.go` starts the Gin API server.

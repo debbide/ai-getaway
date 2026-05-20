@@ -53,6 +53,11 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 
 		start := time.Now()
 		requestInfo := parseRequestInfo(c.Request)
+		quotaBudgetMicros, quotaLimited := requestQuotaBudgetMicros(db, apiKey.User, start)
+		if quotaLimited && estimateUsageMicros(db, requestInfo.Model, requestInfo.BodyBytes, 0, groupMultipliers) >= quotaBudgetMicros {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "subscription quota exceeded"})
+			return
+		}
 		protocol := model.ProtocolGPT
 		if value, ok := c.Get("protocol"); ok {
 			protocol = service.NormalizeProtocol(value.(string))
@@ -86,18 +91,34 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 			}
 			if isEventStream(resp) {
 				resp.Body = &usageStreamReadCloser{
-					ReadCloser:  resp.Body,
-					start:       start,
-					log:         &log,
-					db:          db,
-					hub:         hub,
-					multipliers: groupMultipliers,
+					ReadCloser:        resp.Body,
+					start:             start,
+					log:               &log,
+					db:                db,
+					hub:               hub,
+					multipliers:       groupMultipliers,
+					quotaLimited:      quotaLimited,
+					quotaBudgetMicros: quotaBudgetMicros,
+					requestBodyBytes:  requestInfo.BodyBytes,
 				}
 			} else {
 				body, err := io.ReadAll(resp.Body)
 				if err == nil {
 					fillUsage(db, &log, body, groupMultipliers)
+					quotaExceeded := quotaLimited && capResponseToQuota(&log, quotaBudgetMicros)
+					if quotaExceeded {
+						log.StatusCode = http.StatusTooManyRequests
+					}
 					finalizeUsageLog(db, hub, &log, start, groupMultipliers)
+					if quotaExceeded {
+						body = quotaExceededBody()
+						resp.StatusCode = http.StatusTooManyRequests
+						resp.Status = "429 Too Many Requests"
+						resp.Header.Set("Content-Type", "application/json; charset=utf-8")
+						resp.Header.Set("X-Quota-Exceeded", "true")
+						resp.ContentLength = int64(len(body))
+						resp.Header.Set("Content-Length", intToString(uint(len(body))))
+					}
 					resp.Body = io.NopCloser(bytes.NewReader(body))
 					return nil
 				}
@@ -115,7 +136,7 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 				LatencyMs:    time.Since(start).Milliseconds(),
 				ErrorMessage: err.Error(),
 			}
-			db.Create(&log)
+			service.CreateAPILogWithinPlanQuota(db, &log, time.Now())
 			http.Error(w, `{"error":"upstream request failed"}`, http.StatusBadGateway)
 		}
 
@@ -124,8 +145,9 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 }
 
 type requestInfo struct {
-	Model  string
-	Stream bool
+	Model     string
+	Stream    bool
+	BodyBytes int64
 }
 
 func parseRequestInfo(req *http.Request) requestInfo {
@@ -143,9 +165,9 @@ func parseRequestInfo(req *http.Request) requestInfo {
 		Stream bool   `json:"stream"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return requestInfo{}
+		return requestInfo{BodyBytes: int64(len(body))}
 	}
-	return requestInfo{Model: payload.Model, Stream: payload.Stream}
+	return requestInfo{Model: payload.Model, Stream: payload.Stream, BodyBytes: int64(len(body))}
 }
 
 func fillUsage(db *gorm.DB, log *model.APILog, body []byte, groupMultipliers ...any) {
@@ -226,17 +248,25 @@ func applyUsage(db *gorm.DB, log *model.APILog, modelName string, usage response
 
 type usageStreamReadCloser struct {
 	io.ReadCloser
-	start       time.Time
-	log         *model.APILog
-	db          *gorm.DB
-	hub         *service.LogHub
-	multipliers any
-	buf         bytes.Buffer
-	firstToken  bool
-	closed      bool
+	start             time.Time
+	log               *model.APILog
+	db                *gorm.DB
+	hub               *service.LogHub
+	multipliers       any
+	quotaLimited      bool
+	quotaBudgetMicros int64
+	requestBodyBytes  int64
+	buf               bytes.Buffer
+	firstToken        bool
+	closed            bool
+	cutoff            bool
 }
 
 func (r *usageStreamReadCloser) Read(p []byte) (int, error) {
+	if r.cutoff {
+		r.finish()
+		return 0, io.EOF
+	}
 	n, err := r.ReadCloser.Read(p)
 	if n > 0 {
 		if !r.firstToken {
@@ -244,6 +274,12 @@ func (r *usageStreamReadCloser) Read(p []byte) (int, error) {
 			r.firstToken = true
 		}
 		r.buf.Write(p[:n])
+		if r.streamBudgetExceeded() {
+			r.cutoff = true
+			_ = r.ReadCloser.Close()
+			r.finish()
+			return 0, io.EOF
+		}
 	}
 	if err == io.EOF {
 		r.finish()
@@ -262,7 +298,20 @@ func (r *usageStreamReadCloser) finish() {
 	}
 	r.closed = true
 	fillStreamUsage(r.db, r.log, r.buf.Bytes(), r.multipliers)
+	if r.cutoff || capResponseToQuota(r.log, r.quotaBudgetMicros) {
+		r.log.StatusCode = http.StatusTooManyRequests
+	}
 	finalizeUsageLog(r.db, r.hub, r.log, r.start, r.multipliers)
+}
+
+func (r *usageStreamReadCloser) streamBudgetExceeded() bool {
+	if !r.quotaLimited {
+		return false
+	}
+	if streamExceedsQuota(r.db, r.log, r.buf.Bytes(), r.multipliers, r.quotaBudgetMicros) {
+		return true
+	}
+	return estimateUsageMicros(r.db, r.log.ModelName, r.requestBodyBytes, int64(r.buf.Len()), r.multipliers) >= r.quotaBudgetMicros
 }
 
 func fillStreamUsage(db *gorm.DB, log *model.APILog, body []byte, groupMultipliers ...any) {
@@ -279,6 +328,20 @@ func fillStreamUsage(db *gorm.DB, log *model.APILog, body []byte, groupMultiplie
 		}
 		fillUsage(db, log, []byte(data), firstGroupMultipliers(groupMultipliers))
 	}
+}
+
+func streamExceedsQuota(db *gorm.DB, log *model.APILog, body []byte, groupMultipliers any, quotaBudgetMicros int64) bool {
+	current := *log
+	fillStreamUsage(db, &current, body, groupMultipliers)
+	return current.EstimatedUSDMicros >= quotaBudgetMicros
+}
+
+func capResponseToQuota(log *model.APILog, quotaBudgetMicros int64) bool {
+	if quotaBudgetMicros <= 0 || log == nil || log.EstimatedUSDMicros <= quotaBudgetMicros {
+		return false
+	}
+	log.ErrorMessage = appendErrorMessage(log.ErrorMessage, "subscription quota reached during request")
+	return true
 }
 
 func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start time.Time, groupMultipliers ...any) {
@@ -303,6 +366,48 @@ func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start
 		LatencyMs:  log.LatencyMs,
 		CreatedAt:  now,
 	})
+}
+
+func requestQuotaBudgetMicros(db *gorm.DB, user model.User, now time.Time) (int64, bool) {
+	usage, ok := service.UserPlanQuotaUsage(db, user, now)
+	if !ok || usage.LimitUSDCents <= 0 {
+		return 0, false
+	}
+	if usage.RemainingCents <= 0 {
+		return 0, true
+	}
+	return usage.RemainingCents * 10_000, true
+}
+
+func estimateUsageMicros(db *gorm.DB, modelName string, inputBytes int64, outputBytes int64, groupMultipliers any) int64 {
+	inputTokens := estimatedTokensFromBytes(inputBytes)
+	outputTokens := estimatedTokensFromBytes(outputBytes)
+	if inputTokens <= 0 && outputTokens <= 0 {
+		return 0
+	}
+	return service.BillUsageWithGroupMultipliers(db, modelName, inputTokens, 0, outputTokens, inputTokens+outputTokens, groupMultipliers).TotalUSDMicros
+}
+
+func estimatedTokensFromBytes(value int64) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return (value + 1) / 2
+}
+
+func appendErrorMessage(current string, next string) string {
+	current = strings.TrimSpace(current)
+	if current == "" {
+		return next
+	}
+	if strings.Contains(current, next) {
+		return current
+	}
+	return current + "; " + next
+}
+
+func quotaExceededBody() []byte {
+	return []byte(`{"error":"subscription quota exceeded"}`)
 }
 
 func isEventStream(resp *http.Response) bool {

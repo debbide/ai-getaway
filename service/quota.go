@@ -21,8 +21,25 @@ type QuotaUsage struct {
 	Percent        float64   `json:"percent"`
 }
 
+const MinQuotaRemainingUSDCents int64 = 10
+
 func PlanQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, now time.Time) QuotaUsage {
 	return PlanQuotaUsageFrom(db, userID, plan, nil, now)
+}
+
+func UserPlanQuotaUsage(db *gorm.DB, user model.User, now time.Time) (QuotaUsage, bool) {
+	if !HasActiveSubscription(user, now) || user.Plan == nil {
+		return QuotaUsage{}, false
+	}
+	startedAt := SubscriptionStartAt(db, user, now)
+	return PlanQuotaUsageFrom(db, user.ID, user.Plan, startedAt, now), true
+}
+
+func QuotaAllowsRequest(usage QuotaUsage) bool {
+	if usage.LimitUSDCents <= 0 {
+		return true
+	}
+	return usage.RemainingCents > MinQuotaRemainingUSDCents
 }
 
 func PlanQuotaUsageFrom(db *gorm.DB, userID uint, plan *model.Plan, activeFrom *time.Time, now time.Time) QuotaUsage {
@@ -141,6 +158,9 @@ func QuotaUsageWindow(period string, activeFrom *time.Time, now time.Time) (time
 }
 
 func UsedUSDCentsSince(db *gorm.DB, userID uint, since time.Time) int64 {
+	if db == nil {
+		return 0
+	}
 	var total int64
 	db.Model(&model.APILog{}).
 		Where("user_id = ? AND created_at >= ?", userID, since).
