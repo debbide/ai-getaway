@@ -201,6 +201,13 @@ type pollingPoolAccountRequest struct {
 	SortOrder         int                `json:"sort_order"`
 }
 
+type channelMonitorRequest struct {
+	ModelName              string `json:"model_name" binding:"required,min=1,max=128"`
+	APIURL                 string `json:"api_url" binding:"required,url,max=512"`
+	MonitorIntervalSeconds int    `json:"monitor_interval_seconds"`
+	Enabled                bool   `json:"enabled"`
+}
+
 type modelPricingRequest struct {
 	ModelName                string  `json:"model" binding:"required,min=1,max=128"`
 	DisplayName              string  `json:"display_name"`
@@ -291,6 +298,27 @@ type adminPollingPoolAccountResponse struct {
 	LastUsedAt         *time.Time         `json:"LastUsedAt"`
 	CreatedAt          time.Time          `json:"CreatedAt"`
 	UpdatedAt          time.Time          `json:"UpdatedAt"`
+}
+
+type adminChannelMonitorResponse struct {
+	ID                     uint                        `json:"ID"`
+	ModelName              string                      `json:"ModelName"`
+	APIURL                 string                      `json:"APIURL"`
+	MonitorIntervalSeconds int                         `json:"MonitorIntervalSeconds"`
+	Enabled                bool                        `json:"Enabled"`
+	LatestRecord           *channelMonitorRecordBrief  `json:"LatestRecord,omitempty"`
+	RecentRecords          []channelMonitorRecordBrief `json:"RecentRecords"`
+	CreatedAt              time.Time                   `json:"CreatedAt"`
+	UpdatedAt              time.Time                   `json:"UpdatedAt"`
+}
+
+type channelMonitorRecordBrief struct {
+	ID           uint      `json:"ID"`
+	Status       string    `json:"Status"`
+	LatencyMs    int64     `json:"LatencyMs"`
+	StatusCode   int       `json:"StatusCode"`
+	ErrorMessage string    `json:"ErrorMessage,omitempty"`
+	CheckedAt    time.Time `json:"CheckedAt"`
 }
 
 type paginatedResponse struct {
@@ -1764,6 +1792,41 @@ func mapAdminPollingPool(pool model.PollingPool) adminPollingPoolResponse {
 	}
 }
 
+func (a *AdminController) mapAdminChannelMonitor(monitor model.ChannelMonitor) adminChannelMonitorResponse {
+	var records []model.ChannelMonitorRecord
+	a.db.Where("channel_monitor_id = ?", monitor.ID).Order("checked_at desc").Limit(20).Find(&records)
+	recent := make([]channelMonitorRecordBrief, 0, len(records))
+	for _, record := range records {
+		recent = append(recent, mapChannelMonitorRecordBrief(record))
+	}
+	var latest *channelMonitorRecordBrief
+	if len(recent) > 0 {
+		latest = &recent[0]
+	}
+	return adminChannelMonitorResponse{
+		ID:                     monitor.ID,
+		ModelName:              monitor.ModelName,
+		APIURL:                 monitor.APIURL,
+		MonitorIntervalSeconds: service.NormalizeChannelMonitorInterval(monitor.MonitorIntervalSeconds),
+		Enabled:                monitor.Enabled,
+		LatestRecord:           latest,
+		RecentRecords:          recent,
+		CreatedAt:              monitor.CreatedAt,
+		UpdatedAt:              monitor.UpdatedAt,
+	}
+}
+
+func mapChannelMonitorRecordBrief(record model.ChannelMonitorRecord) channelMonitorRecordBrief {
+	return channelMonitorRecordBrief{
+		ID:           record.ID,
+		Status:       record.Status,
+		LatencyMs:    record.LatencyMs,
+		StatusCode:   record.StatusCode,
+		ErrorMessage: record.ErrorMessage,
+		CheckedAt:    record.CheckedAt,
+	}
+}
+
 func (a *AdminController) UpstreamChannels(c *gin.Context) {
 	query := a.db.Model(&model.UpstreamChannel{})
 	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
@@ -1837,6 +1900,104 @@ func (a *AdminController) PollingPools(c *gin.Context) {
 		Total:    total,
 		Page:     page,
 		PageSize: pageSize,
+	})
+}
+
+func (a *AdminController) ChannelMonitors(c *gin.Context) {
+	query := a.db.Model(&model.ChannelMonitor{})
+	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("model_name LIKE ? OR api_url LIKE ? OR CAST(id AS CHAR) LIKE ?", like, like, like)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("enabled = ?", status == "enabled")
+	}
+	page, pageSize := parsePageParams(c, 10)
+	var total int64
+	query.Count(&total)
+	var monitors []model.ChannelMonitor
+	applyPagination(query, page, pageSize).Order("id desc").Find(&monitors)
+	items := make([]adminChannelMonitorResponse, 0, len(monitors))
+	for _, monitor := range monitors {
+		items = append(items, a.mapAdminChannelMonitor(monitor))
+	}
+	response.OK(c, paginatedResponse{
+		Items:    items,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
+}
+
+func (a *AdminController) CreateChannelMonitor(c *gin.Context) {
+	var req channelMonitorRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	monitor := model.ChannelMonitor{
+		ModelName:              strings.TrimSpace(req.ModelName),
+		APIURL:                 strings.TrimSpace(req.APIURL),
+		MonitorIntervalSeconds: service.NormalizeChannelMonitorInterval(req.MonitorIntervalSeconds),
+		Enabled:                req.Enabled,
+	}
+	if err := a.db.Create(&monitor).Error; err != nil {
+		response.Error(c, 500, "failed to create channel monitor")
+		return
+	}
+	response.Created(c, a.mapAdminChannelMonitor(monitor))
+}
+
+func (a *AdminController) UpdateChannelMonitor(c *gin.Context) {
+	var req channelMonitorRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	updates := map[string]interface{}{
+		"model_name":               strings.TrimSpace(req.ModelName),
+		"api_url":                  strings.TrimSpace(req.APIURL),
+		"monitor_interval_seconds": service.NormalizeChannelMonitorInterval(req.MonitorIntervalSeconds),
+		"enabled":                  req.Enabled,
+	}
+	if err := a.db.Model(&model.ChannelMonitor{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
+		response.Error(c, 500, "failed to update channel monitor")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) DeleteChannelMonitor(c *gin.Context) {
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("channel_monitor_id = ?", c.Param("id")).Delete(&model.ChannelMonitorRecord{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.ChannelMonitor{}, c.Param("id")).Error
+	}); err != nil {
+		response.Error(c, 500, "failed to delete channel monitor")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) PingChannelMonitor(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		response.Error(c, 400, "invalid channel monitor")
+		return
+	}
+	record, err := service.RunChannelMonitorNow(a.db, uint(id))
+	if err != nil {
+		response.Error(c, 500, "failed to ping channel monitor")
+		return
+	}
+	response.OK(c, channelMonitorRecordBrief{
+		ID:           record.ID,
+		Status:       record.Status,
+		LatencyMs:    record.LatencyMs,
+		StatusCode:   record.StatusCode,
+		ErrorMessage: record.ErrorMessage,
+		CheckedAt:    record.CheckedAt,
 	})
 }
 

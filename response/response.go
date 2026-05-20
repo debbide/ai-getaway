@@ -114,6 +114,8 @@ func localizeValidationMessage(message string) string {
 		"Password":    "密码",
 		"Name":        "名称",
 		"BaseURL":     "API 地址",
+		"APIURL":      "API 地址",
+		"ModelName":   "模型名称",
 		"Title":       "标题",
 		"Slug":        "Slug",
 		"Content":     "内容",

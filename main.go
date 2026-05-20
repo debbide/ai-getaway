@@ -6,6 +6,7 @@ import (
 	"ai-gateway/config"
 	"ai-gateway/database"
 	"ai-gateway/router"
+	"ai-gateway/service"
 )
 
 func main() {
@@ -23,6 +24,7 @@ func main() {
 	database.StartSlideCaptchaCleanup(db)
 	database.StartOrderTimeoutCleanup(db)
 	database.StartSubscriptionExpireEmailReminder(db)
+	service.StartChannelMonitorRunner(db)
 
 	r := router.New(cfg, db, redisClient)
 	if err := r.Run(":" + cfg.AppPort); err != nil {

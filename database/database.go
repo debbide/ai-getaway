@@ -49,6 +49,8 @@ func AutoMigrate(db *gorm.DB) {
 		&model.PublicChannel{},
 		&model.PollingPool{},
 		&model.PollingPoolAccount{},
+		&model.ChannelMonitor{},
+		&model.ChannelMonitorRecord{},
 		&model.DocPage{},
 		&model.Announcement{},
 		&model.APIKey{},

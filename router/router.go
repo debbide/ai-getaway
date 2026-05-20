@@ -33,6 +33,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 	usageController := controller.NewUsageController(db)
 	announcementController := controller.NewAnnouncementController(db)
 	docsController := controller.NewDocsController(db)
+	channelStatusController := controller.NewChannelStatusController(db)
 	logHub := service.NewLogHub()
 
 	r.GET("/health", func(c *gin.Context) {
@@ -53,6 +54,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 		api.GET("/docs", docsController.PublicList)
 		api.GET("/docs/:slug", docsController.PublicBySlug)
 		api.GET("/announcements", announcementController.PublicList)
+		api.GET("/status/monitors", channelStatusController.PublicList)
 		api.GET("/payment/manual", settingsController.ManualPayment)
 		api.Any("/payment/epay/notify", orderController.EpayNotify)
 
@@ -131,6 +133,11 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			admin.POST("/polling-pools", adminController.CreatePollingPool)
 			admin.PUT("/polling-pools/:id", adminController.UpdatePollingPool)
 			admin.DELETE("/polling-pools/:id", adminController.DeletePollingPool)
+			admin.GET("/channel-monitors", adminController.ChannelMonitors)
+			admin.POST("/channel-monitors", adminController.CreateChannelMonitor)
+			admin.PUT("/channel-monitors/:id", adminController.UpdateChannelMonitor)
+			admin.DELETE("/channel-monitors/:id", adminController.DeleteChannelMonitor)
+			admin.POST("/channel-monitors/:id/ping", adminController.PingChannelMonitor)
 			admin.GET("/keys", adminController.APIKeys)
 			admin.PATCH("/keys/:id", apiKeyController.AdminUpdate)
 			admin.DELETE("/keys/:id", apiKeyController.AdminDelete)

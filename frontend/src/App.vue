@@ -10,12 +10,14 @@ import UsageRecords from './components/UsageRecords.vue'
 import DocsPage from './components/DocsPage.vue'
 import ModelsPage from './components/ModelsPage.vue'
 import FaqPage from './components/FaqPage.vue'
+import StatusPage from './components/StatusPage.vue'
 
 const defaultNavigation = [
   { label: '首页', path: '/' },
   { label: '教程', path: '/docs' },
   { label: '定价', path: '/plans' },
   { label: '模型', path: '/models' },
+  { label: '渠道监控', path: '/status' },
   { label: '常见问题', path: '/faq' }
 ]
 
@@ -89,6 +91,7 @@ const isAdminPage = computed(() => currentPath.value === '/admin')
 const isUsageRecordsPage = computed(() => currentPath.value === '/usage-records')
 const isPlansPage = computed(() => currentPath.value === '/plans')
 const isModelsPage = computed(() => currentPath.value === '/models')
+const isStatusPage = computed(() => currentPath.value === '/status')
 const isDocsPage = computed(() => currentPath.value === '/docs' || currentPath.value.startsWith('/docs/'))
 const isFaqPage = computed(() => currentPath.value === '/faq')
 const navItems = computed(() => parseNavigation(publicSettings.value.navigation_items))
@@ -1068,6 +1071,8 @@ function planSubtitle(index) {
     <DocsPage v-if="isDocsPage" :key="currentPath" />
 
     <ModelsPage v-else-if="isModelsPage" :key="currentPath" @navigate="navigate" @start="afterPrimaryAction" />
+
+    <StatusPage v-else-if="isStatusPage" :key="currentPath" />
 
     <FaqPage v-else-if="isFaqPage" :key="currentPath" @navigate="navigate" @start="afterPrimaryAction" />
 

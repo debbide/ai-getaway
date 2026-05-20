@@ -1026,7 +1026,7 @@ function statusLabel(value) {
                   >
                     <span class="quota-progress-fill"></span>
                   </div>
-                  <div class="quota-meter-foot quota-meter-foot--range text-muted">
+                  <div v-if="currentPlanIsPublic" class="quota-meter-foot quota-meter-foot--range text-muted">
                     <span>套餐总周期</span>
                     <strong>{{ formatDateTime(totalQuotaUsage.window_start) }} - {{ formatDateTime(totalQuotaUsage.window_end) }}</strong>
                   </div>

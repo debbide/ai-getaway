@@ -58,6 +58,10 @@ const (
 
 	OAuthProviderGitHub = "github"
 	OAuthProviderGoogle = "google"
+
+	ChannelMonitorStatusAvailable   = "available"
+	ChannelMonitorStatusDegraded    = "degraded"
+	ChannelMonitorStatusUnavailable = "unavailable"
 )
 
 type User struct {
@@ -217,6 +221,25 @@ type PollingPoolAccount struct {
 	Enabled           bool   `gorm:"default:true;index"`
 	SortOrder         int    `gorm:"default:0;index"`
 	LastUsedAt        *time.Time
+}
+
+type ChannelMonitor struct {
+	gorm.Model
+	ModelName              string `gorm:"size:128;index;not null"`
+	APIURL                 string `gorm:"size:512;not null" json:"-"`
+	MonitorIntervalSeconds int    `gorm:"default:300"`
+	Enabled                bool   `gorm:"default:true;index"`
+}
+
+type ChannelMonitorRecord struct {
+	gorm.Model
+	ChannelMonitorID uint `gorm:"index;not null"`
+	ChannelMonitor   ChannelMonitor
+	Status           string    `gorm:"size:32;index;not null"`
+	LatencyMs        int64     `gorm:"default:0"`
+	StatusCode       int       `gorm:"default:0"`
+	ErrorMessage     string    `gorm:"size:512"`
+	CheckedAt        time.Time `gorm:"index;not null"`
 }
 
 type DocPage struct {

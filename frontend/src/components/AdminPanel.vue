@@ -126,6 +126,7 @@ const modelSource = ref('')
 const channels = ref([])
 const publicChannels = ref([])
 const pollingPools = ref([])
+const channelMonitors = ref([])
 const docs = ref([])
 const announcements = ref([])
 const emailTemplates = ref([])
@@ -149,6 +150,7 @@ const modelForm = reactive(emptyModel())
 const channelForm = reactive(emptyChannel())
 const publicChannelForm = reactive(emptyPublicChannel())
 const pollingPoolForm = reactive(emptyPollingPool())
+const channelMonitorForm = reactive(emptyChannelMonitor())
 const userForm = reactive(emptyUser())
 const apiKeyForm = reactive(emptyApiKey())
 const docForm = reactive(emptyDoc())
@@ -161,6 +163,7 @@ const orderSearch = reactive({ keyword: '', status: '', planId: '', paymentMetho
 const channelSearch = reactive({ keyword: '', status: '' })
 const publicChannelSearch = reactive({ keyword: '', status: '' })
 const pollingPoolSearch = reactive({ keyword: '', status: '' })
+const channelMonitorSearch = reactive({ keyword: '', status: '' })
 const apiKeySearch = reactive({ keyword: '', status: '' })
 const usageSearch = reactive({ userKeyword: '', apiKeyKeyword: '', range: '7d' })
 const announcementSearch = reactive({ keyword: '', status: '' })
@@ -173,6 +176,7 @@ const pagination = reactive({
   upstreamChannels: { page: 1, pageSize: 10 },
   publicChannels: { page: 1, pageSize: 10 },
   pollingPools: { page: 1, pageSize: 10 },
+  channelMonitors: { page: 1, pageSize: 10 },
   users: { page: 1, pageSize: 10 },
   apiKeys: { page: 1, pageSize: 10 },
   usageRecords: { page: 1, pageSize: 20 },
@@ -186,6 +190,7 @@ const listTotals = reactive({
   upstreamChannels: 0,
   publicChannels: 0,
   pollingPools: 0,
+  channelMonitors: 0,
   users: 0,
   usageRecords: 0,
   announcements: 0,
@@ -249,6 +254,7 @@ const approvedUsers = computed(() => stats.value.approved_users ?? users.value.f
 const enabledChannels = computed(() => channels.value.filter((channel) => channel.Enabled).length)
 const enabledPublicChannels = computed(() => publicChannels.value.filter((channel) => channel.Enabled).length)
 const enabledPollingPools = computed(() => pollingPools.value.filter((pool) => pool.Enabled).length)
+const enabledChannelMonitors = computed(() => channelMonitors.value.filter((monitor) => monitor.Enabled).length)
 const enabledDocs = computed(() => docs.value.filter((doc) => doc.Enabled).length)
 const enabledAnnouncements = computed(() => announcements.value.filter((item) => item.Enabled).length)
 const enabledEmailTemplates = computed(() => emailTemplates.value.filter((item) => item.Enabled).length)
@@ -284,6 +290,7 @@ const pagedDocs = computed(() => docs.value)
 const pagedUpstreamChannels = computed(() => channels.value)
 const pagedPublicChannels = computed(() => publicChannels.value)
 const pagedPollingPools = computed(() => pollingPools.value)
+const pagedChannelMonitors = computed(() => channelMonitors.value)
 
 function responseData(result, fallback) {
   return result.status === 'fulfilled' ? result.value.data : fallback
@@ -329,6 +336,7 @@ watch(() => [orderSearch.keyword, orderSearch.status, orderSearch.planId, orderS
 watch(() => [channelSearch.keyword, channelSearch.status], () => scheduleFilterRefresh('upstreamChannels'))
 watch(() => [publicChannelSearch.keyword, publicChannelSearch.status], () => scheduleFilterRefresh('publicChannels'))
 watch(() => [pollingPoolSearch.keyword, pollingPoolSearch.status], () => scheduleFilterRefresh('pollingPools'))
+watch(() => [channelMonitorSearch.keyword, channelMonitorSearch.status], () => scheduleFilterRefresh('channelMonitors'))
 watch(() => [usageSearch.userKeyword, usageSearch.apiKeyKeyword, usageSearch.range], () => scheduleFilterRefresh('usageRecords'))
 watch(() => [announcementSearch.keyword, announcementSearch.status], () => scheduleFilterRefresh('announcements'))
 watch(() => [docSearch.keyword, docSearch.groupName, docSearch.status], () => scheduleFilterRefresh('docs'))
@@ -457,6 +465,16 @@ function emptyPublicChannel() {
   }
 }
 
+function emptyChannelMonitor() {
+  return {
+    id: null,
+    model_name: '',
+    api_url: '',
+    monitor_interval_minutes: 5,
+    enabled: true
+  }
+}
+
 function emptyModel() {
   return {
     id: null,
@@ -527,6 +545,7 @@ async function loadAll() {
       api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
       api.get('/admin/public-channels', publicChannelFilterParams()),
       api.get('/admin/polling-pools', pollingPoolFilterParams()),
+      api.get('/admin/channel-monitors', channelMonitorFilterParams()),
       api.get('/admin/keys'),
       api.get('/admin/usage/logs', usageRecordFilterParams()),
       api.get('/admin/docs', docFilterParams()),
@@ -534,7 +553,7 @@ async function loadAll() {
       api.get('/admin/email-templates'),
       api.get('/admin/settings')
     ])
-    const [statsRes, ordersRes, usersRes, plansRes, redeemCodesRes, modelsRes, channelsRes, publicChannelsRes, pollingPoolsRes, keysRes, usageRecordsRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = results
+    const [statsRes, ordersRes, usersRes, plansRes, redeemCodesRes, modelsRes, channelsRes, publicChannelsRes, pollingPoolsRes, channelMonitorsRes, keysRes, usageRecordsRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = results
     const modelData = responseData(modelsRes, { items: [], official_source: '' })
     const templateData = responseData(emailTemplatesRes, { items: [], variables: [] })
     stats.value = responseData(statsRes, {})
@@ -547,6 +566,7 @@ async function loadAll() {
     applyListData('upstreamChannels', channels, responseData(channelsRes, { items: [] }))
     applyListData('publicChannels', publicChannels, responseData(publicChannelsRes, { items: [] }))
     applyListData('pollingPools', pollingPools, responseData(pollingPoolsRes, { items: [] }))
+    applyListData('channelMonitors', channelMonitors, responseData(channelMonitorsRes, { items: [] }))
     apiKeys.value = unwrapListData(responseData(keysRes, []))
     applyUsageRecordData(responseData(usageRecordsRes, { items: [] }))
     applyListData('docs', docs, responseData(docsRes, { items: [] }))
@@ -685,14 +705,16 @@ async function loadModelsData() {
 }
 
 async function loadChannelsData() {
-  const [channelsRes, publicChannelsRes, pollingPoolsRes] = await Promise.all([
+  const [channelsRes, publicChannelsRes, pollingPoolsRes, channelMonitorsRes] = await Promise.all([
     api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
     api.get('/admin/public-channels', publicChannelFilterParams()),
-    api.get('/admin/polling-pools', pollingPoolFilterParams())
+    api.get('/admin/polling-pools', pollingPoolFilterParams()),
+    api.get('/admin/channel-monitors', channelMonitorFilterParams())
   ])
   applyListData('upstreamChannels', channels, channelsRes.data || { items: [] })
   applyListData('publicChannels', publicChannels, publicChannelsRes.data || { items: [] })
   applyListData('pollingPools', pollingPools, pollingPoolsRes.data || { items: [] })
+  applyListData('channelMonitors', channelMonitors, channelMonitorsRes.data || { items: [] })
 }
 
 async function loadUsersData() {
@@ -794,6 +816,13 @@ function pollingPoolFilterParams() {
   return listRequestParams('pollingPools', {
     q: pollingPoolSearch.keyword,
     status: pollingPoolSearch.status
+  })
+}
+
+function channelMonitorFilterParams() {
+  return listRequestParams('channelMonitors', {
+    q: channelMonitorSearch.keyword,
+    status: channelMonitorSearch.status
   })
 }
 
@@ -1140,6 +1169,20 @@ function openPollingPoolModal(pool = null) {
   showModal(pool ? 'edit-polling-pool' : 'create-polling-pool', pool ? '编辑轮询号池' : '新增轮询号池', pool ? '保存修改' : '创建轮询号池')
 }
 
+function openChannelMonitorModal(monitor = null) {
+  Object.assign(channelMonitorForm, emptyChannelMonitor())
+  if (monitor) {
+    Object.assign(channelMonitorForm, {
+      id: monitor.ID,
+      model_name: monitor.ModelName || '',
+      api_url: monitor.APIURL || '',
+      monitor_interval_minutes: Math.max(1, Math.round(Number(monitor.MonitorIntervalSeconds || 300) / 60)),
+      enabled: monitor.Enabled !== false
+    })
+  }
+  showModal(monitor ? 'edit-channel-monitor' : 'create-channel-monitor', monitor ? '编辑渠道监控' : '新增渠道监控', monitor ? '保存修改' : '创建监控')
+}
+
 function openDocModal(doc = null) {
   Object.assign(docForm, emptyDoc())
   if (doc) {
@@ -1289,6 +1332,19 @@ async function submitPollingPool() {
   })
 }
 
+async function submitChannelMonitor() {
+  const payload = normalizeChannelMonitor(channelMonitorForm)
+  await runAction(async () => {
+    if (channelMonitorForm.id) {
+      await api.put(`/admin/channel-monitors/${channelMonitorForm.id}`, payload)
+      notice.value = '渠道监控已更新'
+    } else {
+      await api.post('/admin/channel-monitors', payload)
+      notice.value = '渠道监控已创建'
+    }
+  })
+}
+
 function confirmDeleteChannel(channel) {
   showModal('delete-channel', '删除渠道', '确认删除', { channel }, true)
 }
@@ -1320,6 +1376,24 @@ async function deletePollingPool() {
     await api.delete(`/admin/polling-pools/${modal.payload.pool.ID}`)
     notice.value = '轮询号池已删除'
   })
+}
+
+function confirmDeleteChannelMonitor(monitor) {
+  showModal('delete-channel-monitor', '删除渠道监控', '确认删除', { monitor }, true)
+}
+
+async function deleteChannelMonitor() {
+  await runAction(async () => {
+    await api.delete(`/admin/channel-monitors/${modal.payload.monitor.ID}`)
+    notice.value = '渠道监控已删除'
+  })
+}
+
+async function pingChannelMonitor(monitor) {
+  await runAction(async () => {
+    await api.post(`/admin/channel-monitors/${monitor.ID}/ping`)
+    notice.value = '检测已完成'
+  }, false)
 }
 
 function openUserModal(user = null) {
@@ -1918,7 +1992,7 @@ function scheduleFilterRefresh(key) {
 }
 
 function isServerPaginatedKey(key) {
-  return ['plans', 'redeemCodes', 'orders', 'upstreamChannels', 'publicChannels', 'pollingPools', 'users', 'usageRecords', 'announcements', 'docs'].includes(key)
+  return ['plans', 'redeemCodes', 'orders', 'upstreamChannels', 'publicChannels', 'pollingPools', 'channelMonitors', 'users', 'usageRecords', 'announcements', 'docs'].includes(key)
 }
 
 function isListActive(key) {
@@ -1926,6 +2000,7 @@ function isListActive(key) {
   if (key === 'upstreamChannels') return active.value === 'channels' && channelsTab.value === 'upstream'
   if (key === 'publicChannels') return active.value === 'channels' && channelsTab.value === 'public'
   if (key === 'pollingPools') return active.value === 'channels' && channelsTab.value === 'pool'
+  if (key === 'channelMonitors') return active.value === 'channels' && channelsTab.value === 'status'
   return active.value === key
 }
 
@@ -2042,6 +2117,22 @@ function formatDate(value) {
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+function monitorStatusLabel(status) {
+  return {
+    available: '正常',
+    degraded: '波动',
+    unavailable: '不可用'
+  }[status] || '待检测'
+}
+
+function monitorStatusTagType(status) {
+  return {
+    available: 'success',
+    degraded: 'warning',
+    unavailable: 'danger'
+  }[status] || 'info'
+}
+
 function normalizeChannel(channel) {
   return {
     name: channel.name.trim(),
@@ -2050,6 +2141,15 @@ function normalizeChannel(channel) {
     supports_claude: Boolean(channel.supports_claude),
     group_multipliers: groupMultiplierPayload(channel.group_multipliers),
     enabled: Boolean(channel.enabled)
+  }
+}
+
+function normalizeChannelMonitor(monitor) {
+  return {
+    model_name: String(monitor.model_name || '').trim(),
+    api_url: String(monitor.api_url || '').trim(),
+    monitor_interval_seconds: Math.max(1, Number(monitor.monitor_interval_minutes || 5)) * 60,
+    enabled: Boolean(monitor.enabled)
   }
 }
 
@@ -2404,6 +2504,9 @@ function submitModal() {
     'create-polling-pool': submitPollingPool,
     'edit-polling-pool': submitPollingPool,
     'delete-polling-pool': deletePollingPool,
+    'create-channel-monitor': submitChannelMonitor,
+    'edit-channel-monitor': submitChannelMonitor,
+    'delete-channel-monitor': deleteChannelMonitor,
     'create-doc': submitDoc,
     'edit-doc': submitDoc,
     'delete-doc': deleteDoc,
@@ -2900,13 +3003,14 @@ function submitModal() {
             <div>
               <p class="section-kicker">Channels</p>
               <h2>渠道管理</h2>
-              <span>普通渠道 {{ enabledChannels }}/{{ listTotals.upstreamChannels }}，公共渠道 {{ enabledPublicChannels }}/{{ listTotals.publicChannels }}，轮询号池 {{ enabledPollingPools }}/{{ listTotals.pollingPools }}</span>
+              <span>普通渠道 {{ enabledChannels }}/{{ listTotals.upstreamChannels }}，公共渠道 {{ enabledPublicChannels }}/{{ listTotals.publicChannels }}，轮询号池 {{ enabledPollingPools }}/{{ listTotals.pollingPools }}，监控 {{ enabledChannelMonitors }}/{{ listTotals.channelMonitors }}</span>
             </div>
             <div class="toolbar-actions">
               <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
               <el-button v-if="channelsTab === 'upstream'" type="primary" @click="openChannelModal()">新增渠道</el-button>
               <el-button v-else-if="channelsTab === 'public'" type="primary" @click="openPublicChannelModal()">新增公共渠道</el-button>
-              <el-button v-else type="primary" @click="openPollingPoolModal()">新增轮询号池</el-button>
+              <el-button v-else-if="channelsTab === 'pool'" type="primary" @click="openPollingPoolModal()">新增轮询号池</el-button>
+              <el-button v-else type="primary" @click="openChannelMonitorModal()">新增渠道监控</el-button>
             </div>
           </div>
 
@@ -2916,7 +3020,8 @@ function submitModal() {
             :options="[
               { label: '上游渠道', value: 'upstream' },
               { label: '公共渠道', value: 'public' },
-              { label: '轮询号池', value: 'pool' }
+              { label: '轮询号池', value: 'pool' },
+              { label: '渠道状态', value: 'status' }
             ]"
           />
 
@@ -2999,7 +3104,7 @@ function submitModal() {
             </div>
           </section>
 
-          <section v-else class="panel-surface overflow-hidden">
+          <section v-else-if="channelsTab === 'pool'" class="panel-surface overflow-hidden">
             <div class="p-4 border-b border-slate-100">
               <el-form class="form-grid user-filter-grid" label-position="top">
                 <el-form-item label="搜索">
@@ -3034,6 +3139,61 @@ function submitModal() {
                 layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange('pollingPools', $event)"
                 @size-change="handlePageSizeChange('pollingPools', $event)"
+              />
+            </div>
+          </section>
+
+          <section v-else class="panel-surface overflow-hidden">
+            <div class="p-4 border-b border-slate-100">
+              <el-form class="form-grid user-filter-grid" label-position="top">
+                <el-form-item label="搜索">
+                  <el-input v-model="channelMonitorSearch.keyword" clearable placeholder="模型 / API 地址 / ID" @input="resetPager('channelMonitors')" />
+                </el-form-item>
+                <el-form-item label="状态">
+                  <el-select v-model="channelMonitorSearch.status" clearable placeholder="全部" @change="resetPager('channelMonitors')">
+                    <el-option label="全部" value="" />
+                    <el-option label="已启用" value="enabled" />
+                    <el-option label="已停用" value="disabled" />
+                  </el-select>
+                </el-form-item>
+              </el-form>
+            </div>
+            <div class="table-wrap">
+              <el-table :data="pagedChannelMonitors" border>
+                <el-table-column label="模型名称" min-width="170" prop="ModelName" />
+                <el-table-column label="上游 API 地址" min-width="280" prop="APIURL" />
+                <el-table-column label="监控时长" width="120"><template #default="{ row: monitor }">{{ Math.round((monitor.MonitorIntervalSeconds || 300) / 60) }} 分钟</template></el-table-column>
+                <el-table-column label="最近状态" min-width="160">
+                  <template #default="{ row: monitor }">
+                    <div class="monitor-status-cell">
+                      <el-tag :type="monitorStatusTagType(monitor.LatestRecord?.Status)">{{ monitorStatusLabel(monitor.LatestRecord?.Status) }}</el-tag>
+                      <span>{{ monitor.LatestRecord ? `${monitor.LatestRecord.LatencyMs || 0}ms` : '暂无记录' }}</span>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="最近检测" min-width="160"><template #default="{ row: monitor }">{{ formatDate(monitor.LatestRecord?.CheckedAt) }}</template></el-table-column>
+                <el-table-column label="启用" width="100"><template #default="{ row: monitor }"><el-tag :type="monitor.Enabled ? 'success' : 'info'">{{ monitor.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="160" :fixed="isMobileLayout ? false : 'right'">
+                  <template #default="{ row: monitor }">
+                    <div class="table-actions admin-table-actions">
+                      <el-button size="small" :icon="Refresh" aria-label="立即检测" title="立即检测" @click="pingChannelMonitor(monitor)" />
+                      <el-button size="small" :icon="Edit" aria-label="编辑渠道监控" title="编辑渠道监控" @click="openChannelMonitorModal(monitor)" />
+                      <el-button type="danger" size="small" :icon="Delete" aria-label="删除渠道监控" title="删除渠道监控" @click="confirmDeleteChannelMonitor(monitor)" />
+                    </div>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <div class="p-4 flex justify-end">
+              <el-pagination
+                :current-page="pagination.channelMonitors.page"
+                :page-size="pagination.channelMonitors.pageSize"
+                :page-sizes="[10, 20, 50, 100]"
+                :total="listTotals.channelMonitors"
+                background
+                layout="total, sizes, prev, pager, next"
+                @current-change="handlePageChange('channelMonitors', $event)"
+                @size-change="handlePageSizeChange('channelMonitors', $event)"
               />
             </div>
           </section>
@@ -3866,6 +4026,21 @@ function submitModal() {
           <el-form-item class="md:col-span-2" label="启用渠道"><el-switch v-model="channelForm.enabled" /></el-form-item>
         </div>
 
+        <div v-if="modal.type === 'create-channel-monitor' || modal.type === 'edit-channel-monitor'" class="modal-body form-grid">
+          <el-form-item label="模型名称" required><el-input v-model="channelMonitorForm.model_name" placeholder="gpt-5.5" /></el-form-item>
+          <el-form-item label="监控时长（分钟，多久 ping 一次）" required>
+            <el-input-number v-model="channelMonitorForm.monitor_interval_minutes" class="w-full" :min="1" :max="1440" />
+          </el-form-item>
+          <el-form-item class="md:col-span-2" label="上游 API 地址" required>
+            <el-input v-model="channelMonitorForm.api_url" placeholder="https://api.example.com/v1/models" />
+          </el-form-item>
+          <div class="order-flow-note md:col-span-2">
+            <strong>公开页面会隐藏 API 地址</strong>
+            <span>/status 只展示模型名称、状态、延迟和可用率，不会返回或渲染这里填写的上游地址。</span>
+          </div>
+          <el-form-item class="md:col-span-2" label="启用监控"><el-switch v-model="channelMonitorForm.enabled" /></el-form-item>
+        </div>
+
         <div v-if="modal.type === 'create-public-channel' || modal.type === 'edit-public-channel'" class="modal-body form-grid">
           <el-form-item label="渠道名称" required><el-input v-model="publicChannelForm.name" placeholder="公共 OpenAI" /></el-form-item>
           <el-form-item class="md:col-span-2" label="API 地址" required><el-input v-model="publicChannelForm.base_url" placeholder="https://api.openai.com" /></el-form-item>
@@ -4225,6 +4400,11 @@ function submitModal() {
         <div v-if="modal.type === 'delete-polling-pool'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.pool?.Name }}」吗？</strong>
           <p>删除后绑定到该轮询号池的套餐将无法继续售卖，请先确认没有启用中的套餐依赖它。</p>
+        </div>
+
+        <div v-if="modal.type === 'delete-channel-monitor'" class="modal-body confirm-copy">
+          <strong>确定删除「{{ modal.payload?.monitor?.ModelName }}」的渠道监控吗？</strong>
+          <p>删除后该监控项和历史检测记录都会移除，/status 页面将不再展示这个模型。</p>
         </div>
 
         <div v-if="modal.type === 'delete-model'" class="modal-body confirm-copy">
