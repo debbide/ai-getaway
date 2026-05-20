@@ -6,11 +6,13 @@ import {
   Check,
   CircleClose,
   Connection,
+  CopyDocument,
   Cpu,
   CreditCard,
   DataAnalysis,
   Delete,
   Document,
+  Download,
   Edit,
   Finished,
   FullScreen,
@@ -118,6 +120,7 @@ const usageRecords = ref([])
 const usageSummary = ref(null)
 const plans = ref([])
 const redeemCodes = ref([])
+const generatedRedeemCodes = ref([])
 const models = ref([])
 const modelSource = ref('')
 const channels = ref([])
@@ -269,6 +272,8 @@ const filteredApiKeys = computed(() => {
 })
 const pagedPlans = computed(() => plans.value)
 const pagedRedeemCodes = computed(() => redeemCodes.value)
+const generatedRedeemCodeLines = computed(() => generatedRedeemCodes.value.map((item) => item.Code).filter(Boolean))
+const generatedRedeemCodeText = computed(() => generatedRedeemCodeLines.value.join('\n'))
 const pagedOrders = computed(() => orders.value)
 const pagedModels = computed(() => paginateItems(models.value, pagination.models))
 const pagedUsers = computed(() => users.value)
@@ -955,18 +960,60 @@ async function deletePlan() {
 
 function openRedeemCodeModal() {
   Object.assign(redeemCodeForm, emptyRedeemCode())
+  generatedRedeemCodes.value = []
   showModal('create-redeem-code', '生成兑换码', '生成兑换码')
 }
 
 async function submitRedeemCodes() {
+  generatedRedeemCodes.value = []
   await runAction(async () => {
-    await api.post('/admin/redeem-codes', {
+    const res = await api.post('/admin/redeem-codes', {
       plan_id: Number(redeemCodeForm.plan_id || 0),
       count: Number(redeemCodeForm.count || 1),
       note: redeemCodeForm.note.trim()
     })
-    notice.value = '兑换码已生成'
-  })
+    generatedRedeemCodes.value = unwrapListData(res.data, [])
+    notice.value = `已生成 ${generatedRedeemCodes.value.length || Number(redeemCodeForm.count || 1)} 个兑换码`
+  }, false)
+}
+
+async function copyText(text, successMessage = '已复制') {
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success(successMessage)
+    return
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
+      ElMessage.success(successMessage)
+    } catch {
+      ElMessage.error('复制失败，请手动选择复制')
+    } finally {
+      document.body.removeChild(textarea)
+    }
+  }
+}
+
+function exportGeneratedRedeemCodes() {
+  if (!generatedRedeemCodeText.value) return
+  const blob = new Blob([`${generatedRedeemCodeText.value}\n`], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `redeem-codes-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.txt`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+  ElMessage.success('兑换码文本已导出')
 }
 
 function confirmDisableRedeemCode(code) {
@@ -3778,6 +3825,25 @@ function submitModal() {
           <el-form-item class="md:col-span-2" label="备注">
             <el-input v-model="redeemCodeForm.note" maxlength="255" show-word-limit placeholder="例如：客服补偿 / 活动赠送" />
           </el-form-item>
+          <div v-if="generatedRedeemCodes.length" class="redeem-code-delivery md:col-span-2">
+            <div class="redeem-code-delivery-head">
+              <div>
+                <strong>本次生成结果</strong>
+                <span>{{ generatedRedeemCodes.length }} 个兑换码，仅展示当前批次。</span>
+              </div>
+              <div class="redeem-code-delivery-actions">
+                <el-button size="small" :icon="CopyDocument" @click="copyText(generatedRedeemCodeText, '本批兑换码已复制')">批量复制</el-button>
+                <el-button size="small" :icon="Download" @click="exportGeneratedRedeemCodes">导出文本</el-button>
+              </div>
+            </div>
+            <div class="redeem-code-result-list">
+              <div v-for="code in generatedRedeemCodes" :key="code.ID || code.Code" class="redeem-code-result-row">
+                <code>{{ code.Code }}</code>
+                <span>{{ code.Plan?.Name || '-' }}</span>
+                <el-button text size="small" :icon="CopyDocument" @click="copyText(code.Code, '兑换码已复制')">复制</el-button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div v-if="modal.type === 'create-channel' || modal.type === 'edit-channel'" class="modal-body form-grid">

@@ -3594,6 +3594,85 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
   line-height: 1.7;
 }
 
+.redeem-code-delivery {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+  padding: 14px;
+}
+
+.redeem-code-delivery-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.redeem-code-delivery-head strong {
+  display: block;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.redeem-code-delivery-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.redeem-code-delivery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.redeem-code-result-list {
+  display: grid;
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.redeem-code-result-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(100px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  border-top: 1px solid var(--line);
+  padding: 8px 10px;
+}
+
+.redeem-code-result-row:first-child {
+  border-top: 0;
+}
+
+.redeem-code-result-row code {
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.redeem-code-result-row span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .progress-track {
   overflow: hidden;
   height: 8px;
@@ -7653,6 +7732,24 @@ html[data-theme="light"] .faq-solution {
     width: 100%;
   }
 
+  .redeem-code-delivery-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .redeem-code-delivery-actions {
+    justify-content: flex-start;
+  }
+
+  .redeem-code-result-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .redeem-code-result-row span {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
   .site-header-surface {
     background: rgba(7, 11, 20, 0.9);
   }
@@ -8109,6 +8206,10 @@ html[data-theme="dark"] .modal-card {
   border-color: rgba(71, 84, 110, 0.82);
   background: rgba(15, 23, 42, 0.88);
   box-shadow: 0 22px 70px rgba(0, 0, 0, 0.26);
+}
+
+html[data-theme="dark"] .redeem-code-delivery {
+  background: rgba(9, 14, 25, 0.54);
 }
 
 html[data-theme="dark"] .admin-sidebar {
