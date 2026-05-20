@@ -282,6 +282,7 @@ func fillStreamUsage(db *gorm.DB, log *model.APILog, body []byte, groupMultiplie
 }
 
 func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start time.Time, groupMultipliers ...any) {
+	now := time.Now()
 	if log.RequestType == "" {
 		log.RequestType = requestType(log.Path, false)
 	}
@@ -292,7 +293,7 @@ func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start
 		applyBillingResult(log, service.BillUsageWithGroupMultipliers(db, log.ModelName, log.PromptTokens, log.CachedInputTokens, log.CompletionTokens, log.TotalTokens, firstGroupMultipliers(groupMultipliers)))
 	}
 	log.LatencyMs = time.Since(start).Milliseconds()
-	db.Create(log)
+	service.CreateAPILogWithinPlanQuota(db, log, now)
 	hub.Broadcast(service.LogEvent{
 		UserID:     log.UserID,
 		APIKeyID:   log.APIKeyID,
@@ -300,7 +301,7 @@ func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start
 		Path:       log.Path,
 		StatusCode: log.StatusCode,
 		LatencyMs:  log.LatencyMs,
-		CreatedAt:  time.Now(),
+		CreatedAt:  now,
 	})
 }
 

@@ -29,3 +29,63 @@ func TestQuotaUsageWindowKeepsNaturalWindowAfterSubscriptionStart(t *testing.T) 
 		t.Fatalf("start = %s, want %s", start, weekStart)
 	}
 }
+
+func TestQuotaUsagePercentCapsAtPlanLimit(t *testing.T) {
+	if got := capUsedUSDCents(2800, 2000); got != 2000 {
+		t.Fatalf("capUsedUSDCents() = %d, want 2000", got)
+	}
+	if got := capUsedUSDCents(1800, 2000); got != 1800 {
+		t.Fatalf("capUsedUSDCents() = %d, want 1800", got)
+	}
+}
+
+func TestCapAPILogCostCapsSingleRequestOverflow(t *testing.T) {
+	log := model.APILog{
+		APIKeyID:           1,
+		Method:             "POST",
+		Path:               "/v1/chat/completions",
+		StatusCode:         200,
+		EstimatedUSDCents:  900,
+		EstimatedUSDMicros: 9_000_000,
+		InputUSDMicros:     3_000_000,
+		OutputUSDMicros:    6_000_000,
+		BillingSource:      "upstream_cost",
+	}
+
+	capAPILogCost(&log, 100)
+
+	if log.EstimatedUSDCents != 100 {
+		t.Fatalf("EstimatedUSDCents = %d, want 100", log.EstimatedUSDCents)
+	}
+	if log.EstimatedUSDMicros != 1_000_000 {
+		t.Fatalf("EstimatedUSDMicros = %d, want 1000000", log.EstimatedUSDMicros)
+	}
+	if log.BillingSource != "upstream_cost+quota_capped" {
+		t.Fatalf("BillingSource = %q, want upstream_cost+quota_capped", log.BillingSource)
+	}
+	if log.InputUSDMicros+log.CachedInputUSDMicros+log.OutputUSDMicros != log.EstimatedUSDMicros {
+		t.Fatalf("cost parts = %d, want %d", log.InputUSDMicros+log.CachedInputUSDMicros+log.OutputUSDMicros, log.EstimatedUSDMicros)
+	}
+}
+
+func TestCapAPILogCostZeroesAfterQuotaExhausted(t *testing.T) {
+	log := model.APILog{
+		APIKeyID:           1,
+		Method:             "POST",
+		Path:               "/v1/chat/completions",
+		StatusCode:         200,
+		EstimatedUSDCents:  900,
+		EstimatedUSDMicros: 9_000_000,
+		InputUSDMicros:     3_000_000,
+		OutputUSDMicros:    6_000_000,
+	}
+
+	capAPILogCost(&log, 0)
+
+	if log.EstimatedUSDCents != 0 || log.EstimatedUSDMicros != 0 {
+		t.Fatalf("log cost = %d cents/%d micros, want zero", log.EstimatedUSDCents, log.EstimatedUSDMicros)
+	}
+	if log.InputUSDMicros != 0 || log.CachedInputUSDMicros != 0 || log.OutputUSDMicros != 0 {
+		t.Fatalf("cost parts = %d/%d/%d, want zero", log.InputUSDMicros, log.CachedInputUSDMicros, log.OutputUSDMicros)
+	}
+}

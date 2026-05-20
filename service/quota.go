@@ -2,11 +2,13 @@ package service
 
 import (
 	"math"
+	"strings"
 	"time"
 
 	"ai-gateway/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type QuotaUsage struct {
@@ -36,7 +38,7 @@ func PlanQuotaUsageFrom(db *gorm.DB, userID uint, plan *model.Plan, activeFrom *
 	if plan != nil {
 		limit = plan.SettlementUSDCents
 	}
-	used := UsedUSDCentsSince(db, userID, start)
+	used := capUsedUSDCents(UsedUSDCentsSince(db, userID, start), limit)
 	remaining := limit - used
 	if remaining < 0 {
 		remaining = 0
@@ -70,7 +72,7 @@ func PlanTotalQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, start time.
 	}
 
 	limit := PlanTotalLimitUSDCents(plan)
-	used := UsedUSDCentsSince(db, userID, start)
+	used := capUsedUSDCents(UsedUSDCentsSince(db, userID, start), limit)
 	remaining := limit - used
 	if remaining < 0 {
 		remaining = 0
@@ -145,4 +147,102 @@ func UsedUSDCentsSince(db *gorm.DB, userID uint, since time.Time) int64 {
 		Select("COALESCE(SUM(CASE WHEN estimated_usd_micros > 0 THEN CEILING(estimated_usd_micros / 10000) ELSE estimated_usd_cents END), 0)").
 		Scan(&total)
 	return total
+}
+
+func capUsedUSDCents(used int64, limit int64) int64 {
+	if limit > 0 && used > limit {
+		return limit
+	}
+	return used
+}
+
+func CreateAPILogWithinPlanQuota(db *gorm.DB, log *model.APILog, now time.Time) error {
+	if db == nil || log == nil {
+		return nil
+	}
+	if log.CreatedAt.IsZero() {
+		log.CreatedAt = now
+	}
+	if log.UserID == 0 {
+		return db.Create(log).Error
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		var user model.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Preload("Plan").First(&user, log.UserID).Error; err != nil {
+			return err
+		}
+		if HasActiveSubscription(user, now) && user.Plan != nil {
+			startedAt := SubscriptionStartAt(tx, user, now)
+			usage := PlanQuotaUsageFrom(tx, user.ID, user.Plan, startedAt, now)
+			if usage.LimitUSDCents > 0 {
+				capAPILogCost(log, usage.RemainingCents)
+			}
+		}
+		return tx.Create(log).Error
+	})
+}
+
+func capAPILogCost(log *model.APILog, remainingUSDCents int64) {
+	if remainingUSDCents < 0 {
+		remainingUSDCents = 0
+	}
+	remainingMicros := remainingUSDCents * 10_000
+	currentMicros := log.EstimatedUSDMicros
+	if currentMicros <= 0 && log.EstimatedUSDCents > 0 {
+		currentMicros = log.EstimatedUSDCents * 10_000
+	}
+	if currentMicros <= remainingMicros {
+		return
+	}
+
+	scaleUSDMicros(log, remainingMicros, currentMicros)
+	log.EstimatedUSDMicros = remainingMicros
+	log.EstimatedUSDCents = USDmicrosToCents(remainingMicros)
+	if remainingMicros == 0 {
+		log.EstimatedUSDCents = 0
+	}
+	markQuotaCapped(log)
+}
+
+func scaleUSDMicros(log *model.APILog, targetMicros int64, currentMicros int64) {
+	if currentMicros <= 0 {
+		log.InputUSDMicros = 0
+		log.CachedInputUSDMicros = 0
+		log.OutputUSDMicros = 0
+		return
+	}
+	if targetMicros <= 0 {
+		log.InputUSDMicros = 0
+		log.CachedInputUSDMicros = 0
+		log.OutputUSDMicros = 0
+		return
+	}
+
+	log.InputUSDMicros = scalePart(log.InputUSDMicros, targetMicros, currentMicros)
+	log.CachedInputUSDMicros = scalePart(log.CachedInputUSDMicros, targetMicros, currentMicros)
+	used := log.InputUSDMicros + log.CachedInputUSDMicros
+	if used >= targetMicros {
+		log.OutputUSDMicros = 0
+		return
+	}
+	log.OutputUSDMicros = targetMicros - used
+}
+
+func scalePart(value int64, targetMicros int64, currentMicros int64) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return int64(math.Floor(float64(value) * float64(targetMicros) / float64(currentMicros)))
+}
+
+func markQuotaCapped(log *model.APILog) {
+	if log.BillingSource == "" {
+		log.BillingSource = "quota_capped"
+		return
+	}
+	if strings.Contains(log.BillingSource, "quota_capped") {
+		return
+	}
+	log.BillingSource += "+quota_capped"
 }
