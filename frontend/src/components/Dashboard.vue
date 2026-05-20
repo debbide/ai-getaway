@@ -929,32 +929,34 @@ function statusLabel(value) {
                     <strong>{{ endpoint.label }}</strong>
                     <span v-if="endpoint.description">{{ endpoint.description }}</span>
                   </div>
-                  <code>{{ endpoint.url }}</code>
-                  <span
-                    v-if="endpointSpeedState(endpoint.url)?.value || endpointSpeedState(endpoint.url)?.error"
-                    class="endpoint-speed-result"
-                    :class="{ 'endpoint-speed-result--error': endpointSpeedState(endpoint.url)?.error }"
-                  >
-                    {{ endpointSpeedState(endpoint.url)?.value || '\u6d4b\u901f\u5931\u8d25' }}
-                  </span>
+                  <div class="endpoint-url-row">
+                    <code>{{ endpoint.url }}</code>
+                  </div>
+                  <div class="endpoint-speed-row">
+                    <span
+                      v-if="endpointSpeedState(endpoint.url)?.value || endpointSpeedState(endpoint.url)?.error"
+                      class="endpoint-speed-result"
+                      :class="{ 'endpoint-speed-result--error': endpointSpeedState(endpoint.url)?.error }"
+                    >
+                      {{ endpointSpeedState(endpoint.url)?.value || '\u6d4b\u901f\u5931\u8d25' }}
+                    </span>
+                    <button
+                      type="button"
+                      class="endpoint-tool-button endpoint-speed-button"
+                      :class="{ 'is-loading': endpointSpeedState(endpoint.url)?.loading }"
+                      :disabled="endpointSpeedState(endpoint.url)?.loading"
+                      aria-label="Test API endpoint speed"
+                      title="Test API endpoint speed"
+                      @click="testEndpointSpeed(endpoint)"
+                    >
+                      <Stopwatch />
+                      <span>{{ endpointSpeedState(endpoint.url)?.loading ? '\u6d4b\u901f\u4e2d' : '\u6d4b\u901f' }}</span>
+                    </button>
+                  </div>
                 </div>
-                <div class="endpoint-actions">
-                  <button
-                    type="button"
-                    class="endpoint-tool-button endpoint-speed-button"
-                    :class="{ 'is-loading': endpointSpeedState(endpoint.url)?.loading }"
-                    :disabled="endpointSpeedState(endpoint.url)?.loading"
-                    aria-label="Test API endpoint speed"
-                    title="Test API endpoint speed"
-                    @click="testEndpointSpeed(endpoint)"
-                  >
-                    <Stopwatch />
-                    <span>{{ endpointSpeedState(endpoint.url)?.loading ? '\u6d4b\u901f\u4e2d' : '\u6d4b\u901f' }}</span>
-                  </button>
-                  <button type="button" class="endpoint-tool-button endpoint-copy-button" aria-label="复制 API 端点" title="复制 API 端点" @click="copyKey(endpoint.url)">
-                    ⧉
-                  </button>
-                </div>
+                <button type="button" class="endpoint-tool-button endpoint-copy-button" aria-label="复制 API 端点" title="复制 API 端点" @click="copyKey(endpoint.url)">
+                  ⧉
+                </button>
               </article>
             </div>
           </section>
