@@ -56,6 +56,12 @@ const roleOptions = [
   { value: 'admin', label: '管理员' }
 ]
 
+const publicChannelAccessPeriodOptions = [
+  { value: 'daily', label: '按日到期' },
+  { value: 'weekly', label: '按周到期' },
+  { value: 'public', label: '额度用完即止' }
+]
+
 const emailWhitelistOptions = [
   'qq.com',
   'gmail.com',
@@ -398,6 +404,10 @@ function emptyUser() {
     email_verified: true,
     plan_id: '',
     original_plan_id: '',
+    public_channel_id: '',
+    original_public_channel_id: '',
+    public_channel_period: 'public',
+    original_public_channel_period: 'public',
     reset_subscription: false,
     has_upstream: false,
     channel_id: '',
@@ -681,15 +691,17 @@ async function loadChannelsData() {
 }
 
 async function loadUsersData() {
-  const [usersRes, plansRes, channelsRes, keysRes] = await Promise.all([
+  const [usersRes, plansRes, channelsRes, publicChannelsRes, keysRes] = await Promise.all([
     api.get('/admin/users', userFilterParams()),
     api.get('/admin/plans', allPlansParams()),
     api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
+    api.get('/admin/public-channels', publicChannelFilterParams()),
     api.get('/admin/keys')
   ])
   applyListData('users', users, usersRes.data || { items: [] })
   plans.value = unwrapListData(plansRes.data || [])
   applyListData('upstreamChannels', channels, channelsRes.data || { items: [] })
+  applyListData('publicChannels', publicChannels, publicChannelsRes.data || { items: [] })
   apiKeys.value = unwrapListData(keysRes.data || [])
 }
 
@@ -1278,6 +1290,10 @@ function openUserModal(user = null) {
       email_verified: Boolean(user.EmailVerified),
       plan_id: user.PlanID || '',
       original_plan_id: user.PlanID || '',
+      public_channel_id: user.PublicChannelID || '',
+      original_public_channel_id: user.PublicChannelID || '',
+      public_channel_period: user.PublicChannelPeriod || 'public',
+      original_public_channel_period: user.PublicChannelPeriod || 'public',
       reset_subscription: false,
       has_upstream: Boolean(user.Upstream),
       channel_id: channel?.ID || '',
@@ -1297,6 +1313,10 @@ async function submitUser() {
   }
   if (shouldEditUserUpstream(userForm) && (!Number(userForm.channel_id) || !String(userForm.upstream_username || '').trim() || !String(userForm.upstream_password || '').trim() || !String(userForm.api_key || '').trim())) {
     error.value = '编辑上游渠道时，必须填写渠道、上游账号、上游密码和 API Key'
+    return
+  }
+  if (userForm.plan_id && userForm.public_channel_id) {
+    error.value = '绑定套餐和直接绑定公共渠道不能同时选择'
     return
   }
   const payload = normalizeUser(userForm)
@@ -2050,14 +2070,17 @@ function toDateTimeLocal(value) {
 }
 
 function normalizeUser(user) {
+  const publicChannelId = user.public_channel_id === '' || user.public_channel_id === null ? null : Number(user.public_channel_id)
   const payload = {
     username: user.username.trim(),
     email: user.email.trim(),
     role: user.role,
     status: user.status,
     email_verified: Boolean(user.email_verified),
-    plan_id: user.plan_id === '' || user.plan_id === null ? null : Number(user.plan_id),
-    reset_subscription: Boolean(user.reset_subscription || requiresUserUpstreamRebind(user))
+    plan_id: publicChannelId ? null : (user.plan_id === '' || user.plan_id === null ? null : Number(user.plan_id)),
+    public_channel_id: publicChannelId,
+    public_channel_period: user.public_channel_period || 'public',
+    reset_subscription: Boolean(user.reset_subscription || requiresUserUpstreamRebind(user) || requiresPublicChannelReset(user))
   }
   if (shouldEditUserUpstream(user)) {
     payload.channel_id = Number(user.channel_id || 0)
@@ -2080,17 +2103,39 @@ function validateUserForm(user) {
   return ''
 }
 
+function handleUserPlanChange(value) {
+  if (value) userForm.public_channel_id = ''
+}
+
+function handleUserPublicChannelChange(value) {
+  if (value) {
+    userForm.plan_id = ''
+    userForm.channel_id = ''
+    userForm.upstream_username = ''
+    userForm.upstream_password = ''
+    userForm.api_key = ''
+  }
+}
+
 function requiresUserUpstreamRebind(user) {
+  if (user.public_channel_id) return false
   return user.id && String(user.plan_id || '') !== String(user.original_plan_id || '') && String(user.plan_id || '') !== '' && !selectedUserPlanIsPublic(user)
 }
 
 function shouldEditUserUpstream(user) {
-  return Boolean(user.id) && !selectedUserPlanIsPublic(user) && (Boolean(user.has_upstream) || requiresUserUpstreamRebind(user))
+  return Boolean(user.id) && !user.public_channel_id && !selectedUserPlanIsPublic(user) && (Boolean(user.has_upstream) || requiresUserUpstreamRebind(user))
 }
 
 function selectedUserPlanIsPublic(user) {
   const plan = plans.value.find((item) => String(item.ID) === String(user.plan_id || ''))
   return Boolean(plan && (plan.PlanType === 'public' || plan.QuotaPeriod === 'public'))
+}
+
+function requiresPublicChannelReset(user) {
+  return Boolean(user.id && user.public_channel_id && (
+    String(user.public_channel_id || '') !== String(user.original_public_channel_id || '') ||
+    user.public_channel_period !== user.original_public_channel_period
+  ))
 }
 
 function money(cents, currency = '￥') {
@@ -2239,7 +2284,13 @@ function roleLabel(value) {
 }
 
 function planLabel(user) {
-  return user.Plan?.Name || '未订阅'
+  if (user.Plan?.Name) return user.Plan.Name
+  if (user.PublicChannelID) return `公共渠道：${publicChannelNameById(user.PublicChannelID, user.PublicChannel)}`
+  return '未订阅'
+}
+
+function publicChannelNameById(id, fallback = null) {
+  return fallback?.Name || publicChannels.value.find((channel) => String(channel.ID) === String(id))?.Name || '未命名'
 }
 
 function userQuotaUsage(user) {
@@ -3008,7 +3059,7 @@ function submitModal() {
                       </div>
                       <div class="quota-progress-foot">
                         <span>{{ userQuotaPeriodText(user) }}</span>
-                        <span>{{ user.Plan?.QuotaPeriod === 'public' ? '总额度' : '套餐总额度' }}</span>
+                        <span>{{ user.PublicChannelID && !user.PlanID ? '公共渠道余额' : (user.Plan?.QuotaPeriod === 'public' ? '总额度' : '套餐总额度') }}</span>
                       </div>
                     </div>
                     <span v-else class="text-muted">未订阅</span>
@@ -3941,12 +3992,23 @@ function submitModal() {
             </el-select>
           </el-form-item>
           <el-form-item label="绑定套餐">
-            <el-select v-model="userForm.plan_id">
+            <el-select v-model="userForm.plan_id" @change="handleUserPlanChange">
               <el-option value="" label="不分配" />
               <el-option v-for="plan in plans" :key="plan.ID" :value="plan.ID" :label="plan.Name" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="userForm.id && userForm.plan_id" label="重新开通套餐周期">
+          <el-form-item label="直接绑定公共渠道">
+            <el-select v-model="userForm.public_channel_id" clearable filterable placeholder="不绑定" @change="handleUserPublicChannelChange">
+              <el-option value="" label="不绑定" />
+              <el-option v-for="channel in publicChannels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID" :label="`${channel.Name}（剩余 ${usd(channel.RemainingUSDCents)}）`" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="userForm.public_channel_id" label="公共渠道到期方式">
+            <el-select v-model="userForm.public_channel_period">
+              <el-option v-for="option in publicChannelAccessPeriodOptions" :key="option.value" :value="option.value" :label="option.label" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="userForm.id && (userForm.plan_id || userForm.public_channel_id)" label="重新开通周期">
             <el-switch
               v-model="userForm.reset_subscription"
               :disabled="requiresUserUpstreamRebind(userForm)"

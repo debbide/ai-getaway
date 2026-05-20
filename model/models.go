@@ -70,6 +70,9 @@ type User struct {
 	EmailVerified         bool   `gorm:"default:false;index"`
 	PlanID                *uint
 	Plan                  *Plan
+	PublicChannelID       *uint `gorm:"index"`
+	PublicChannel         *PublicChannel
+	PublicChannelPeriod   string `gorm:"size:16;default:'';index"`
 	ExpiresAt             *time.Time
 	SubscriptionStartedAt *time.Time
 }

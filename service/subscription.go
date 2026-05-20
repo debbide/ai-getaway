@@ -24,6 +24,23 @@ func HasActiveSubscription(user model.User, now time.Time) bool {
 	return now.Before(*user.ExpiresAt)
 }
 
+func HasDirectPublicChannelAccess(user model.User, now time.Time) bool {
+	if user.Status != model.UserStatusApproved || user.PublicChannelID == nil {
+		return false
+	}
+	if normalizedDirectPublicPeriod(user.PublicChannelPeriod) == model.QuotaPeriodPublic {
+		return true
+	}
+	if user.ExpiresAt == nil {
+		return false
+	}
+	return now.Before(*user.ExpiresAt)
+}
+
+func HasCallableAccess(user model.User, now time.Time) bool {
+	return HasActiveSubscription(user, now) || HasDirectPublicChannelAccess(user, now)
+}
+
 func SubscriptionStartAt(db *gorm.DB, user model.User, now time.Time) *time.Time {
 	if user.SubscriptionStartedAt != nil {
 		return user.SubscriptionStartedAt
@@ -43,4 +60,17 @@ func SubscriptionStartAt(db *gorm.DB, user model.User, now time.Time) *time.Time
 		return &fallbackStartedAt
 	}
 	return nil
+}
+
+func DirectPublicChannelPeriod(value string) string {
+	return normalizedDirectPublicPeriod(value)
+}
+
+func normalizedDirectPublicPeriod(value string) string {
+	switch value {
+	case model.QuotaPeriodDaily, model.QuotaPeriodWeekly:
+		return value
+	default:
+		return model.QuotaPeriodPublic
+	}
 }

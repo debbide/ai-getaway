@@ -35,6 +35,17 @@ func UserPlanQuotaUsage(db *gorm.DB, user model.User, now time.Time) (QuotaUsage
 	return PlanQuotaUsageFrom(db, user.ID, user.Plan, startedAt, now), true
 }
 
+func UserAccessQuotaUsage(db *gorm.DB, user model.User, now time.Time) (QuotaUsage, bool) {
+	if HasActiveSubscription(user, now) && user.Plan != nil {
+		return UserPlanQuotaUsage(db, user, now)
+	}
+	if !HasDirectPublicChannelAccess(user, now) || user.PublicChannel == nil {
+		return QuotaUsage{}, false
+	}
+	startedAt := SubscriptionStartAt(db, user, now)
+	return DirectPublicChannelQuotaUsageFrom(db, user.ID, user.PublicChannel, user.PublicChannelPeriod, startedAt, now), true
+}
+
 func QuotaAllowsRequest(usage QuotaUsage) bool {
 	if usage.LimitUSDCents <= 0 {
 		return true
@@ -105,6 +116,33 @@ func PlanTotalQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, start time.
 
 	return QuotaUsage{
 		Period:         period,
+		LimitUSDCents:  limit,
+		UsedUSDCents:   used,
+		RemainingCents: remaining,
+		WindowStart:    start,
+		WindowEnd:      end,
+		Percent:        percent,
+	}
+}
+
+func DirectPublicChannelQuotaUsageFrom(db *gorm.DB, userID uint, channel *model.PublicChannel, period string, activeFrom *time.Time, now time.Time) QuotaUsage {
+	normalizedPeriod := DirectPublicChannelPeriod(period)
+	start, end := QuotaUsageWindow(normalizedPeriod, activeFrom, now)
+	used := UsedUSDCentsSince(db, userID, start)
+	remaining := int64(0)
+	if channel != nil && channel.RemainingUSDCents > 0 {
+		remaining = channel.RemainingUSDCents
+	}
+	limit := used + remaining
+	percent := float64(0)
+	if limit > 0 {
+		percent = float64(used) / float64(limit) * 100
+		if percent > 100 {
+			percent = 100
+		}
+	}
+	return QuotaUsage{
+		Period:         normalizedPeriod,
 		LimitUSDCents:  limit,
 		UsedUSDCents:   used,
 		RemainingCents: remaining,
@@ -189,7 +227,7 @@ func CreateAPILogWithinPlanQuota(db *gorm.DB, log *model.APILog, now time.Time) 
 
 	return db.Transaction(func(tx *gorm.DB) error {
 		var user model.User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Preload("Plan").First(&user, log.UserID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Preload("Plan").Preload("PublicChannel").First(&user, log.UserID).Error; err != nil {
 			return err
 		}
 		if HasActiveSubscription(user, now) && user.Plan != nil {
@@ -199,8 +237,38 @@ func CreateAPILogWithinPlanQuota(db *gorm.DB, log *model.APILog, now time.Time) 
 				capAPILogCost(log, usage.RemainingCents)
 			}
 		}
+		if user.PlanID == nil && HasDirectPublicChannelAccess(user, now) && user.PublicChannelID != nil {
+			var channel model.PublicChannel
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&channel, *user.PublicChannelID).Error; err != nil {
+				return err
+			}
+			capAPILogCost(log, channel.RemainingUSDCents)
+			cost := APILogUSDCents(log)
+			if err := tx.Create(log).Error; err != nil {
+				return err
+			}
+			if cost <= 0 {
+				return nil
+			}
+			return tx.Model(&model.PublicChannel{}).
+				Where("id = ? AND remaining_usd_cents >= ?", channel.ID, cost).
+				Update("remaining_usd_cents", gorm.Expr("remaining_usd_cents - ?", cost)).Error
+		}
 		return tx.Create(log).Error
 	})
+}
+
+func APILogUSDCents(log *model.APILog) int64 {
+	if log == nil {
+		return 0
+	}
+	if log.EstimatedUSDMicros > 0 {
+		return USDmicrosToCents(log.EstimatedUSDMicros)
+	}
+	if log.EstimatedUSDCents > 0 {
+		return log.EstimatedUSDCents
+	}
+	return 0
 }
 
 func capAPILogCost(log *model.APILog, remainingUSDCents int64) {

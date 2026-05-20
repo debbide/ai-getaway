@@ -67,19 +67,22 @@ type redeemCodeRequest struct {
 }
 
 type updateUserRequest struct {
-	Username          string `json:"username"`
-	Email             string `json:"email"`
-	Password          string `json:"password"`
-	Role              string `json:"role"`
-	Status            string `json:"status"`
-	EmailVerified     *bool  `json:"email_verified"`
-	PlanID            *uint  `json:"plan_id"`
-	PlanIDPresent     bool   `json:"-"`
-	ResetSubscription bool   `json:"reset_subscription"`
-	ChannelID         uint   `json:"channel_id"`
-	UpstreamUsername  string `json:"upstream_username"`
-	UpstreamPassword  string `json:"upstream_password"`
-	APIKey            string `json:"api_key"`
+	Username            string `json:"username"`
+	Email               string `json:"email"`
+	Password            string `json:"password"`
+	Role                string `json:"role"`
+	Status              string `json:"status"`
+	EmailVerified       *bool  `json:"email_verified"`
+	PlanID              *uint  `json:"plan_id"`
+	PlanIDPresent       bool   `json:"-"`
+	PublicChannelID     *uint  `json:"public_channel_id"`
+	PublicChannelSet    bool   `json:"-"`
+	PublicChannelPeriod string `json:"public_channel_period"`
+	ResetSubscription   bool   `json:"reset_subscription"`
+	ChannelID           uint   `json:"channel_id"`
+	UpstreamUsername    string `json:"upstream_username"`
+	UpstreamPassword    string `json:"upstream_password"`
+	APIKey              string `json:"api_key"`
 }
 
 func (r *updateUserRequest) UnmarshalJSON(data []byte) error {
@@ -92,33 +95,49 @@ func (r *updateUserRequest) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	value, ok := raw["plan_id"]
-	if !ok {
-		return nil
+	if value, ok := raw["plan_id"]; ok {
+		r.PlanIDPresent = true
+		planID, err := nullableUintFromJSON(value)
+		if err != nil {
+			return err
+		}
+		r.PlanID = planID
 	}
-
-	r.PlanIDPresent = true
-	if string(value) == "null" {
-		r.PlanID = nil
-		return nil
+	if value, ok := raw["public_channel_id"]; ok {
+		r.PublicChannelSet = true
+		channelID, err := nullableUintFromJSON(value)
+		if err != nil {
+			return err
+		}
+		r.PublicChannelID = channelID
 	}
-
-	var planID uint
-	if err := json.Unmarshal(value, &planID); err != nil {
-		return err
-	}
-	r.PlanID = &planID
 	return nil
 }
 
+func nullableUintFromJSON(value json.RawMessage) (*uint, error) {
+	if string(value) == "null" {
+		return nil, nil
+	}
+	var id uint
+	if err := json.Unmarshal(value, &id); err != nil {
+		return nil, err
+	}
+	if id == 0 {
+		return nil, nil
+	}
+	return &id, nil
+}
+
 type createUserRequest struct {
-	Username      string `json:"username" binding:"required,min=2,max=64"`
-	Email         string `json:"email" binding:"required,email"`
-	Password      string `json:"password" binding:"required,min=8"`
-	Role          string `json:"role"`
-	Status        string `json:"status"`
-	EmailVerified bool   `json:"email_verified"`
-	PlanID        *uint  `json:"plan_id"`
+	Username            string `json:"username" binding:"required,min=2,max=64"`
+	Email               string `json:"email" binding:"required,email"`
+	Password            string `json:"password" binding:"required,min=8"`
+	Role                string `json:"role"`
+	Status              string `json:"status"`
+	EmailVerified       bool   `json:"email_verified"`
+	PlanID              *uint  `json:"plan_id"`
+	PublicChannelID     *uint  `json:"public_channel_id"`
+	PublicChannelPeriod string `json:"public_channel_period"`
 }
 
 type rejectOrderRequest struct {
@@ -301,7 +320,7 @@ func applyPagination(query *gorm.DB, page, pageSize int) *gorm.DB {
 }
 
 func (a *AdminController) Users(c *gin.Context) {
-	query := a.db.Preload("Plan")
+	query := a.db.Preload("Plan.PublicChannel").Preload("PublicChannel")
 	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
 		like := "%" + keyword + "%"
 		query = query.Where("username LIKE ? OR email LIKE ? OR CAST(id AS CHAR) LIKE ?", like, like, like)
@@ -348,12 +367,13 @@ func (a *AdminController) Users(c *gin.Context) {
 		if upstream, ok := upstreamByUserID[user.ID]; ok {
 			item.Upstream = mapAdminUpstream(upstream)
 		}
-		if user.PlanID != nil && user.Plan != nil {
+		if service.HasCallableAccess(user, now) {
 			subscriptionStartedAt := service.SubscriptionStartAt(a.db, user, now)
 			item.SubscriptionFrom = subscriptionStartedAt
-			quotaUsage := service.PlanQuotaUsageFrom(a.db, user.ID, user.Plan, subscriptionStartedAt, now)
-			item.QuotaUsage = &quotaUsage
-			if subscriptionStartedAt != nil && user.ExpiresAt != nil {
+			if quotaUsage, ok := service.UserAccessQuotaUsage(a.db, user, now); ok {
+				item.QuotaUsage = &quotaUsage
+			}
+			if user.PlanID != nil && user.Plan != nil && subscriptionStartedAt != nil && user.ExpiresAt != nil {
 				totalQuotaUsage := service.PlanTotalQuotaUsage(a.db, user.ID, user.Plan, *subscriptionStartedAt, *user.ExpiresAt)
 				item.TotalQuotaUsage = &totalQuotaUsage
 			}
@@ -402,6 +422,10 @@ func (a *AdminController) CreateUser(c *gin.Context) {
 	if status != model.UserStatusApproved && status != model.UserStatusDisabled {
 		status = model.UserStatusPending
 	}
+	if req.PlanID != nil && req.PublicChannelID != nil {
+		response.Error(c, 400, "plan and direct public channel cannot both be assigned")
+		return
+	}
 
 	user := model.User{
 		Username:      req.Username,
@@ -421,6 +445,20 @@ func (a *AdminController) CreateUser(c *gin.Context) {
 		if plan.PlanType != model.PlanTypePublic || plan.DurationDays > 0 {
 			expiresAt := time.Now().AddDate(0, 0, fallbackDurationDays(planRequest{PlanType: plan.PlanType, DurationDays: plan.DurationDays}))
 			user.ExpiresAt = &expiresAt
+		}
+	} else if req.PublicChannelID != nil {
+		var channel model.PublicChannel
+		if err := a.db.Where("id = ? AND enabled = ?", *req.PublicChannelID, true).First(&channel).Error; err != nil {
+			response.Error(c, 404, "public channel not found")
+			return
+		}
+		now := time.Now()
+		period := service.DirectPublicChannelPeriod(req.PublicChannelPeriod)
+		user.PublicChannelID = req.PublicChannelID
+		user.PublicChannelPeriod = period
+		user.SubscriptionStartedAt = &now
+		if expiresAt := directPublicChannelExpiresAt(period, now); expiresAt != nil {
+			user.ExpiresAt = expiresAt
 		}
 	}
 	if err := a.db.Create(&user).Error; err != nil {
@@ -476,14 +514,20 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 		updates["email_verified"] = *req.EmailVerified
 	}
 	now := time.Now()
+	if req.PlanIDPresent && req.PlanID != nil && req.PublicChannelSet && req.PublicChannelID != nil {
+		response.Error(c, 400, "plan and direct public channel cannot both be assigned")
+		return
+	}
 	planChanged := req.PlanIDPresent && !sameUintPointer(user.PlanID, req.PlanID)
 	shouldResetSubscription := req.ResetSubscription || planChanged
 	var selectedPlan *model.Plan
 	if req.PlanIDPresent {
 		if req.PlanID == nil {
 			updates["plan_id"] = nil
-			updates["expires_at"] = nil
-			updates["subscription_started_at"] = nil
+			if !req.PublicChannelSet || req.PublicChannelID == nil {
+				updates["expires_at"] = nil
+				updates["subscription_started_at"] = nil
+			}
 		} else {
 			var plan model.Plan
 			if err := a.db.First(&plan, *req.PlanID).Error; err != nil {
@@ -492,6 +536,8 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 			}
 			selectedPlan = &plan
 			updates["plan_id"] = plan.ID
+			updates["public_channel_id"] = nil
+			updates["public_channel_period"] = ""
 			if shouldResetSubscription {
 				startedAt := now
 				updates["subscription_started_at"] = &startedAt
@@ -500,6 +546,37 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 				} else {
 					expiresAt := now.AddDate(0, 0, fallbackDurationDays(planRequest{PlanType: plan.PlanType, DurationDays: plan.DurationDays}))
 					updates["expires_at"] = &expiresAt
+				}
+			}
+		}
+	}
+	publicChannelChanged := req.PublicChannelSet && !sameUintPointer(user.PublicChannelID, req.PublicChannelID)
+	if req.PublicChannelSet {
+		if req.PublicChannelID == nil {
+			updates["public_channel_id"] = nil
+			updates["public_channel_period"] = ""
+			if !req.PlanIDPresent || req.PlanID == nil {
+				updates["expires_at"] = nil
+				updates["subscription_started_at"] = nil
+			}
+		} else {
+			var channel model.PublicChannel
+			if err := a.db.Where("id = ? AND enabled = ?", *req.PublicChannelID, true).First(&channel).Error; err != nil {
+				response.Error(c, 404, "public channel not found")
+				return
+			}
+			period := service.DirectPublicChannelPeriod(req.PublicChannelPeriod)
+			periodChanged := period != service.DirectPublicChannelPeriod(user.PublicChannelPeriod)
+			updates["plan_id"] = nil
+			updates["public_channel_id"] = channel.ID
+			updates["public_channel_period"] = period
+			if req.ResetSubscription || publicChannelChanged || periodChanged || user.SubscriptionStartedAt == nil || (period != model.QuotaPeriodPublic && (user.ExpiresAt == nil || !user.ExpiresAt.After(now))) {
+				startedAt := now
+				updates["subscription_started_at"] = &startedAt
+				if expiresAt := directPublicChannelExpiresAt(period, now); expiresAt != nil {
+					updates["expires_at"] = expiresAt
+				} else {
+					updates["expires_at"] = nil
 				}
 			}
 		}
@@ -1323,17 +1400,37 @@ func (a *AdminController) syncUserAccessState(user *model.User, updates map[stri
 		}
 	}
 
+	var publicChannelID *uint
+	publicChannelID = user.PublicChannelID
+	if value, ok := updates["public_channel_id"]; ok {
+		switch typed := value.(type) {
+		case nil:
+			publicChannelID = nil
+		case uint:
+			publicChannelID = &typed
+		}
+	}
+	publicPeriod := user.PublicChannelPeriod
+	if value, ok := updates["public_channel_period"].(string); ok {
+		publicPeriod = value
+	}
+
 	planChanged := !sameUintPointer(user.PlanID, planID)
-	active := status == model.UserStatusApproved && planID != nil && expiresAt != nil && time.Now().Before(*expiresAt)
-	if active && !planChanged {
+	publicChannelChanged := !sameUintPointer(user.PublicChannelID, publicChannelID)
+	now := time.Now()
+	planActive := status == model.UserStatusApproved && planID != nil && (expiresAt == nil || now.Before(*expiresAt))
+	publicActive := status == model.UserStatusApproved && publicChannelID != nil && (service.DirectPublicChannelPeriod(publicPeriod) == model.QuotaPeriodPublic || (expiresAt != nil && now.Before(*expiresAt)))
+	if (planActive || publicActive) && !planChanged && !publicChannelChanged {
 		return nil
 	}
 
 	return a.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.APIKey{}).
-			Where("user_id = ?", user.ID).
-			Update("status", model.APIKeyStatusDisabled).Error; err != nil {
-			return err
+		if !planActive && !publicActive {
+			if err := tx.Model(&model.APIKey{}).
+				Where("user_id = ?", user.ID).
+				Update("status", model.APIKeyStatusDisabled).Error; err != nil {
+				return err
+			}
 		}
 		return tx.Model(&model.UpstreamAccount{}).
 			Where("user_id = ?", user.ID).
@@ -1346,6 +1443,19 @@ func sameUintPointer(left, right *uint) bool {
 		return left == nil && right == nil
 	}
 	return *left == *right
+}
+
+func directPublicChannelExpiresAt(period string, now time.Time) *time.Time {
+	switch service.DirectPublicChannelPeriod(period) {
+	case model.QuotaPeriodDaily:
+		expiresAt := now.AddDate(0, 0, 1)
+		return &expiresAt
+	case model.QuotaPeriodWeekly:
+		expiresAt := now.AddDate(0, 0, 7)
+		return &expiresAt
+	default:
+		return nil
+	}
 }
 
 func fallbackPlanType(value string) string {

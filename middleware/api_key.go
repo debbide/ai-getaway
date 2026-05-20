@@ -29,7 +29,7 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 		}
 
 		var apiKey model.APIKey
-		if err := db.Preload("User").Preload("User.Plan.PublicChannel").Preload("User.Plan.PollingPool.Accounts").Where("key_hash = ? AND status = ?", utils.HashToken(token), model.APIKeyStatusActive).First(&apiKey).Error; err != nil {
+		if err := db.Preload("User.PublicChannel").Preload("User.Plan.PublicChannel").Preload("User.Plan.PollingPool.Accounts").Where("key_hash = ? AND status = ?", utils.HashToken(token), model.APIKeyStatusActive).First(&apiKey).Error; err != nil {
 			response.Error(c, 401, "invalid api key")
 			c.Abort()
 			return
@@ -44,7 +44,7 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		if !service.HasActiveSubscription(apiKey.User, time.Now()) || apiKey.User.Plan == nil {
+		if !service.HasCallableAccess(apiKey.User, time.Now()) {
 			response.Error(c, 403, "no active subscription assigned")
 			c.Abort()
 			return
@@ -68,7 +68,22 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 
 		c.Set("api_key", apiKey)
 		c.Set("protocol", protocol)
-		if apiKey.User.Plan != nil && apiKey.User.Plan.PlanType == model.PlanTypePublic {
+		if service.HasDirectPublicChannelAccess(apiKey.User, now) && apiKey.User.PlanID == nil {
+			if apiKey.User.PublicChannelID == nil {
+				response.Error(c, 403, "public channel sold out")
+				c.Abort()
+				return
+			}
+			var publicChannel model.PublicChannel
+			if db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *apiKey.User.PublicChannelID, true).First(&publicChannel).Error != nil ||
+				!service.SupportsProtocol(publicChannel.SupportsGPT, publicChannel.SupportsClaude, protocol) {
+				response.Error(c, 403, "public channel sold out")
+				c.Abort()
+				return
+			}
+			db.Model(&publicChannel).Updates(map[string]interface{}{"last_used_at": &now})
+			c.Set("public_channel", publicChannel)
+		} else if apiKey.User.Plan != nil && apiKey.User.Plan.PlanType == model.PlanTypePublic {
 			if !service.PlanChannelSupportsProtocol(apiKey.User.Plan, protocol) {
 				response.Error(c, 403, "protocol not supported by plan")
 				c.Abort()
@@ -153,14 +168,11 @@ func requestProtocol(c *gin.Context) string {
 }
 
 func allowPlanQuota(db *gorm.DB, user model.User) bool {
-	if !service.HasActiveSubscription(user, time.Now()) {
-		return false
-	}
-	if user.Plan == nil {
+	if !service.HasCallableAccess(user, time.Now()) {
 		return false
 	}
 	now := time.Now()
-	usage, ok := service.UserPlanQuotaUsage(db, user, now)
+	usage, ok := service.UserAccessQuotaUsage(db, user, now)
 	if !ok {
 		return false
 	}

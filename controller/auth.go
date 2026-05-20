@@ -176,7 +176,7 @@ func (a *AuthController) Login(c *gin.Context) {
 	}
 
 	var user model.User
-	if err := a.db.Preload("Plan").Where("email = ?", req.Email).First(&user).Error; err != nil {
+	if err := a.db.Preload("Plan").Preload("PublicChannel").Where("email = ?", req.Email).First(&user).Error; err != nil {
 		response.Error(c, 401, "invalid credentials")
 		return
 	}
@@ -208,7 +208,7 @@ func (a *AuthController) Login(c *gin.Context) {
 func (a *AuthController) Me(c *gin.Context) {
 	base := c.MustGet("user").(model.User)
 	var user model.User
-	if err := a.db.Preload("Plan").First(&user, base.ID).Error; err != nil {
+	if err := a.db.Preload("Plan").Preload("PublicChannel").First(&user, base.ID).Error; err != nil {
 		response.Error(c, 404, "user not found")
 		return
 	}
@@ -217,10 +217,14 @@ func (a *AuthController) Me(c *gin.Context) {
 	if subscriptionStartedAt != nil {
 		body["subscription_started_at"] = subscriptionStartedAt
 	}
-	if service.HasActiveSubscription(user, time.Now()) && user.Plan != nil {
-		body["quota_usage"] = service.PlanQuotaUsageFrom(a.db, user.ID, user.Plan, subscriptionStartedAt, time.Now())
+	if service.HasCallableAccess(user, time.Now()) {
+		if usage, ok := service.UserAccessQuotaUsage(a.db, user, time.Now()); ok {
+			body["quota_usage"] = usage
+		}
 		if subscriptionStartedAt != nil && user.ExpiresAt != nil {
-			body["total_quota_usage"] = service.PlanTotalQuotaUsage(a.db, user.ID, user.Plan, *subscriptionStartedAt, *user.ExpiresAt)
+			if user.Plan != nil {
+				body["total_quota_usage"] = service.PlanTotalQuotaUsage(a.db, user.ID, user.Plan, *subscriptionStartedAt, *user.ExpiresAt)
+			}
 		}
 	}
 	body["claimed_free_plan_ids"] = a.claimedFreePlanIDs(user.ID)
@@ -303,6 +307,18 @@ func publicUser(user model.User) gin.H {
 			"price_cents":          user.Plan.PriceCents,
 			"duration_days":        user.Plan.DurationDays,
 			"description":          user.Plan.Description,
+		}
+	} else if service.HasDirectPublicChannelAccess(user, time.Now()) && user.PublicChannel != nil {
+		body["plan"] = gin.H{
+			"id":                   nil,
+			"name":                 "公共渠道授权",
+			"badge_text":           "公共渠道",
+			"plan_type":            model.PlanTypePublic,
+			"settlement_usd_cents": user.PublicChannel.RemainingUSDCents,
+			"quota_period":         service.DirectPublicChannelPeriod(user.PublicChannelPeriod),
+			"price_cents":          0,
+			"duration_days":        0,
+			"description":          user.PublicChannel.Name,
 		}
 	}
 	return body
