@@ -51,7 +51,8 @@ const pagedOrders = computed(() => {
 const hasActiveSubscription = computed(() => {
   const u = auth.user
   if (!u || u.status !== 'approved') return false
-  if (!u.plan?.id) return false
+  if (!u.plan) return false
+  if (isPublicPlan(u.plan) && !u.expires_at) return true
   if (!u.expires_at) return false
   return new Date(u.expires_at) > new Date()
 })
@@ -68,7 +69,8 @@ const planPeriodStartIso = computed(() => {
 })
 
 const quotaUsage = computed(() => auth.user?.quota_usage || null)
-const totalQuotaUsage = computed(() => auth.user?.total_quota_usage || null)
+const totalQuotaUsage = computed(() => auth.user?.total_quota_usage || (isPublicPlan(auth.user?.plan) ? auth.user?.quota_usage : null) || null)
+const publicQuotaUsage = computed(() => totalQuotaUsage.value || quotaUsage.value)
 const quotaUsagePercent = computed(() => {
   const percent = Number(quotaUsage.value?.percent || 0)
   if (!Number.isFinite(percent)) return 0
@@ -82,7 +84,7 @@ const totalQuotaUsagePercent = computed(() => {
 const quotaProgressStyle = computed(() => ({ '--quota-progress': `${quotaUsagePercent.value}%` }))
 const totalQuotaProgressStyle = computed(() => ({ '--quota-progress': `${totalQuotaUsagePercent.value}%` }))
 const currentPlanIsPublic = computed(() => isPublicPlan(auth.user?.plan))
-const currentPublicPlanExhausted = computed(() => currentPlanIsPublic.value && totalQuotaUsage.value && totalQuotaUsage.value.limit_usd_cents > 0 && totalQuotaUsage.value.used_usd_cents >= totalQuotaUsage.value.limit_usd_cents)
+const currentPublicPlanExhausted = computed(() => currentPlanIsPublic.value && publicQuotaUsage.value && publicQuotaUsage.value.limit_usd_cents > 0 && publicQuotaUsage.value.used_usd_cents >= publicQuotaUsage.value.limit_usd_cents)
 const purchaseBlockedByActivePlan = computed(() => hasActiveSubscription.value && !currentPublicPlanExhausted.value)
 const quotaResetText = computed(() => {
   if (!quotaUsage.value?.window_end) return ''
