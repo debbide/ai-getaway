@@ -592,12 +592,8 @@ async function testEndpointSpeed(endpoint) {
   if (!url) return
   endpointSpeedStates[url] = { loading: true, value: '', error: '' }
   try {
-    const res = await fetch(`https://v2.xxapi.cn/api/speed?url=${encodeURIComponent(url)}`)
-    const data = await res.json()
-    if (!res.ok || Number(data?.code) !== 200 || !data?.data) {
-      throw new Error(data?.msg || '测速失败')
-    }
-    endpointSpeedStates[url] = { loading: false, value: String(data.data), error: '' }
+    const res = await api.post('/endpoint-speed', { url })
+    endpointSpeedStates[url] = { loading: false, value: res.data?.result || `${res.data?.latency_ms || 0}ms`, error: '' }
   } catch (err) {
     endpointSpeedStates[url] = { loading: false, value: '', error: err.message || '测速失败' }
     showNotice('测速失败，请稍后重试', 'error')

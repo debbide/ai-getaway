@@ -34,6 +34,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 	announcementController := controller.NewAnnouncementController(db)
 	docsController := controller.NewDocsController(db)
 	channelStatusController := controller.NewChannelStatusController(db)
+	endpointSpeedController := controller.NewEndpointSpeedController(db)
 	logHub := service.NewLogHub()
 
 	r.GET("/health", func(c *gin.Context) {
@@ -68,6 +69,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			authed.POST("/orders", orderController.Create)
 			authed.POST("/redeem-codes/redeem", redeemCodeController.Redeem)
 			authed.GET("/orders", orderController.ListMine)
+			authed.POST("/endpoint-speed", endpointSpeedController.Test)
 			authed.POST("/orders/:id/pay", orderController.Pay)
 			authed.POST("/orders/:id/manual-payment", orderController.SubmitManualPayment)
 			authed.PATCH("/orders/:id/paid", orderController.MarkPaid)
