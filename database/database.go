@@ -100,8 +100,12 @@ func Seed(db *gorm.DB, cfg config.Config) {
 	}
 }
 
-func StartSlideCaptchaCleanup(db *gorm.DB) {
+func StartSlideCaptchaCleanup(cfg config.Config, db *gorm.DB, redisClient *redis.Client) {
 	if db == nil {
+		return
+	}
+	if !cfg.RunBackgroundJobs {
+		log.Printf("slide captcha cleanup disabled by RUN_BACKGROUND_JOBS=false")
 		return
 	}
 	cleanup := func() {
@@ -115,18 +119,22 @@ func StartSlideCaptchaCleanup(db *gorm.DB) {
 		}
 	}
 
-	cleanup()
+	runBackgroundJob(cfg, redisClient, "slide-captcha-cleanup", 10*time.Minute, cleanup)
 	go func() {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
-			cleanup()
+			runBackgroundJob(cfg, redisClient, "slide-captcha-cleanup", 10*time.Minute, cleanup)
 		}
 	}()
 }
 
-func StartOrderTimeoutCleanup(db *gorm.DB) {
+func StartOrderTimeoutCleanup(cfg config.Config, db *gorm.DB, redisClient *redis.Client) {
 	if db == nil {
+		return
+	}
+	if !cfg.RunBackgroundJobs {
+		log.Printf("order timeout cleanup disabled by RUN_BACKGROUND_JOBS=false")
 		return
 	}
 	cleanup := func() {
@@ -147,18 +155,22 @@ func StartOrderTimeoutCleanup(db *gorm.DB) {
 		}
 	}
 
-	cleanup()
+	runBackgroundJob(cfg, redisClient, "order-timeout-cleanup", 2*time.Minute, cleanup)
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			cleanup()
+			runBackgroundJob(cfg, redisClient, "order-timeout-cleanup", 2*time.Minute, cleanup)
 		}
 	}()
 }
 
-func StartSubscriptionExpireEmailReminder(db *gorm.DB) {
+func StartSubscriptionExpireEmailReminder(cfg config.Config, db *gorm.DB, redisClient *redis.Client) {
 	if db == nil {
+		return
+	}
+	if !cfg.RunBackgroundJobs {
+		log.Printf("subscription expire email reminder disabled by RUN_BACKGROUND_JOBS=false")
 		return
 	}
 	remind := func() {
@@ -172,9 +184,13 @@ func StartSubscriptionExpireEmailReminder(db *gorm.DB) {
 		ticker := time.NewTicker(12 * time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
-			remind()
+			runBackgroundJob(cfg, redisClient, "subscription-expire-email-reminder", time.Hour, remind)
 		}
 	}()
+}
+
+func runBackgroundJob(cfg config.Config, redisClient *redis.Client, name string, ttl time.Duration, fn func()) {
+	service.RunWithClusterLock(redisClient, cfg.ClusterMode, name, cfg.InstanceID, ttl, fn)
 }
 
 func dropLegacyQuotaColumns(db *gorm.DB) {

@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"ai-gateway/config"
 	"ai-gateway/model"
 
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -34,19 +36,29 @@ func NormalizeChannelMonitorInterval(seconds int) int {
 	return seconds
 }
 
-func StartChannelMonitorRunner(db *gorm.DB) {
+func StartChannelMonitorRunner(cfg config.Config, db *gorm.DB, redisClient *redis.Client) {
 	if db == nil {
+		return
+	}
+	if !cfg.RunBackgroundJobs {
+		log.Printf("channel monitor runner disabled by RUN_BACKGROUND_JOBS=false")
 		return
 	}
 	go func() {
 		time.Sleep(3 * time.Second)
-		runDueChannelMonitors(db)
+		runChannelMonitorJob(cfg, db, redisClient)
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			runDueChannelMonitors(db)
+			runChannelMonitorJob(cfg, db, redisClient)
 		}
 	}()
+}
+
+func runChannelMonitorJob(cfg config.Config, db *gorm.DB, redisClient *redis.Client) {
+	RunWithClusterLock(redisClient, cfg.ClusterMode, "channel-monitor-runner", cfg.InstanceID, 2*time.Minute, func() {
+		runDueChannelMonitors(db)
+	})
 }
 
 func RunChannelMonitorNow(db *gorm.DB, monitorID uint) (*model.ChannelMonitorRecord, error) {

@@ -1,6 +1,10 @@
 package router
 
 import (
+	"context"
+	"net/http"
+	"time"
+
 	"ai-gateway/config"
 	"ai-gateway/controller"
 	"ai-gateway/middleware"
@@ -40,6 +44,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+	r.GET("/ready", readinessHandler(cfg, db, redisClient))
 
 	api := r.Group("/api")
 	{
@@ -152,6 +157,56 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 	r.Any("/v1/*path", middleware.APIKeyAuth(db, redisClient), upstream.ProxyHandler(db, logHub))
 	r.Any("/messages", middleware.APIKeyAuth(db, redisClient), upstream.ProxyHandler(db, logHub))
 	return r
+}
+
+func readinessHandler(cfg config.Config, db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+
+		checks := gin.H{}
+		ready := true
+
+		sqlDB, err := db.DB()
+		if err != nil {
+			ready = false
+			checks["database"] = err.Error()
+		} else if err := sqlDB.PingContext(ctx); err != nil {
+			ready = false
+			checks["database"] = err.Error()
+		} else {
+			checks["database"] = "ok"
+		}
+
+		if redisClient == nil {
+			if cfg.ClusterMode {
+				ready = false
+				checks["redis"] = "unavailable"
+			} else {
+				checks["redis"] = "not_configured"
+			}
+		} else if err := redisClient.Ping(ctx).Err(); err != nil {
+			if cfg.ClusterMode {
+				ready = false
+			}
+			checks["redis"] = err.Error()
+		} else {
+			checks["redis"] = "ok"
+		}
+
+		status := http.StatusOK
+		bodyStatus := "ready"
+		if !ready {
+			status = http.StatusServiceUnavailable
+			bodyStatus = "not_ready"
+		}
+		c.JSON(status, gin.H{
+			"status":       bodyStatus,
+			"cluster_mode": cfg.ClusterMode,
+			"instance_id":  cfg.InstanceID,
+			"checks":       checks,
+		})
+	}
 }
 
 func cors(cfg config.Config) gin.HandlerFunc {
