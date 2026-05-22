@@ -2162,15 +2162,16 @@ function normalizePublicChannel(channel) {
 }
 
 function normalizeModel(item) {
+  const billingMode = item.billing_mode === 'request' ? 'request' : 'token'
   return {
     model: item.model.trim(),
     display_name: item.display_name.trim(),
     provider: item.provider.trim() || 'openai',
-    input_usd_per_million: Number(item.input_usd_per_million || 0),
-    cached_input_usd_per_million: Number(item.cached_input_usd_per_million || 0),
-    output_usd_per_million: Number(item.output_usd_per_million || 0),
-    billing_mode: item.billing_mode === 'request' ? 'request' : 'token',
-    request_usd: Number(item.request_usd || 0),
+    input_usd_per_million: billingMode === 'request' ? 0 : Number(item.input_usd_per_million || 0),
+    cached_input_usd_per_million: billingMode === 'request' ? 0 : Number(item.cached_input_usd_per_million || 0),
+    output_usd_per_million: billingMode === 'request' ? 0 : Number(item.output_usd_per_million || 0),
+    billing_mode: billingMode,
+    request_usd: billingMode === 'request' ? Number(item.request_usd || 0) : 0,
     billing_multiplier: Number(item.billing_multiplier || 1),
     group_multiplier: Number(item.group_multiplier || 1),
     status: item.status === 'disabled' ? 'disabled' : 'active',
@@ -2184,7 +2185,13 @@ function modelUnit(value) {
 }
 
 function modelActualUnit(item, field) {
+  if (modelBillingMode(item) === 'request') return '-'
   return modelUnit((item[field] || 0) * (item.BillingMultiplier || 1) * (item.GroupMultiplier || 1))
+}
+
+function modelOriginalUnit(item, field) {
+  if (modelBillingMode(item) === 'request') return '-'
+  return modelUnit(item[field])
 }
 
 function modelBillingMode(item) {
@@ -3217,9 +3224,9 @@ function submitModal() {
               <el-table :data="pagedModels" class="model-pricing-table" border>
                 <el-table-column label="模型" min-width="210"><template #default="{ row: item }"><div class="model-cell"><strong>{{ item.ModelName }}</strong><small>{{ item.DisplayName || item.Provider || '-' }}</small></div></template></el-table-column>
                 <el-table-column label="计费方式" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelBillingMode(item) === 'request' ? modelRequestUnit(item) : '按 Token' }}</strong><small>{{ modelBillingMode(item) === 'request' ? '每次调用固定扣费' : '按输入/输出 Token 扣费' }}</small></div></template></el-table-column>
-                <el-table-column label="输入单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'InputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.InputUSDPerMillion) }}</small></div></template></el-table-column>
-                <el-table-column label="缓存读取" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'CachedInputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.CachedInputUSDPerMillion) }}</small></div></template></el-table-column>
-                <el-table-column label="输出单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'OutputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.OutputUSDPerMillion) }}</small></div></template></el-table-column>
+                <el-table-column label="输入单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'InputUSDPerMillion') }}</strong><small>原价 {{ modelOriginalUnit(item, 'InputUSDPerMillion') }}</small></div></template></el-table-column>
+                <el-table-column label="缓存读取" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'CachedInputUSDPerMillion') }}</strong><small>原价 {{ modelOriginalUnit(item, 'CachedInputUSDPerMillion') }}</small></div></template></el-table-column>
+                <el-table-column label="输出单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'OutputUSDPerMillion') }}</strong><small>原价 {{ modelOriginalUnit(item, 'OutputUSDPerMillion') }}</small></div></template></el-table-column>
                 <el-table-column label="扣费倍率" width="100"><template #default="{ row: item }">{{ Number(item.BillingMultiplier || 1).toFixed(2) }}x</template></el-table-column>
                 <el-table-column label="默认分组倍率" width="120"><template #default="{ row: item }">{{ Number(item.GroupMultiplier || 1).toFixed(2) }}x</template></el-table-column>
                 <el-table-column label="展示卡片" width="110"><template #default="{ row: item }"><el-tag :type="item.Featured ? 'success' : 'info'">{{ item.Featured ? '展示' : '不展示' }}</el-tag></template></el-table-column>
@@ -4394,9 +4401,11 @@ function submitModal() {
             </el-select>
           </el-form-item>
           <el-form-item v-if="modelForm.billing_mode === 'request'" label="每次调用价格（美元）"><el-input v-model.number="modelForm.request_usd" type="number" min="0" step="0.000001" /></el-form-item>
-          <el-form-item label="输入单价 / 1M Token"><el-input v-model.number="modelForm.input_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
-          <el-form-item label="缓存读取单价 / 1M Token"><el-input v-model.number="modelForm.cached_input_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
-          <el-form-item label="输出单价 / 1M Token"><el-input v-model.number="modelForm.output_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
+          <template v-else>
+            <el-form-item label="输入单价 / 1M Token"><el-input v-model.number="modelForm.input_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
+            <el-form-item label="缓存读取单价 / 1M Token"><el-input v-model.number="modelForm.cached_input_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
+            <el-form-item label="输出单价 / 1M Token"><el-input v-model.number="modelForm.output_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
+          </template>
           <el-form-item label="扣费倍率"><el-input v-model.number="modelForm.billing_multiplier" type="number" min="0.0001" step="0.01" /></el-form-item>
           <el-form-item label="默认分组倍率"><el-input v-model.number="modelForm.group_multiplier" type="number" min="0.0001" step="0.01" /></el-form-item>
           <el-form-item label="状态">
