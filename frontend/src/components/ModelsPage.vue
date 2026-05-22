@@ -72,11 +72,24 @@ function priceValue(item, key) {
   return Number(item[key] || 0) * multiplier(item)
 }
 
+function billingMode(item) {
+  return (item.BillingMode || item.billing_mode) === 'request' ? 'request' : 'token'
+}
+
+function requestPriceValue(item) {
+  return Number(item.RequestUSD || item.request_usd || 0) * multiplier(item)
+}
+
 function priceText(value) {
   const number = Number(value || 0)
   if (!Number.isFinite(number)) return '$0'
   if (number >= 1) return `$${number.toFixed(number % 1 === 0 ? 0 : 2)}`
   return `$${number.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`
+}
+
+function modelUnitPrice(item, key) {
+  if (billingMode(item) === 'request') return '-'
+  return priceText(priceValue(item, key))
 }
 
 function capabilityTags(item) {
@@ -155,22 +168,22 @@ function selectProvider(provider) {
           <article v-for="item in featuredModels" :key="item.ID" class="model-feature-card">
             <div class="model-card-topline">
               <span>{{ providerName(item) }}</span>
-              <b>{{ multiplier(item).toFixed(2) }}x</b>
+              <b>{{ billingMode(item) === 'request' ? '按次' : `${multiplier(item).toFixed(2)}x` }}</b>
             </div>
             <h2>{{ displayName(item) }}</h2>
             <code>{{ modelName(item) }}</code>
             <div class="model-price-row">
               <div>
-                <span>输入</span>
-                <strong>{{ priceText(priceValue(item, 'InputUSDPerMillion')) }}</strong>
+                <span>{{ billingMode(item) === 'request' ? '每次' : '输入' }}</span>
+                <strong>{{ billingMode(item) === 'request' ? priceText(requestPriceValue(item)) : priceText(priceValue(item, 'InputUSDPerMillion')) }}</strong>
               </div>
               <div>
                 <span>缓存</span>
-                <strong>{{ priceText(priceValue(item, 'CachedInputUSDPerMillion')) }}</strong>
+                <strong>{{ modelUnitPrice(item, 'CachedInputUSDPerMillion') }}</strong>
               </div>
               <div>
                 <span>输出</span>
-                <strong>{{ priceText(priceValue(item, 'OutputUSDPerMillion')) }}</strong>
+                <strong>{{ modelUnitPrice(item, 'OutputUSDPerMillion') }}</strong>
               </div>
             </div>
             <div class="model-tags">
@@ -194,17 +207,20 @@ function selectProvider(provider) {
                 <el-tag type="success">{{ providerName(item) }}</el-tag>
               </template>
             </el-table-column>
+            <el-table-column label="计费" min-width="130">
+              <template #default="{ row: item }">{{ billingMode(item) === 'request' ? `${priceText(requestPriceValue(item))} / 次` : '按 Token' }}</template>
+            </el-table-column>
             <el-table-column label="输入 / 1M" min-width="130">
-              <template #default="{ row: item }">{{ priceText(priceValue(item, 'InputUSDPerMillion')) }}</template>
+              <template #default="{ row: item }">{{ modelUnitPrice(item, 'InputUSDPerMillion') }}</template>
             </el-table-column>
             <el-table-column label="缓存读取 / 1M" min-width="150">
-              <template #default="{ row: item }">{{ priceText(priceValue(item, 'CachedInputUSDPerMillion')) }}</template>
+              <template #default="{ row: item }">{{ modelUnitPrice(item, 'CachedInputUSDPerMillion') }}</template>
             </el-table-column>
             <el-table-column label="输出 / 1M" min-width="130">
-              <template #default="{ row: item }">{{ priceText(priceValue(item, 'OutputUSDPerMillion')) }}</template>
+              <template #default="{ row: item }">{{ modelUnitPrice(item, 'OutputUSDPerMillion') }}</template>
             </el-table-column>
             <el-table-column label="倍率" min-width="100">
-              <template #default="{ row: item }">{{ multiplier(item).toFixed(2) }}x</template>
+              <template #default="{ row: item }">{{ billingMode(item) === 'request' ? '-' : `${multiplier(item).toFixed(2)}x` }}</template>
             </el-table-column>
             <el-table-column label="说明" min-width="220">
               <template #default="{ row: item }">{{ item.Notes || '标准 OpenAI 兼容调用' }}</template>
