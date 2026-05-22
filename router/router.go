@@ -2,7 +2,9 @@ package router
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
+	"strconv"
 	"time"
 
 	"ai-gateway/config"
@@ -39,12 +41,23 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 	docsController := controller.NewDocsController(db)
 	channelStatusController := controller.NewChannelStatusController(db)
 	endpointSpeedController := controller.NewEndpointSpeedController(db)
+	loadBalancerController := controller.NewLoadBalancerController(cfg, redisClient)
 	logHub := service.NewLogHub()
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 	r.GET("/ready", readinessHandler(cfg, db, redisClient))
+	internal := r.Group("/internal/cluster", clusterInternalAuth(cfg))
+	{
+		internal.GET("/info", func(c *gin.Context) {
+			c.JSON(200, gin.H{"code": 0, "message": "ok", "data": service.CurrentClusterNode(cfg)})
+		})
+		internal.GET("/logs", func(c *gin.Context) {
+			limit, _ := strconv.Atoi(c.Query("limit"))
+			c.JSON(200, gin.H{"code": 0, "message": "ok", "data": gin.H{"items": service.RuntimeLogs(limit)}})
+		})
+	}
 
 	api := r.Group("/api")
 	{
@@ -151,12 +164,26 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			admin.GET("/usage/logs", usageController.AdminList)
 			admin.GET("/stats", adminController.Stats)
 			admin.GET("/logs/ws", logHub.Serve)
+			admin.GET("/load-balancer/nodes", loadBalancerController.Nodes)
+			admin.POST("/load-balancer/nodes/:id/ping", loadBalancerController.PingNode)
+			admin.GET("/load-balancer/nodes/:id/logs", loadBalancerController.NodeLogs)
 		}
 	}
 
 	r.Any("/v1/*path", middleware.APIKeyAuth(db, redisClient), upstream.ProxyHandler(db, logHub))
 	r.Any("/messages", middleware.APIKeyAuth(db, redisClient), upstream.ProxyHandler(db, logHub))
 	return r
+}
+
+func clusterInternalAuth(cfg config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := c.GetHeader("X-Cluster-Token")
+		if cfg.ClusterToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(cfg.ClusterToken)) != 1 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 401, "message": "invalid cluster token"})
+			return
+		}
+		c.Next()
+	}
 }
 
 func readinessHandler(cfg config.Config, db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {

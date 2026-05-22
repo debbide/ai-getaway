@@ -33,6 +33,7 @@ import MarkdownEditor from './MarkdownEditor.vue'
 
 const menu = [
   { key: 'overview', label: '总览', hint: '运营数据', icon: DataAnalysis },
+  { key: 'loadBalancer', label: '负载均衡', hint: '节点与日志', icon: ScaleToOriginal },
   { key: 'plans', label: '套餐管理', hint: '价格与额度', icon: CreditCard },
   { key: 'redeemCodes', label: '兑换码管理', hint: '套餐兑换', icon: Finished },
   { key: 'orders', label: '审核管理', hint: '订单开通', icon: ShoppingCart },
@@ -113,6 +114,10 @@ const settingsTab = ref('basic')
 const usersTab = ref('users')
 const channelsTab = ref('upstream')
 const stats = ref({})
+const loadBalancer = ref({ summary: { total: 0, online: 0, warning: 0, offline: 0 }, nodes: [] })
+const selectedClusterNode = ref('')
+const clusterNodeLogs = ref([])
+const clusterLogsLoading = ref(false)
 const orders = ref([])
 const users = ref([])
 const apiKeys = ref([])
@@ -140,6 +145,7 @@ const smtpTesting = ref(false)
 const isMobileLayout = ref(false)
 const filterTimers = {}
 let overviewMetricsTimer = null
+let loadBalancerTimer = null
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null, fullscreen: false })
 const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountRmb: 0, status: '', planType: '', quotaPeriod: '' })
 const rejectForm = reactive({ orderId: '', adminNote: '' })
@@ -242,6 +248,9 @@ const settings = reactive({
 
 const pendingOrders = computed(() => stats.value.pending_orders ?? orders.value.filter((order) => reviewableOrderStatuses.includes(order.Status)).length)
 const currentMenu = computed(() => menu.find((item) => item.key === active.value) || menu[0])
+const clusterNodes = computed(() => Array.isArray(loadBalancer.value.nodes) ? loadBalancer.value.nodes : [])
+const clusterSummary = computed(() => loadBalancer.value.summary || { total: 0, online: 0, warning: 0, offline: 0 })
+const selectedClusterNodeDetail = computed(() => clusterNodes.value.find((node) => node.instance_id === selectedClusterNode.value))
 const modalDialogWidth = computed(() => {
   if (modal.fullscreen) return 'calc(100vw - 32px)'
   if (modal.type === 'create-polling-pool' || modal.type === 'edit-polling-pool') return '980px'
@@ -351,6 +360,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', syncMobileLayout)
   Object.values(filterTimers).forEach((timer) => clearTimeout(timer))
   stopOverviewMetricsPolling()
+  stopLoadBalancerPolling()
 })
 
 watch(active, (value) => {
@@ -358,9 +368,16 @@ watch(active, (value) => {
   if (value === 'overview') {
     refreshOverviewMetrics()
     startOverviewMetricsPolling()
+    stopLoadBalancerPolling()
+    return
+  }
+  if (value === 'loadBalancer') {
+    startLoadBalancerPolling()
+    stopOverviewMetricsPolling()
     return
   }
   stopOverviewMetricsPolling()
+  stopLoadBalancerPolling()
 })
 
 watch(error, (message) => {
@@ -615,6 +632,9 @@ async function loadAdminSection(section) {
     case 'overview':
       await loadOverviewData()
       break
+    case 'loadBalancer':
+      await loadLoadBalancerData()
+      break
     case 'plans':
       await loadPlansData()
       break
@@ -665,6 +685,19 @@ async function loadOverviewData() {
   applyListData('orders', orders, ordersRes.data || { items: [] })
   applyListData('users', users, usersRes.data || { items: [] })
   applyListData('plans', plans, plansRes.data || { items: [] })
+}
+
+async function loadLoadBalancerData() {
+  const res = await api.get('/admin/load-balancer/nodes')
+  loadBalancer.value = res.data || { summary: { total: 0, online: 0, warning: 0, offline: 0 }, nodes: [] }
+  const nodes = clusterNodes.value
+  if (!selectedClusterNode.value && nodes.length) {
+    selectedClusterNode.value = nodes[0].instance_id
+  }
+  if (selectedClusterNode.value && !nodes.some((node) => node.instance_id === selectedClusterNode.value)) {
+    selectedClusterNode.value = nodes[0]?.instance_id || ''
+    clusterNodeLogs.value = []
+  }
 }
 
 async function loadPlansData() {
@@ -916,6 +949,89 @@ function stopOverviewMetricsPolling() {
   if (!overviewMetricsTimer) return
   clearInterval(overviewMetricsTimer)
   overviewMetricsTimer = null
+}
+
+function startLoadBalancerPolling() {
+  if (loadBalancerTimer || active.value !== 'loadBalancer') return
+  loadBalancerTimer = setInterval(async () => {
+    try {
+      await loadLoadBalancerData()
+    } catch (err) {
+      if (!error.value) error.value = err.message
+    }
+  }, 10000)
+}
+
+function stopLoadBalancerPolling() {
+  if (!loadBalancerTimer) return
+  clearInterval(loadBalancerTimer)
+  loadBalancerTimer = null
+}
+
+async function pingClusterNode(node) {
+  if (!node?.instance_id) return
+  try {
+    const res = await api.post(`/admin/load-balancer/nodes/${encodeURIComponent(node.instance_id)}/ping`)
+    const updated = res.data
+    loadBalancer.value.nodes = clusterNodes.value.map((item) => item.instance_id === updated.instance_id ? updated : item)
+    ElMessage.success(`${node.instance_id} 通信检测完成`)
+  } catch (err) {
+    ElMessage.error(err.message)
+  }
+}
+
+async function loadClusterNodeLogs(node = selectedClusterNodeDetail.value) {
+  if (!node?.instance_id) return
+  selectedClusterNode.value = node.instance_id
+  clusterLogsLoading.value = true
+  try {
+    const res = await api.get(`/admin/load-balancer/nodes/${encodeURIComponent(node.instance_id)}/logs`, { params: { limit: 240 } })
+    clusterNodeLogs.value = Array.isArray(res.data?.items) ? res.data.items : []
+  } catch (err) {
+    clusterNodeLogs.value = []
+    ElMessage.error(err.message)
+  } finally {
+    clusterLogsLoading.value = false
+  }
+}
+
+function clusterNodeStatusLabel(status) {
+  return {
+    online: '在线',
+    warning: '异常',
+    offline: '离线'
+  }[status] || '未知'
+}
+
+function clusterNodeStatusType(status) {
+  return {
+    online: 'success',
+    warning: 'warning',
+    offline: 'danger'
+  }[status] || 'info'
+}
+
+function clusterNodeRoleText(node) {
+  const parts = []
+  if (node.is_self) parts.push('当前入口')
+  parts.push(node.run_background_jobs ? '可执行后台任务' : '不执行后台任务')
+  return parts.join(' · ')
+}
+
+function clusterReadyText(node) {
+  const checks = node.checks || {}
+  const items = Object.entries(checks).map(([key, value]) => `${key}:${value}`)
+  if (!items.length) return node.ready_status || '-'
+  return `${node.ready_status || '-'} · ${items.join('，')}`
+}
+
+function clusterLatencyText(node) {
+  if (node.latency_ms === undefined || node.latency_ms === null || node.latency_ms < 0) return '-'
+  return `${node.latency_ms} ms`
+}
+
+function clusterLogText(entry) {
+  return `[${formatDate(entry.time)}] ${entry.message || ''}`
 }
 
 function openPlanModal(plan = null) {
@@ -2655,6 +2771,103 @@ function submitModal() {
               </div>
             </section>
           </div>
+        </div>
+
+        <div v-if="active === 'loadBalancer'" class="space-y-5">
+          <div class="stat-grid">
+            <article class="stat-card">
+              <span>后端节点</span>
+              <strong>{{ clusterSummary.total || 0 }}</strong>
+              <small>Redis 自动发现</small>
+            </article>
+            <article class="stat-card">
+              <span>在线节点</span>
+              <strong>{{ clusterSummary.online || 0 }}</strong>
+              <small>通信与就绪检查正常</small>
+            </article>
+            <article class="stat-card">
+              <span>异常节点</span>
+              <strong>{{ (clusterSummary.warning || 0) + (clusterSummary.offline || 0) }}</strong>
+              <small>需要检查 /ready、数据库或 Redis</small>
+            </article>
+            <article class="stat-card">
+              <span>当前选择</span>
+              <strong>{{ selectedClusterNodeDetail?.instance_id || '-' }}</strong>
+              <small>{{ selectedClusterNodeDetail?.advertise_url || '未选择节点' }}</small>
+            </article>
+          </div>
+
+          <section class="panel-surface p-5">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Backend Nodes</p>
+                <h3>后端节点状态</h3>
+                <span>节点通过 Redis 心跳自动上线，通信监控使用每个节点的 /ready 地址。</span>
+              </div>
+              <el-button :icon="Refresh" :loading="loading" @click="refreshAdminData">刷新</el-button>
+            </div>
+
+            <el-table class="mt-4" :data="clusterNodes" border>
+              <el-table-column label="节点" min-width="190">
+                <template #default="{ row }">
+                  <div class="font-semibold">{{ row.instance_id }}</div>
+                  <small class="text-muted">{{ row.hostname || '-' }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }">
+                  <el-tag :type="clusterNodeStatusType(row.status)">{{ clusterNodeStatusLabel(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="延迟" width="100">
+                <template #default="{ row }">{{ clusterLatencyText(row) }}</template>
+              </el-table-column>
+              <el-table-column label="访问地址" min-width="230">
+                <template #default="{ row }">{{ row.advertise_url || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="就绪检查" min-width="240">
+                <template #default="{ row }">
+                  <div>{{ clusterReadyText(row) }}</div>
+                  <small v-if="row.error" class="text-red-500">{{ row.error }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="角色" min-width="170">
+                <template #default="{ row }">{{ clusterNodeRoleText(row) }}</template>
+              </el-table-column>
+              <el-table-column label="心跳时间" min-width="150">
+                <template #default="{ row }">{{ formatDate(row.last_seen_at) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="210" fixed="right">
+                <template #default="{ row }">
+                  <div class="flex flex-wrap gap-2">
+                    <el-button size="small" @click="pingClusterNode(row)">检测</el-button>
+                    <el-button size="small" type="primary" @click="loadClusterNodeLogs(row)">日志</el-button>
+                  </div>
+                </template>
+              </el-table-column>
+            </el-table>
+          </section>
+
+          <section class="panel-surface p-5">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Runtime Logs</p>
+                <h3>远程节点日志</h3>
+                <span>{{ selectedClusterNodeDetail ? `${selectedClusterNodeDetail.instance_id} · ${selectedClusterNodeDetail.advertise_url}` : '选择一个节点查看最近日志' }}</span>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <el-select v-model="selectedClusterNode" class="min-w-[220px]" placeholder="选择节点">
+                  <el-option v-for="node in clusterNodes" :key="node.instance_id" :value="node.instance_id" :label="node.instance_id" />
+                </el-select>
+                <el-button :loading="clusterLogsLoading" @click="loadClusterNodeLogs()">读取日志</el-button>
+              </div>
+            </div>
+            <div class="mt-4 rounded border border-slate-200 bg-slate-950 p-4 text-xs leading-6 text-slate-100">
+              <div v-if="clusterLogsLoading" class="text-slate-400">正在读取日志...</div>
+              <div v-else-if="!clusterNodeLogs.length" class="text-slate-400">暂无日志，或尚未选择节点。</div>
+              <pre v-else class="max-h-[460px] overflow-auto whitespace-pre-wrap font-mono">{{ clusterNodeLogs.map(clusterLogText).join('\n') }}</pre>
+            </div>
+          </section>
         </div>
 
         <div v-if="active === 'plans'" class="space-y-5">

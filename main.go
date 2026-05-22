@@ -10,6 +10,7 @@ import (
 )
 
 func main() {
+	service.InstallRuntimeLogCapture()
 	cfg := config.Load()
 	log.Printf("using database dsn: %s", config.MaskDSN(cfg.DBDSN))
 
@@ -19,6 +20,7 @@ func main() {
 	}
 
 	redisClient := database.InitRedis(cfg)
+	service.StartClusterRegistry(cfg, redisClient)
 	database.AutoMigrate(db)
 	database.Seed(db, cfg)
 	database.StartSlideCaptchaCleanup(cfg, db, redisClient)

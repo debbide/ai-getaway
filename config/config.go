@@ -25,21 +25,25 @@ type Config struct {
 	PublicBaseURL     string
 	ClusterMode       bool
 	InstanceID        string
+	InstanceURL       string
+	ClusterToken      string
 	RunBackgroundJobs bool
 }
 
 func Load() Config {
 	loadDotEnv(".env")
+	appPort := getEnv("APP_PORT", "8080")
+	jwtSecret := getEnv("JWT_SECRET", "change-this-secret")
 	dbDSN := normalizeMySQLDSN(getEnv("DB_DSN", "root:password@tcp(127.0.0.1:3306)/ai_gateway?charset=utf8mb4&parseTime=True&loc=Local"))
 
 	cfg := Config{
 		AppEnv:            getEnv("APP_ENV", "development"),
-		AppPort:           getEnv("APP_PORT", "8080"),
+		AppPort:           appPort,
 		DBDSN:             dbDSN,
 		RedisAddr:         getEnv("REDIS_ADDR", "127.0.0.1:6379"),
 		RedisPassword:     getEnv("REDIS_PASSWORD", ""),
 		RedisDB:           getEnvInt("REDIS_DB", 0),
-		JWTSecret:         getEnv("JWT_SECRET", "change-this-secret"),
+		JWTSecret:         jwtSecret,
 		DefaultAdminMail:  getEnv("DEFAULT_ADMIN_EMAIL", "admin@example.com"),
 		DefaultAdminPass:  getEnv("DEFAULT_ADMIN_PASSWORD", "admin123456"),
 		UpstreamTimeout:   getEnv("UPSTREAM_TIMEOUT", "120s"),
@@ -47,6 +51,8 @@ func Load() Config {
 		PublicBaseURL:     strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
 		ClusterMode:       getEnvBool("CLUSTER_MODE", false),
 		InstanceID:        getEnv("INSTANCE_ID", defaultInstanceID()),
+		InstanceURL:       strings.TrimRight(getEnv("INSTANCE_ADVERTISE_URL", "http://127.0.0.1:"+appPort), "/"),
+		ClusterToken:      getEnv("CLUSTER_INTERNAL_TOKEN", jwtSecret),
 		RunBackgroundJobs: getEnvBool("RUN_BACKGROUND_JOBS", true),
 	}
 	if err := cfg.Validate(); err != nil {
