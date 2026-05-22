@@ -259,6 +259,7 @@ const modalDialogWidth = computed(() => {
 const modalCanFullscreen = computed(() => ['create-doc', 'edit-doc', 'create-announcement', 'edit-announcement'].includes(modal.type))
 const enabledPlans = computed(() => stats.value.enabled_plans ?? plans.value.filter((plan) => plan.Enabled).length)
 const enabledModels = computed(() => models.value.filter((item) => item.Status === 'active').length)
+const planModelOptions = computed(() => models.value.filter((item) => item.Status !== 'disabled'))
 const approvedUsers = computed(() => stats.value.approved_users ?? users.value.filter((user) => user.Status === 'approved').length)
 const enabledChannels = computed(() => channels.value.filter((channel) => channel.Enabled).length)
 const enabledPublicChannels = computed(() => publicChannels.value.filter((channel) => channel.Enabled).length)
@@ -409,6 +410,7 @@ function emptyPlan() {
     duration_days: 30,
     public_expires_enabled: false,
     description: '',
+    model_names: [],
     is_lottery: false,
     lottery_url: '',
     enabled: true
@@ -703,14 +705,17 @@ async function loadLoadBalancerData() {
 }
 
 async function loadPlansData() {
-  const [plansRes, publicChannelsRes, pollingPoolsRes] = await Promise.all([
+  const [plansRes, publicChannelsRes, pollingPoolsRes, modelsRes] = await Promise.all([
     api.get('/admin/plans', planFilterParams()),
     api.get('/admin/public-channels', publicChannelFilterParams()),
-    api.get('/admin/polling-pools', pollingPoolFilterParams())
+    api.get('/admin/polling-pools', pollingPoolFilterParams()),
+    api.get('/admin/models')
   ])
   applyListData('plans', plans, plansRes.data || { items: [] })
   applyListData('publicChannels', publicChannels, publicChannelsRes.data || { items: [] })
   applyListData('pollingPools', pollingPools, pollingPoolsRes.data || { items: [] })
+  models.value = modelsRes.data?.items || []
+  modelSource.value = modelsRes.data?.official_source || ''
 }
 
 async function loadRedeemCodesData() {
@@ -1059,6 +1064,7 @@ function openPlanModal(plan = null) {
       duration_days: plan.DurationDays,
       public_expires_enabled: (plan.PlanType === 'public' || plan.QuotaPeriod === 'public') && Number(plan.DurationDays || 0) > 0,
       description: plan.Description,
+      model_names: Array.isArray(plan.ModelNames) ? plan.ModelNames : [],
       is_lottery: Boolean(plan.IsLottery),
       lottery_url: plan.LotteryURL || '',
       enabled: plan.Enabled
@@ -2072,12 +2078,24 @@ function normalizePlan(plan) {
     settlement_usd_cents: amountToCents(plan.period_usd_quota),
     duration_days: isPublic ? (plan.public_expires_enabled ? Number(plan.duration_days || 1) : 0) : Number(plan.duration_days || 1),
     description: plan.description.trim(),
+    model_names: normalizePlanModelNames(plan.model_names),
     is_lottery: Boolean(plan.is_lottery),
     lottery_url: plan.lottery_url.trim(),
     free_per_user_limit: plan.is_free ? Number(plan.free_per_user_limit || 1) : 0,
     free_total_limit: plan.is_free ? Number(plan.free_total_limit || 0) : 0,
     enabled: Boolean(plan.enabled)
   }
+}
+
+function normalizePlanModelNames(values) {
+  const seen = new Set()
+  return (Array.isArray(values) ? values : [])
+    .map((value) => String(value || '').trim())
+    .filter((value) => {
+      if (!value || seen.has(value)) return false
+      seen.add(value)
+      return true
+    })
 }
 
 function paginateItems(items, pager) {
@@ -2519,6 +2537,15 @@ function protocolTags(item) {
   return tags.length ? tags : ['未启用']
 }
 
+function planModelNames(plan) {
+  return Array.isArray(plan?.ModelNames) ? plan.ModelNames.filter(Boolean) : []
+}
+
+function planModelSummary(plan) {
+  const names = planModelNames(plan)
+  return names.length ? names.join('、') : '未绑定模型'
+}
+
 function compactNumber(value) {
   return Number(value || 0).toLocaleString()
 }
@@ -2931,6 +2958,7 @@ function submitModal() {
                     <div class="plan-main-cell">
                       <strong>{{ plan.Name }}</strong>
                       <small>{{ plan.Code || '未设置编码' }}</small>
+                      <small>{{ planModelSummary(plan) }}</small>
                       <span>{{ plan.Description || '暂无说明' }}</span>
                     </div>
                   </template>
@@ -4197,6 +4225,11 @@ function submitModal() {
           <el-form-item v-if="planForm.quota_period === 'public' && planForm.public_expires_enabled" label="有效期（天）"><el-input v-model.number="planForm.duration_days" type="number" min="1" required /></el-form-item>
           <el-form-item v-if="planForm.quota_period !== 'public'" label="有效期（天）"><el-input v-model.number="planForm.duration_days" type="number" min="1" required /></el-form-item>
           <el-form-item v-if="planForm.quota_period !== 'public'" label="预计总美元额度"><el-input :model-value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></el-form-item>
+          <el-form-item class="md:col-span-2" label="绑定模型">
+            <el-select v-model="planForm.model_names" multiple filterable collapse-tags collapse-tags-tooltip placeholder="请选择套餐支持的模型">
+              <el-option v-for="item in planModelOptions" :key="item.ModelName" :label="item.DisplayName ? `${item.DisplayName}（${item.ModelName}）` : item.ModelName" :value="item.ModelName" />
+            </el-select>
+          </el-form-item>
           <el-form-item class="md:col-span-2" label="套餐说明"><el-input v-model="planForm.description" type="textarea" :rows="3" /></el-form-item>
           <el-form-item class="md:col-span-2" label="启用套餐"><el-switch v-model="planForm.enabled" /></el-form-item>
         </div>

@@ -934,6 +934,10 @@ function planProtocolTags(plan) {
   return tags
 }
 
+function planModelNames(plan) {
+  return Array.isArray(plan?.ModelNames) ? plan.ModelNames.filter(Boolean) : []
+}
+
 function planBadge(index) {
   return ['日用特惠', '热卖推荐', '高频进阶'][index % 3]
 }
@@ -1178,6 +1182,12 @@ function planSubtitle(index) {
             </div>
             <div class="plan-protocol-tags">
               <span v-for="tag in planProtocolTags(plan)" :key="tag">{{ tag }}</span>
+            </div>
+            <div v-if="planModelNames(plan).length" class="plan-model-list">
+              <span>支持模型</span>
+              <div>
+                <code v-for="name in planModelNames(plan)" :key="name">{{ name }}</code>
+              </div>
             </div>
             <div v-if="isFreePlan(plan)" class="free-claim-meter">
               <div>

@@ -38,22 +38,23 @@ type approveOrderRequest struct {
 }
 
 type planRequest struct {
-	Name               string `json:"name" binding:"required,min=2,max=64"`
-	Code               string `json:"code"`
-	BadgeText          string `json:"badge_text"`
-	PlanType           string `json:"plan_type"`
-	QuotaPeriod        string `json:"quota_period"`
-	PublicChannelID    *uint  `json:"public_channel_id"`
-	PollingPoolID      *uint  `json:"polling_pool_id"`
-	PriceCents         int64  `json:"price_cents" binding:"min=0"`
-	SettlementUSDCents int64  `json:"settlement_usd_cents"`
-	DurationDays       int    `json:"duration_days"`
-	Description        string `json:"description"`
-	IsLottery          bool   `json:"is_lottery"`
-	LotteryURL         string `json:"lottery_url"`
-	FreePerUserLimit   int    `json:"free_per_user_limit"`
-	FreeTotalLimit     int    `json:"free_total_limit"`
-	Enabled            bool   `json:"enabled"`
+	Name               string   `json:"name" binding:"required,min=2,max=64"`
+	Code               string   `json:"code"`
+	BadgeText          string   `json:"badge_text"`
+	PlanType           string   `json:"plan_type"`
+	QuotaPeriod        string   `json:"quota_period"`
+	PublicChannelID    *uint    `json:"public_channel_id"`
+	PollingPoolID      *uint    `json:"polling_pool_id"`
+	PriceCents         int64    `json:"price_cents" binding:"min=0"`
+	SettlementUSDCents int64    `json:"settlement_usd_cents"`
+	DurationDays       int      `json:"duration_days"`
+	Description        string   `json:"description"`
+	IsLottery          bool     `json:"is_lottery"`
+	LotteryURL         string   `json:"lottery_url"`
+	FreePerUserLimit   int      `json:"free_per_user_limit"`
+	FreeTotalLimit     int      `json:"free_total_limit"`
+	ModelNames         []string `json:"model_names"`
+	Enabled            bool     `json:"enabled"`
 }
 
 type drawLotteryPlanRequest struct {
@@ -795,6 +796,7 @@ func (a *AdminController) CreatePlan(c *gin.Context) {
 		LotteryURL:         strings.TrimSpace(req.LotteryURL),
 		FreePerUserLimit:   normalizedFreePerUserLimit(req),
 		FreeTotalLimit:     normalizedFreeTotalLimit(req),
+		ModelNames:         normalizedPlanModelNames(req.ModelNames),
 		Enabled:            req.Enabled,
 	}
 	if err := a.db.Create(&plan).Error; err != nil {
@@ -830,6 +832,7 @@ func (a *AdminController) UpdatePlan(c *gin.Context) {
 		"lottery_url":          strings.TrimSpace(req.LotteryURL),
 		"free_per_user_limit":  normalizedFreePerUserLimit(req),
 		"free_total_limit":     normalizedFreeTotalLimit(req),
+		"model_names":          normalizedPlanModelNames(req.ModelNames),
 		"enabled":              req.Enabled,
 	}
 	if err := a.db.Model(&model.Plan{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
@@ -1548,6 +1551,26 @@ func normalizedFreeTotalLimit(req planRequest) int {
 		return 0
 	}
 	return req.FreeTotalLimit
+}
+
+func normalizedPlanModelNames(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	models := make([]string, 0, len(values))
+	for _, value := range values {
+		name := strings.TrimSpace(value)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		models = append(models, name)
+	}
+	return models
 }
 
 func (a *AdminController) validatePlanRequest(req planRequest) error {

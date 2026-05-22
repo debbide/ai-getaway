@@ -105,19 +105,20 @@ type Plan struct {
 	PublicChannel      *PublicChannel
 	PollingPoolID      *uint `gorm:"index"`
 	PollingPool        *PollingPool
-	PriceCents         int64  `gorm:"not null"`
-	SettlementUSDCents int64  `gorm:"default:0"`
-	DurationDays       int    `gorm:"not null"`
-	Description        string `gorm:"size:255"`
-	IsLottery          bool   `gorm:"default:false;index"`
-	LotteryURL         string `gorm:"size:512"`
-	LotteryDrawn       bool   `gorm:"default:false;index"`
-	LotteryWinnerEmail string `gorm:"size:128" json:"-"`
-	LotteryWinnerMask  string `gorm:"-" json:"LotteryWinnerMask"`
-	FreePerUserLimit   int    `gorm:"default:1"`
-	FreeTotalLimit     int    `gorm:"default:0"`
-	FreeClaimedCount   int    `gorm:"default:0"`
-	Enabled            bool   `gorm:"default:true;index"`
+	PriceCents         int64    `gorm:"not null"`
+	SettlementUSDCents int64    `gorm:"default:0"`
+	DurationDays       int      `gorm:"not null"`
+	Description        string   `gorm:"size:255"`
+	IsLottery          bool     `gorm:"default:false;index"`
+	LotteryURL         string   `gorm:"size:512"`
+	LotteryDrawn       bool     `gorm:"default:false;index"`
+	LotteryWinnerEmail string   `gorm:"size:128" json:"-"`
+	LotteryWinnerMask  string   `gorm:"-" json:"LotteryWinnerMask"`
+	FreePerUserLimit   int      `gorm:"default:1"`
+	FreeTotalLimit     int      `gorm:"default:0"`
+	FreeClaimedCount   int      `gorm:"default:0"`
+	ModelNames         []string `gorm:"serializer:json;type:text" json:"ModelNames"`
+	Enabled            bool     `gorm:"default:true;index"`
 }
 
 type Order struct {

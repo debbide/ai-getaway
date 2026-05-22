@@ -1488,6 +1488,36 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb {
   font-weight: 700;
 }
 
+.plan-model-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.plan-model-list > span {
+  color: rgba(247, 248, 251, 0.68);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.plan-model-list div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.plan-model-list code {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(247, 248, 251, 0.92);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.2;
+}
+
 .free-claim-meter div {
   display: flex;
   align-items: center;

@@ -355,7 +355,7 @@ function statusClass(code) {
         </el-select>
       </el-form-item>
       <div class="usage-filter-actions">
-        <el-button :type="autoRefresh ? 'success' : 'default'" plain @click="toggleAutoRefresh">
+        <el-button class="usage-auto-refresh-button" :class="{ active: autoRefresh }" :type="autoRefresh ? 'success' : 'default'" plain @click="toggleAutoRefresh">
           <span class="usage-auto-refresh-icon" aria-hidden="true">↻</span>
           {{ autoRefresh ? '自动刷新中' : '自动刷新' }}
         </el-button>
