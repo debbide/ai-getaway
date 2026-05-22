@@ -832,7 +832,7 @@ func (a *AdminController) UpdatePlan(c *gin.Context) {
 		"lottery_url":          strings.TrimSpace(req.LotteryURL),
 		"free_per_user_limit":  normalizedFreePerUserLimit(req),
 		"free_total_limit":     normalizedFreeTotalLimit(req),
-		"model_names":          normalizedPlanModelNames(req.ModelNames),
+		"model_names":          normalizedPlanModelNamesJSON(req.ModelNames),
 		"enabled":              req.Enabled,
 	}
 	if err := a.db.Model(&model.Plan{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
@@ -1571,6 +1571,15 @@ func normalizedPlanModelNames(values []string) []string {
 		models = append(models, name)
 	}
 	return models
+}
+
+func normalizedPlanModelNamesJSON(values []string) string {
+	models := normalizedPlanModelNames(values)
+	if len(models) == 0 {
+		return "[]"
+	}
+	data, _ := json.Marshal(models)
+	return string(data)
 }
 
 func (a *AdminController) validatePlanRequest(req planRequest) error {
