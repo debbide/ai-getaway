@@ -101,3 +101,34 @@ func TestCapAPILogCostZeroesAfterQuotaExhausted(t *testing.T) {
 		t.Fatalf("cost parts = %d/%d/%d, want zero", log.InputUSDMicros, log.CachedInputUSDMicros, log.OutputUSDMicros)
 	}
 }
+
+func TestCapAPILogCostScalesRequestCharge(t *testing.T) {
+	log := model.APILog{
+		APIKeyID:           1,
+		Method:             "POST",
+		Path:               "/v1/images/generations",
+		StatusCode:         200,
+		EstimatedUSDCents:  25,
+		EstimatedUSDMicros: 250_000,
+		RequestUSDMicros:   250_000,
+		BillingSource:      "model_management",
+	}
+
+	capAPILogCost(&log, 10)
+
+	if log.EstimatedUSDMicros != 100_000 || log.EstimatedUSDCents != 10 {
+		t.Fatalf("log cost = %d micros/%d cents, want 100000/10", log.EstimatedUSDMicros, log.EstimatedUSDCents)
+	}
+	if log.RequestUSDMicros != 100_000 {
+		t.Fatalf("RequestUSDMicros = %d, want 100000", log.RequestUSDMicros)
+	}
+	if log.BillingSource != "model_management+quota_capped" {
+		t.Fatalf("BillingSource = %q, want model_management+quota_capped", log.BillingSource)
+	}
+}
+
+func TestPriceRequestMicrosAppliesMultiplier(t *testing.T) {
+	if got := priceRequestMicros(0.025, 6); got != 150_000 {
+		t.Fatalf("priceRequestMicros() = %d, want 150000", got)
+	}
+}

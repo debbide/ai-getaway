@@ -50,7 +50,7 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 			return
 		}
 		if !allowPlanQuota(db, apiKey.User) {
-			response.Error(c, 429, "subscription quota exceeded")
+			response.Error(c, 429, "令牌额度耗尽")
 			c.Abort()
 			return
 		}

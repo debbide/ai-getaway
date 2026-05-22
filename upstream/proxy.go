@@ -55,7 +55,7 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 		requestInfo := parseRequestInfo(c.Request)
 		quotaBudgetMicros, quotaLimited := requestQuotaBudgetMicros(db, apiKey.User, start)
 		if quotaLimited && estimateUsageMicros(db, requestInfo.Model, requestInfo.BodyBytes, 0, groupMultipliers) >= quotaBudgetMicros {
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "subscription quota exceeded"})
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "令牌额度耗尽"})
 			return
 		}
 		protocol := model.ProtocolGPT
@@ -137,7 +137,9 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 				ErrorMessage: err.Error(),
 			}
 			service.CreateAPILogWithinPlanQuota(db, &log, time.Now())
-			http.Error(w, `{"error":"upstream request failed"}`, http.StatusBadGateway)
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"上游请求失败"}`))
 		}
 
 		proxy.ServeHTTP(c.Writer, c.Request)
@@ -240,10 +242,15 @@ func applyUsage(db *gorm.DB, log *model.APILog, modelName string, usage response
 	if totalTokens > 0 {
 		log.TotalTokens = totalTokens
 	}
-	if applyUpstreamCost(log, usage, groupMultipliers) {
+	if !usesRequestBilling(db, log.ModelName) && applyUpstreamCost(log, usage, groupMultipliers) {
 		return
 	}
 	applyBillingResult(log, service.BillUsageWithGroupMultipliers(db, log.ModelName, promptTokens, cachedInputTokens, completionTokens, totalTokens, groupMultipliers))
+}
+
+func usesRequestBilling(db *gorm.DB, modelName string) bool {
+	pricing, _ := service.FindModelPricing(db, modelName)
+	return pricing.BillingMode == model.ModelBillingModeRequest
 }
 
 type usageStreamReadCloser struct {
@@ -340,7 +347,7 @@ func capResponseToQuota(log *model.APILog, quotaBudgetMicros int64) bool {
 	if quotaBudgetMicros <= 0 || log == nil || log.EstimatedUSDMicros <= quotaBudgetMicros {
 		return false
 	}
-	log.ErrorMessage = appendErrorMessage(log.ErrorMessage, "subscription quota reached during request")
+	log.ErrorMessage = appendErrorMessage(log.ErrorMessage, "令牌额度耗尽")
 	return true
 }
 
@@ -407,7 +414,7 @@ func appendErrorMessage(current string, next string) string {
 }
 
 func quotaExceededBody() []byte {
-	return []byte(`{"error":"subscription quota exceeded"}`)
+	return []byte(`{"error":"令牌额度耗尽"}`)
 }
 
 func isEventStream(resp *http.Response) bool {
@@ -453,11 +460,13 @@ func applyBillingResult(log *model.APILog, result service.BillingResult) {
 	log.InputUSDMicros = result.InputUSDMicros
 	log.CachedInputUSDMicros = result.CachedInputUSDMicros
 	log.OutputUSDMicros = result.OutputUSDMicros
+	log.RequestUSDMicros = result.RequestUSDMicros
 	log.EstimatedUSDMicros = result.TotalUSDMicros
 	log.EstimatedUSDCents = result.TotalUSDCents
 	log.InputUSDPerMillion = result.InputUSDPerMillion
 	log.CachedInputUSDPerMillion = result.CachedInputUSDPerMillion
 	log.OutputUSDPerMillion = result.OutputUSDPerMillion
+	log.RequestUSD = result.RequestUSD
 	log.BillingMultiplier = result.BillingMultiplier
 	log.GroupMultiplier = result.GroupMultiplier
 	log.BillingSource = result.BillingSource
@@ -474,8 +483,10 @@ func applyUpstreamCost(log *model.APILog, usage responseUsage, groupMultipliers 
 	log.InputUSDMicros = 0
 	log.CachedInputUSDMicros = 0
 	log.OutputUSDMicros = 0
+	log.RequestUSDMicros = 0
 	log.EstimatedUSDMicros = micros
 	log.EstimatedUSDCents = service.USDmicrosToCents(micros)
+	log.RequestUSD = 0
 	log.BillingMultiplier = multiplier
 	log.GroupMultiplier = multiplier
 	log.BillingSource = "upstream_cost"

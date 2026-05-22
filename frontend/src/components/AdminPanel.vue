@@ -501,6 +501,8 @@ function emptyModel() {
     input_usd_per_million: 0,
     cached_input_usd_per_million: 0,
     output_usd_per_million: 0,
+    billing_mode: 'token',
+    request_usd: 0,
     billing_multiplier: 1,
     group_multiplier: 1,
     status: 'active',
@@ -1183,6 +1185,8 @@ function openModelModal(model = null) {
       input_usd_per_million: model.InputUSDPerMillion || 0,
       cached_input_usd_per_million: model.CachedInputUSDPerMillion || 0,
       output_usd_per_million: model.OutputUSDPerMillion || 0,
+      billing_mode: model.BillingMode || 'token',
+      request_usd: model.RequestUSD || 0,
       billing_multiplier: model.BillingMultiplier || 1,
       group_multiplier: model.GroupMultiplier || 1,
       status: model.Status || 'active',
@@ -2147,6 +2151,8 @@ function normalizeModel(item) {
     input_usd_per_million: Number(item.input_usd_per_million || 0),
     cached_input_usd_per_million: Number(item.cached_input_usd_per_million || 0),
     output_usd_per_million: Number(item.output_usd_per_million || 0),
+    billing_mode: item.billing_mode === 'request' ? 'request' : 'token',
+    request_usd: Number(item.request_usd || 0),
     billing_multiplier: Number(item.billing_multiplier || 1),
     group_multiplier: Number(item.group_multiplier || 1),
     status: item.status === 'disabled' ? 'disabled' : 'active',
@@ -2161,6 +2167,14 @@ function modelUnit(value) {
 
 function modelActualUnit(item, field) {
   return modelUnit((item[field] || 0) * (item.BillingMultiplier || 1) * (item.GroupMultiplier || 1))
+}
+
+function modelBillingMode(item) {
+  return (item?.BillingMode || item?.billing_mode) === 'request' ? 'request' : 'token'
+}
+
+function modelRequestUnit(item) {
+  return `$${(Number(item?.RequestUSD || item?.request_usd || 0) * (item?.BillingMultiplier || 1) * (item?.GroupMultiplier || 1)).toFixed(6)} / 次`
 }
 
 function modelStatusLabel(value) {
@@ -3174,6 +3188,7 @@ function submitModal() {
             <div class="table-wrap">
               <el-table :data="pagedModels" class="model-pricing-table" border>
                 <el-table-column label="模型" min-width="210"><template #default="{ row: item }"><div class="model-cell"><strong>{{ item.ModelName }}</strong><small>{{ item.DisplayName || item.Provider || '-' }}</small></div></template></el-table-column>
+                <el-table-column label="计费方式" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelBillingMode(item) === 'request' ? modelRequestUnit(item) : '按 Token' }}</strong><small>{{ modelBillingMode(item) === 'request' ? '每次调用固定扣费' : '按输入/输出 Token 扣费' }}</small></div></template></el-table-column>
                 <el-table-column label="输入单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'InputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.InputUSDPerMillion) }}</small></div></template></el-table-column>
                 <el-table-column label="缓存读取" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'CachedInputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.CachedInputUSDPerMillion) }}</small></div></template></el-table-column>
                 <el-table-column label="输出单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'OutputUSDPerMillion') }}</strong><small>原价 {{ modelUnit(item.OutputUSDPerMillion) }}</small></div></template></el-table-column>
@@ -4339,6 +4354,13 @@ function submitModal() {
           <el-form-item label="模型 ID" required><el-input v-model="modelForm.model" placeholder="gpt-5.5" /></el-form-item>
           <el-form-item label="显示名称"><el-input v-model="modelForm.display_name" placeholder="GPT-5.5" /></el-form-item>
           <el-form-item label="服务商"><el-input v-model="modelForm.provider" placeholder="openai" /></el-form-item>
+          <el-form-item label="计费方式">
+            <el-select v-model="modelForm.billing_mode">
+              <el-option value="token" label="按 Token 收费" />
+              <el-option value="request" label="按次收费" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="modelForm.billing_mode === 'request'" label="每次调用价格（美元）"><el-input v-model.number="modelForm.request_usd" type="number" min="0" step="0.000001" /></el-form-item>
           <el-form-item label="输入单价 / 1M Token"><el-input v-model.number="modelForm.input_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
           <el-form-item label="缓存读取单价 / 1M Token"><el-input v-model.number="modelForm.cached_input_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>
           <el-form-item label="输出单价 / 1M Token"><el-input v-model.number="modelForm.output_usd_per_million" type="number" min="0" step="0.0001" /></el-form-item>

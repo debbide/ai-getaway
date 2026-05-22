@@ -10,6 +10,7 @@ import (
 type Body struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message"`
+	Error   string      `json:"error,omitempty"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
@@ -22,10 +23,50 @@ func Created(c *gin.Context, data interface{}) {
 }
 
 func Error(c *gin.Context, status int, message string) {
-	c.JSON(status, Body{Code: status, Message: localizeMessage(message)})
+	localized := localizeMessage(message)
+	c.JSON(status, Body{Code: status, Message: localized, Error: localized})
 }
 
 func localizeMessage(message string) string {
+	if message == "令牌额度耗尽" {
+		return message
+	}
+	switch message {
+	case "missing api key":
+		return "缺少 API Key"
+	case "invalid api key":
+		return "API Key 无效，请检查后重试"
+	case "user is not approved", "account pending approval":
+		return "账号尚未通过审核，请等待管理员开通"
+	case "subscription expired":
+		return "订阅已到期，请续费后继续使用"
+	case "no active subscription assigned":
+		return "当前账号未开通可用套餐，无法调用接口"
+	case "rate limit exceeded":
+		return "请求过于频繁，请稍后再试"
+	case "public channel sold out":
+		return "公共渠道额度已售罄，请选择其他套餐"
+	case "protocol not supported by plan":
+		return "当前套餐不支持该协议"
+	case "protocol not supported by upstream":
+		return "当前上游通道不支持该协议"
+	case "no active upstream account bound":
+		return "当前账号尚未绑定可用上游通道，请联系管理员开通"
+	case "missing authorization token":
+		return "缺少登录凭证，请重新登录"
+	case "invalid authorization token":
+		return "登录状态已失效，请重新登录"
+	case "user not found":
+		return "账号不存在，请重新登录"
+	case "user disabled":
+		return "账号已被禁用，请联系管理员"
+	case "admin permission required":
+		return "当前操作需要管理员权限"
+	case "registration disabled":
+		return "当前站点暂未开放新用户注册"
+	case "upstream request failed":
+		return "上游请求失败"
+	}
 	messages := map[string]string{
 		"active subscription in effect":                 "当前套餐仍在有效期内，请待到期后再购买其他套餐",
 		"account pending approval":                      "账号尚未通过审核，请等待管理员开通",

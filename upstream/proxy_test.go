@@ -242,7 +242,7 @@ func TestCapResponseToQuotaMarksExceeded(t *testing.T) {
 	if !capResponseToQuota(&log, 1_000_000) {
 		t.Fatal("capResponseToQuota() = false, want true")
 	}
-	if log.ErrorMessage != "subscription quota reached during request" {
+	if log.ErrorMessage != "令牌额度耗尽" {
 		t.Fatalf("ErrorMessage = %q", log.ErrorMessage)
 	}
 }

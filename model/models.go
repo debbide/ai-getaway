@@ -41,6 +41,8 @@ const (
 
 	ModelPricingStatusActive   = "active"
 	ModelPricingStatusDisabled = "disabled"
+	ModelBillingModeToken      = "token"
+	ModelBillingModeRequest    = "request"
 
 	PlanTypeSubscription = "subscription"
 	PlanTypePublic       = "public"
@@ -286,6 +288,8 @@ type ModelPricing struct {
 	InputUSDPerMillion       float64
 	CachedInputUSDPerMillion float64
 	OutputUSDPerMillion      float64
+	BillingMode              string  `gorm:"size:32;default:token;index"`
+	RequestUSD               float64 `gorm:"default:0"`
 	BillingMultiplier        float64 `gorm:"default:1"`
 	GroupMultiplier          float64 `gorm:"default:1"`
 	Status                   string  `gorm:"size:32;default:active;index"`
@@ -315,9 +319,11 @@ type APILog struct {
 	InputUSDMicros           int64   `gorm:"default:0"`
 	CachedInputUSDMicros     int64   `gorm:"default:0"`
 	OutputUSDMicros          int64   `gorm:"default:0"`
+	RequestUSDMicros         int64   `gorm:"default:0"`
 	InputUSDPerMillion       float64 `gorm:"default:0"`
 	CachedInputUSDPerMillion float64 `gorm:"default:0"`
 	OutputUSDPerMillion      float64 `gorm:"default:0"`
+	RequestUSD               float64 `gorm:"default:0"`
 	BillingMultiplier        float64 `gorm:"default:1"`
 	GroupMultiplier          float64 `gorm:"default:1"`
 	BillingSource            string  `gorm:"size:64"`

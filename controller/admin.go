@@ -215,6 +215,8 @@ type modelPricingRequest struct {
 	InputUSDPerMillion       float64 `json:"input_usd_per_million" binding:"min=0"`
 	CachedInputUSDPerMillion float64 `json:"cached_input_usd_per_million" binding:"min=0"`
 	OutputUSDPerMillion      float64 `json:"output_usd_per_million" binding:"min=0"`
+	BillingMode              string  `json:"billing_mode"`
+	RequestUSD               float64 `json:"request_usd" binding:"min=0"`
 	BillingMultiplier        float64 `json:"billing_multiplier" binding:"min=0"`
 	GroupMultiplier          float64 `json:"group_multiplier" binding:"min=0"`
 	Status                   string  `json:"status"`
@@ -1690,6 +1692,13 @@ func fallbackModelPricingStatus(value string) string {
 	return model.ModelPricingStatusActive
 }
 
+func fallbackModelBillingMode(value string) string {
+	if value == model.ModelBillingModeRequest {
+		return model.ModelBillingModeRequest
+	}
+	return model.ModelBillingModeToken
+}
+
 func (a *AdminController) Upstreams(c *gin.Context) {
 	query := a.db.Model(&model.UpstreamAccount{}).Preload("User")
 	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
@@ -2024,6 +2033,8 @@ func (a *AdminController) CreateModelPricing(c *gin.Context) {
 		InputUSDPerMillion:       req.InputUSDPerMillion,
 		CachedInputUSDPerMillion: req.CachedInputUSDPerMillion,
 		OutputUSDPerMillion:      req.OutputUSDPerMillion,
+		BillingMode:              fallbackModelBillingMode(req.BillingMode),
+		RequestUSD:               req.RequestUSD,
 		BillingMultiplier:        fallbackMultiplier(req.BillingMultiplier),
 		GroupMultiplier:          fallbackMultiplier(req.GroupMultiplier),
 		Status:                   fallbackModelPricingStatus(req.Status),
@@ -2050,6 +2061,8 @@ func (a *AdminController) UpdateModelPricing(c *gin.Context) {
 		"input_usd_per_million":        req.InputUSDPerMillion,
 		"cached_input_usd_per_million": req.CachedInputUSDPerMillion,
 		"output_usd_per_million":       req.OutputUSDPerMillion,
+		"billing_mode":                 fallbackModelBillingMode(req.BillingMode),
+		"request_usd":                  req.RequestUSD,
 		"billing_multiplier":           fallbackMultiplier(req.BillingMultiplier),
 		"group_multiplier":             fallbackMultiplier(req.GroupMultiplier),
 		"status":                       fallbackModelPricingStatus(req.Status),

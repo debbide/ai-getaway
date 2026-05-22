@@ -31,11 +31,14 @@ type BillingResult struct {
 	InputUSDMicros           int64
 	CachedInputUSDMicros     int64
 	OutputUSDMicros          int64
+	RequestUSDMicros         int64
 	TotalUSDMicros           int64
 	TotalUSDCents            int64
 	InputUSDPerMillion       float64
 	CachedInputUSDPerMillion float64
 	OutputUSDPerMillion      float64
+	BillingMode              string
+	RequestUSD               float64
 	BillingMultiplier        float64
 	GroupMultiplier          float64
 	BillingSource            string
@@ -76,6 +79,8 @@ func SyncOfficialOpenAIModelPrices(db *gorm.DB) (int, error) {
 			InputUSDPerMillion:       item.InputUSDPerMillion,
 			CachedInputUSDPerMillion: item.CachedInputUSDPerMillion,
 			OutputUSDPerMillion:      item.OutputUSDPerMillion,
+			BillingMode:              model.ModelBillingModeToken,
+			RequestUSD:               0,
 			BillingMultiplier:        1,
 			GroupMultiplier:          1,
 			Status:                   model.ModelPricingStatusActive,
@@ -93,12 +98,15 @@ func SyncOfficialOpenAIModelPrices(db *gorm.DB) (int, error) {
 			if groupMultiplier <= 0 {
 				groupMultiplier = 1
 			}
+			billingMode := fallbackBillingMode(existing.BillingMode)
 			updates := map[string]interface{}{
 				"display_name":                 pricing.DisplayName,
 				"provider":                     pricing.Provider,
 				"input_usd_per_million":        pricing.InputUSDPerMillion,
 				"cached_input_usd_per_million": pricing.CachedInputUSDPerMillion,
 				"output_usd_per_million":       pricing.OutputUSDPerMillion,
+				"billing_mode":                 billingMode,
+				"request_usd":                  existing.RequestUSD,
 				"billing_multiplier":           multiplier,
 				"group_multiplier":             groupMultiplier,
 				"official":                     true,
@@ -148,6 +156,27 @@ func BillUsageWithGroupMultipliers(db *gorm.DB, modelName string, inputTokens, c
 	}
 	groupMultiplier := ResolveGroupMultiplier(pricing, groupMultipliers)
 	effectiveMultiplier := multiplier * groupMultiplier
+	billingMode := fallbackBillingMode(pricing.BillingMode)
+
+	if billingMode == model.ModelBillingModeRequest {
+		requestMicros := priceRequestMicros(pricing.RequestUSD, effectiveMultiplier)
+		return BillingResult{
+			InputTokens:              inputTokens,
+			CachedInputTokens:        cachedInputTokens,
+			OutputTokens:             outputTokens,
+			RequestUSDMicros:         requestMicros,
+			TotalUSDMicros:           requestMicros,
+			TotalUSDCents:            USDmicrosToCents(requestMicros),
+			InputUSDPerMillion:       pricing.InputUSDPerMillion,
+			CachedInputUSDPerMillion: pricing.CachedInputUSDPerMillion,
+			OutputUSDPerMillion:      pricing.OutputUSDPerMillion,
+			BillingMode:              billingMode,
+			RequestUSD:               pricing.RequestUSD,
+			BillingMultiplier:        effectiveMultiplier,
+			GroupMultiplier:          groupMultiplier,
+			BillingSource:            source,
+		}
+	}
 
 	uncachedInputTokens := inputTokens
 	if cachedInputTokens > 0 && totalTokens < inputTokens+cachedInputTokens+outputTokens {
@@ -177,6 +206,8 @@ func BillUsageWithGroupMultipliers(db *gorm.DB, modelName string, inputTokens, c
 		InputUSDPerMillion:       pricing.InputUSDPerMillion,
 		CachedInputUSDPerMillion: pricing.CachedInputUSDPerMillion,
 		OutputUSDPerMillion:      pricing.OutputUSDPerMillion,
+		BillingMode:              billingMode,
+		RequestUSD:               pricing.RequestUSD,
 		BillingMultiplier:        effectiveMultiplier,
 		GroupMultiplier:          groupMultiplier,
 		BillingSource:            source,
@@ -267,6 +298,8 @@ func FindModelPricing(db *gorm.DB, modelName string) (model.ModelPricing, string
 			InputUSDPerMillion:       item.InputUSDPerMillion,
 			CachedInputUSDPerMillion: item.CachedInputUSDPerMillion,
 			OutputUSDPerMillion:      item.OutputUSDPerMillion,
+			BillingMode:              model.ModelBillingModeToken,
+			RequestUSD:               0,
 			BillingMultiplier:        1,
 			GroupMultiplier:          1,
 			Status:                   model.ModelPricingStatusActive,
@@ -282,6 +315,8 @@ func FindModelPricing(db *gorm.DB, modelName string) (model.ModelPricing, string
 		InputUSDPerMillion:       input,
 		CachedInputUSDPerMillion: cached,
 		OutputUSDPerMillion:      output,
+		BillingMode:              model.ModelBillingModeToken,
+		RequestUSD:               0,
 		BillingMultiplier:        1,
 		GroupMultiplier:          1,
 		Status:                   model.ModelPricingStatusActive,
@@ -344,6 +379,23 @@ func priceMicros(tokens int64, usdPerMillion float64, multiplier float64) int64 
 		return 0
 	}
 	return int64(math.Round(float64(tokens) * usdPerMillion * multiplier))
+}
+
+func priceRequestMicros(usd float64, multiplier float64) int64 {
+	if usd <= 0 {
+		return 0
+	}
+	if multiplier <= 0 {
+		multiplier = 1
+	}
+	return int64(math.Round(usd * multiplier * 1_000_000))
+}
+
+func fallbackBillingMode(value string) string {
+	if value == model.ModelBillingModeRequest {
+		return model.ModelBillingModeRequest
+	}
+	return model.ModelBillingModeToken
 }
 
 func fallbackRatesUSD(modelName string) (float64, float64, float64) {

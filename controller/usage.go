@@ -55,9 +55,11 @@ type usageLogItem struct {
 	InputUSDMicros           int64     `json:"input_usd_micros"`
 	CachedInputUSDMicros     int64     `json:"cached_input_usd_micros"`
 	OutputUSDMicros          int64     `json:"output_usd_micros"`
+	RequestUSDMicros         int64     `json:"request_usd_micros"`
 	InputUSDPerMillion       float64   `json:"input_usd_per_million"`
 	CachedInputUSDPerMillion float64   `json:"cached_input_usd_per_million"`
 	OutputUSDPerMillion      float64   `json:"output_usd_per_million"`
+	RequestUSD               float64   `json:"request_usd"`
 	BillingMultiplier        float64   `json:"billing_multiplier"`
 	GroupMultiplier          float64   `json:"group_multiplier"`
 	BillingSource            string    `json:"billing_source"`
@@ -268,9 +270,11 @@ func mapUsageLog(log model.APILog) usageLogItem {
 		InputUSDMicros:           log.InputUSDMicros,
 		CachedInputUSDMicros:     log.CachedInputUSDMicros,
 		OutputUSDMicros:          log.OutputUSDMicros,
+		RequestUSDMicros:         log.RequestUSDMicros,
 		InputUSDPerMillion:       log.InputUSDPerMillion,
 		CachedInputUSDPerMillion: log.CachedInputUSDPerMillion,
 		OutputUSDPerMillion:      log.OutputUSDPerMillion,
+		RequestUSD:               log.RequestUSD,
 		BillingMultiplier:        log.BillingMultiplier,
 		GroupMultiplier:          log.GroupMultiplier,
 		BillingSource:            log.BillingSource,

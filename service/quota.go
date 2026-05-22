@@ -298,23 +298,31 @@ func scaleUSDMicros(log *model.APILog, targetMicros int64, currentMicros int64) 
 		log.InputUSDMicros = 0
 		log.CachedInputUSDMicros = 0
 		log.OutputUSDMicros = 0
+		log.RequestUSDMicros = 0
 		return
 	}
 	if targetMicros <= 0 {
 		log.InputUSDMicros = 0
 		log.CachedInputUSDMicros = 0
 		log.OutputUSDMicros = 0
+		log.RequestUSDMicros = 0
 		return
 	}
 
+	if log.RequestUSDMicros > 0 && log.InputUSDMicros == 0 && log.CachedInputUSDMicros == 0 && log.OutputUSDMicros == 0 {
+		log.RequestUSDMicros = targetMicros
+		return
+	}
 	log.InputUSDMicros = scalePart(log.InputUSDMicros, targetMicros, currentMicros)
 	log.CachedInputUSDMicros = scalePart(log.CachedInputUSDMicros, targetMicros, currentMicros)
 	used := log.InputUSDMicros + log.CachedInputUSDMicros
 	if used >= targetMicros {
 		log.OutputUSDMicros = 0
+		log.RequestUSDMicros = 0
 		return
 	}
 	log.OutputUSDMicros = targetMicros - used
+	log.RequestUSDMicros = 0
 }
 
 func scalePart(value int64, targetMicros int64, currentMicros int64) int64 {
