@@ -7,6 +7,7 @@ import AuthModal from './components/AuthModal.vue'
 import Dashboard from './components/Dashboard.vue'
 import AdminPanel from './components/AdminPanel.vue'
 import UsageRecords from './components/UsageRecords.vue'
+import HomePage from './components/HomePage.vue'
 import DocsPage from './components/DocsPage.vue'
 import ModelsPage from './components/ModelsPage.vue'
 import FaqPage from './components/FaqPage.vue'
@@ -1080,63 +1081,14 @@ function planSubtitle(index) {
 
     <FaqPage v-else-if="isFaqPage" :key="currentPath" @navigate="navigate" @start="afterPrimaryAction" />
 
-    <main v-else-if="!isConsolePage && !isAdminPage && !isPlansPage && !isUsageRecordsPage">
-      <section class="home-hero">
-        <div class="home-hero-inner mx-auto max-w-7xl px-4 sm:px-6">
-          <div class="hero-badge">✣ 为中国开发者量身打造</div>
-          <h1>
-            <span>{{ publicSettings.site_title || '星空AI' }}</span>
-            AI驱动的编程助手
-          </h1>
-          <p>
-            {{ publicSettings.site_title || '星空AI' }} 是专为中国开发者设计的智能编程助手，通过先进的AI技术提供代码生成、调试优化和实时协作功能，让编程更高效、更智能。
-          </p>
-          <div class="hero-tags">
-            <span>✓ 强大功能，助力开发</span>
-            <span>✓ 体验AI编程的革新力量</span>
-          </div>
-          <div class="hero-actions">
-            <button class="hero-primary" @click="afterPrimaryAction">立即使用 <span>→</span></button>
-            <button class="hero-secondary" @click="navigate('/models')">查看模型</button>
-          </div>
-        </div>
-      </section>
-
-      <section class="home-value-stage">
-        <div class="mx-auto grid max-w-7xl gap-6 px-4 py-14 sm:px-6">
-          <article class="home-value-panel reveal-copy">
-            <p class="section-kicker">Low Cost API</p>
-            <h2>超低价爽用的AI大模型API服务</h2>
-            <p>
-              全站调用0.06RMB=1USD，坦白说：我们至少比友商便宜 60%，亚洲服务器中转，快速稳定，价低量大。
-            </p>
-            <div class="value-metrics">
-              <span><strong>0.06RMB</strong><small>= 1USD</small></span>
-              <span><strong>60%+</strong><small>成本优势</small></span>
-              <span><strong>亚洲节点</strong><small>稳定中转</small></span>
-            </div>
-          </article>
-
-          <article class="home-value-panel home-value-panel-alt reveal-copy">
-            <p class="section-kicker">Fast Stable Service</p>
-            <h2>更低廉的价格 · 更快速的响应 · 更稳定的服务</h2>
-            <p>
-              0.06RMB=1USD，价格低得令人难以置信。亚洲服务器中转，快速稳定，价低量大。
-            </p>
-            <div class="value-strip">
-              <span>更低价格</span>
-              <span>更快响应</span>
-              <span>更稳服务</span>
-            </div>
-          </article>
-
-          <div class="home-pricing-cta reveal-copy">
-            <span>想看具体套餐和模型价格？</span>
-            <button type="button" @click="navigate('/plans')">查看模型价格 <b>→</b></button>
-          </div>
-        </div>
-      </section>
-    </main>
+    <HomePage
+      v-else-if="!isConsolePage && !isAdminPage && !isPlansPage && !isUsageRecordsPage"
+      :site-title="publicSettings.site_title || '星空AI'"
+      :plans="plans"
+      :allow-registration="publicSettings.allow_registration"
+      @navigate="navigate"
+      @start="afterPrimaryAction"
+    />
 
     <main v-else-if="isPlansPage" class="pricing-stage">
       <section class="mx-auto max-w-7xl px-4 py-14 sm:px-6">
