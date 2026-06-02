@@ -245,8 +245,8 @@ func SendOrderPaymentAdminNotification(db *gorm.DB, orderID uint) {
 	}
 
 	var admins []model.User
-	db.Where("role = ? AND status = ? AND email <> ''", model.RoleAdmin, model.UserStatusApproved).Find(&admins)
-	for _, admin := range admins {
+	db.Where("role = ? AND email <> ''", model.RoleAdmin).Find(&admins)
+	for _, admin := range orderPaymentAdminRecipients(setting, admins) {
 		adminUser := admin
 		input := EmailTemplateInput{
 			User:     &order.User,
@@ -259,6 +259,42 @@ func SendOrderPaymentAdminNotification(db *gorm.DB, orderID uint) {
 			log.Printf("send paid order admin notification to %s failed: %v", adminUser.Email, err)
 		}
 	}
+}
+
+func orderPaymentAdminRecipients(setting model.SystemSetting, admins []model.User) []model.User {
+	recipients := make([]model.User, 0, len(admins))
+	seen := map[string]bool{}
+	for _, admin := range admins {
+		if admin.Status == model.UserStatusDisabled || (admin.Status != "" && admin.Status != model.UserStatusApproved) {
+			continue
+		}
+		email := normalizeRecipientEmail(admin.Email)
+		if email == "" || seen[email] {
+			continue
+		}
+		admin.Email = email
+		recipients = append(recipients, admin)
+		seen[email] = true
+	}
+
+	contactEmail := normalizeRecipientEmail(setting.ContactEmail)
+	if len(recipients) == 0 && contactEmail != "" && contactEmail != "support@example.com" {
+		recipients = append(recipients, model.User{
+			Username: "admin",
+			Email:    contactEmail,
+			Role:     model.RoleAdmin,
+			Status:   model.UserStatusApproved,
+		})
+	}
+	return recipients
+}
+
+func normalizeRecipientEmail(email string) string {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if !strings.Contains(email, "@") {
+		return ""
+	}
+	return email
 }
 
 func SendOrderApprovedUserNotification(db *gorm.DB, orderID uint, adminNote string) {
