@@ -67,6 +67,7 @@ const (
 
 	QuotaReservationStatusActive    = "active"
 	QuotaReservationStatusCompleted = "completed"
+	QuotaReservationStatusCanceled  = "canceled"
 )
 
 type User struct {

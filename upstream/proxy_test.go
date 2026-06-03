@@ -300,3 +300,22 @@ func TestDynamicMaxOutputTokensDeniesWhenInputEstimateExceedsBudget(t *testing.T
 		t.Fatalf("dynamicMaxOutputTokens() = %d, want 0 when input estimate exceeds budget", got)
 	}
 }
+
+func TestShouldRecordUsageResponseOnlyAllowsSuccess(t *testing.T) {
+	cases := []struct {
+		status int
+		want   bool
+	}{
+		{status: http.StatusOK, want: true},
+		{status: http.StatusNoContent, want: true},
+		{status: http.StatusBadRequest, want: false},
+		{status: http.StatusTooManyRequests, want: false},
+		{status: http.StatusInternalServerError, want: false},
+	}
+
+	for _, tt := range cases {
+		if got := shouldRecordUsageResponse(tt.status); got != tt.want {
+			t.Fatalf("shouldRecordUsageResponse(%d) = %v, want %v", tt.status, got, tt.want)
+		}
+	}
+}

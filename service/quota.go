@@ -373,6 +373,20 @@ func CompleteQuotaReservationWithAPILog(db *gorm.DB, reservationID uint, log *mo
 	})
 }
 
+func CancelQuotaReservation(db *gorm.DB, reservationID uint, now time.Time) error {
+	if db == nil || reservationID == 0 {
+		return nil
+	}
+	completedAt := now
+	return db.Model(&model.QuotaReservation{}).
+		Where("id = ? AND status = ?", reservationID, model.QuotaReservationStatusActive).
+		Updates(map[string]interface{}{
+			"reserved_usd_cents": 0,
+			"status":             model.QuotaReservationStatusCanceled,
+			"completed_at":       &completedAt,
+		}).Error
+}
+
 func APILogUSDCents(log *model.APILog) int64 {
 	if log == nil {
 		return 0

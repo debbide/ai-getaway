@@ -67,9 +67,11 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 		if quotaReservation != nil {
 			quotaReservationID = quotaReservation.ID
 			if cappedInfo, ok, err := applyDynamicOutputLimit(db, c.Request, requestInfo, quotaReservation.ReservedUSDCents, groupMultipliers); err != nil {
+				service.CancelQuotaReservation(db, quotaReservationID, time.Now())
 				c.JSON(http.StatusBadRequest, gin.H{"error": "请求体解析失败"})
 				return
 			} else if !ok {
+				service.CancelQuotaReservation(db, quotaReservationID, time.Now())
 				c.JSON(http.StatusTooManyRequests, gin.H{"error": "令牌额度耗尽"})
 				return
 			} else {
@@ -98,6 +100,10 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 		}
 		proxy.FlushInterval = 100 * time.Millisecond
 		proxy.ModifyResponse = func(resp *http.Response) error {
+			if !shouldRecordUsageResponse(resp.StatusCode) {
+				service.CancelQuotaReservation(db, quotaReservationID, time.Now())
+				return nil
+			}
 			log := model.APILog{
 				UserID:      apiKey.UserID,
 				APIKeyID:    apiKey.ID,
@@ -130,16 +136,7 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 			return nil
 		}
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			log := model.APILog{
-				UserID:       apiKey.UserID,
-				APIKeyID:     apiKey.ID,
-				Method:       r.Method,
-				Path:         r.URL.Path,
-				StatusCode:   502,
-				LatencyMs:    time.Since(start).Milliseconds(),
-				ErrorMessage: err.Error(),
-			}
-			service.CompleteQuotaReservationWithAPILog(db, quotaReservationID, &log, time.Now())
+			service.CancelQuotaReservation(db, quotaReservationID, time.Now())
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write([]byte(`{"error":"上游请求失败"}`))
@@ -463,6 +460,10 @@ func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start
 
 func isEventStream(resp *http.Response) bool {
 	return strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
+}
+
+func shouldRecordUsageResponse(statusCode int) bool {
+	return statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
 }
 
 func requestType(path string, stream bool) string {
