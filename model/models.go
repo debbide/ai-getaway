@@ -64,6 +64,9 @@ const (
 	ChannelMonitorStatusAvailable   = "available"
 	ChannelMonitorStatusDegraded    = "degraded"
 	ChannelMonitorStatusUnavailable = "unavailable"
+
+	QuotaReservationStatusActive    = "active"
+	QuotaReservationStatusCompleted = "completed"
 )
 
 type User struct {
@@ -331,6 +334,17 @@ type APILog struct {
 	FirstTokenMs             int64
 	LatencyMs                int64
 	ErrorMessage             string `gorm:"size:512"`
+}
+
+type QuotaReservation struct {
+	gorm.Model
+	UserID           uint `gorm:"index;not null"`
+	User             User
+	APIKeyID         uint `gorm:"index;not null"`
+	APIKey           APIKey
+	ReservedUSDCents int64      `gorm:"default:0;index"`
+	Status           string     `gorm:"size:32;default:active;index"`
+	CompletedAt      *time.Time `gorm:"index"`
 }
 
 type SystemSetting struct {

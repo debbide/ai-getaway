@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -53,10 +54,27 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 
 		start := time.Now()
 		requestInfo := parseRequestInfo(c.Request)
-		quotaBudgetMicros, quotaLimited := requestQuotaBudgetMicros(db, apiKey.User, start)
-		if quotaLimited && estimateUsageMicros(db, requestInfo.Model, requestInfo.BodyBytes, 0, groupMultipliers) >= quotaBudgetMicros {
+		quotaReservation, quotaAllowed, err := service.BeginQuotaReservation(db, apiKey.User, apiKey.ID, start)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "额度预占失败"})
+			return
+		}
+		if !quotaAllowed {
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "令牌额度耗尽"})
 			return
+		}
+		quotaReservationID := uint(0)
+		if quotaReservation != nil {
+			quotaReservationID = quotaReservation.ID
+			if cappedInfo, ok, err := applyDynamicOutputLimit(db, c.Request, requestInfo, quotaReservation.ReservedUSDCents, groupMultipliers); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请求体解析失败"})
+				return
+			} else if !ok {
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "令牌额度耗尽"})
+				return
+			} else {
+				requestInfo = cappedInfo
+			}
 		}
 		protocol := model.ProtocolGPT
 		if value, ok := c.Get("protocol"); ok {
@@ -91,38 +109,23 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 			}
 			if isEventStream(resp) {
 				resp.Body = &usageStreamReadCloser{
-					ReadCloser:        resp.Body,
-					start:             start,
-					log:               &log,
-					db:                db,
-					hub:               hub,
-					multipliers:       groupMultipliers,
-					quotaLimited:      quotaLimited,
-					quotaBudgetMicros: quotaBudgetMicros,
-					requestBodyBytes:  requestInfo.BodyBytes,
+					ReadCloser:    resp.Body,
+					start:         start,
+					log:           &log,
+					db:            db,
+					hub:           hub,
+					multipliers:   groupMultipliers,
+					reservationID: quotaReservationID,
 				}
 			} else {
 				body, err := io.ReadAll(resp.Body)
 				if err == nil {
 					fillUsage(db, &log, body, groupMultipliers)
-					quotaExceeded := quotaLimited && capResponseToQuota(&log, quotaBudgetMicros)
-					if quotaExceeded {
-						log.StatusCode = http.StatusTooManyRequests
-					}
-					finalizeUsageLog(db, hub, &log, start, groupMultipliers)
-					if quotaExceeded {
-						body = quotaExceededBody()
-						resp.StatusCode = http.StatusTooManyRequests
-						resp.Status = "429 Too Many Requests"
-						resp.Header.Set("Content-Type", "application/json; charset=utf-8")
-						resp.Header.Set("X-Quota-Exceeded", "true")
-						resp.ContentLength = int64(len(body))
-						resp.Header.Set("Content-Length", intToString(uint(len(body))))
-					}
+					finalizeUsageLog(db, hub, &log, start, quotaReservationID, groupMultipliers)
 					resp.Body = io.NopCloser(bytes.NewReader(body))
 					return nil
 				}
-				finalizeUsageLog(db, hub, &log, start, groupMultipliers)
+				finalizeUsageLog(db, hub, &log, start, quotaReservationID, groupMultipliers)
 			}
 			return nil
 		}
@@ -136,7 +139,7 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 				LatencyMs:    time.Since(start).Milliseconds(),
 				ErrorMessage: err.Error(),
 			}
-			service.CreateAPILogWithinPlanQuota(db, &log, time.Now())
+			service.CompleteQuotaReservationWithAPILog(db, quotaReservationID, &log, time.Now())
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write([]byte(`{"error":"上游请求失败"}`))
@@ -170,6 +173,129 @@ func parseRequestInfo(req *http.Request) requestInfo {
 		return requestInfo{BodyBytes: int64(len(body))}
 	}
 	return requestInfo{Model: payload.Model, Stream: payload.Stream, BodyBytes: int64(len(body))}
+}
+
+func applyDynamicOutputLimit(db *gorm.DB, req *http.Request, info requestInfo, reservedUSDCents int64, groupMultipliers any) (requestInfo, bool, error) {
+	if req == nil || req.Body == nil || req.Method == http.MethodGet || reservedUSDCents <= 0 || info.BodyBytes <= 0 || info.Model == "" {
+		return info, true, nil
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return info, true, err
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	if len(body) == 0 {
+		return info, true, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return info, true, err
+	}
+
+	maxOutputTokens := dynamicMaxOutputTokens(db, info.Model, int64(len(body)), reservedUSDCents, groupMultipliers)
+	if maxOutputTokens <= 0 {
+		return info, false, nil
+	}
+	if maxOutputTokens >= math.MaxInt32 {
+		return info, true, nil
+	}
+	field := outputLimitField(req.URL.Path, payload)
+	if field == "" {
+		return info, true, nil
+	}
+	setTokenLimit(payload, field, maxOutputTokens)
+
+	nextBody, err := json.Marshal(payload)
+	if err != nil {
+		return info, true, err
+	}
+	req.Body = io.NopCloser(bytes.NewReader(nextBody))
+	req.ContentLength = int64(len(nextBody))
+	req.Header.Set("Content-Length", intToString(uint(len(nextBody))))
+	info.BodyBytes = int64(len(nextBody))
+	return info, true, nil
+}
+
+func dynamicMaxOutputTokens(db *gorm.DB, modelName string, bodyBytes int64, reservedUSDCents int64, groupMultipliers any) int64 {
+	pricing, _ := service.FindModelPricing(db, modelName)
+	multiplier := pricing.BillingMultiplier
+	if multiplier <= 0 {
+		multiplier = 1
+	}
+	effectiveMultiplier := multiplier * service.ResolveGroupMultiplier(pricing, groupMultipliers)
+	if pricing.BillingMode == model.ModelBillingModeRequest {
+		requestMicros := int64(math.Round(pricing.RequestUSD * effectiveMultiplier * 1_000_000))
+		if requestMicros > reservedUSDCents*10_000 {
+			return 0
+		}
+		return math.MaxInt32
+	}
+	outputMicrosPerToken := pricing.OutputUSDPerMillion * effectiveMultiplier
+	if outputMicrosPerToken <= 0 {
+		return math.MaxInt32
+	}
+	inputTokens := estimatedTokensFromBytes(bodyBytes)
+	inputMicros := int64(math.Ceil(float64(inputTokens) * pricing.InputUSDPerMillion * effectiveMultiplier))
+	availableMicros := reservedUSDCents*10_000 - inputMicros
+	if availableMicros <= 0 {
+		return 0
+	}
+	maxTokens := int64(math.Floor(float64(availableMicros) / outputMicrosPerToken))
+	if maxTokens < 1 {
+		return 0
+	}
+	if maxTokens > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return maxTokens
+}
+
+func outputLimitField(path string, payload map[string]any) string {
+	endpoint := strings.TrimPrefix(strings.ToLower(path), "/v1/")
+	switch {
+	case strings.Contains(endpoint, "responses"):
+		return "max_output_tokens"
+	case strings.Contains(endpoint, "messages"):
+		return "max_tokens"
+	case strings.Contains(endpoint, "chat/completions"):
+		if _, ok := payload["max_tokens"]; ok {
+			return "max_tokens"
+		}
+		return "max_completion_tokens"
+	default:
+		return ""
+	}
+}
+
+func setTokenLimit(payload map[string]any, field string, maxTokens int64) {
+	if current, ok := numericJSONInt(payload[field]); ok && current > 0 && current < maxTokens {
+		return
+	}
+	payload[field] = maxTokens
+}
+
+func numericJSONInt(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		if typed <= 0 {
+			return 0, false
+		}
+		return int64(math.Floor(typed)), true
+	case int64:
+		return typed, typed > 0
+	case int:
+		return int64(typed), typed > 0
+	default:
+		return 0, false
+	}
+}
+
+func estimatedTokensFromBytes(value int64) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return (value + 1) / 2
 }
 
 func fillUsage(db *gorm.DB, log *model.APILog, body []byte, groupMultipliers ...any) {
@@ -255,25 +381,18 @@ func usesRequestBilling(db *gorm.DB, modelName string) bool {
 
 type usageStreamReadCloser struct {
 	io.ReadCloser
-	start             time.Time
-	log               *model.APILog
-	db                *gorm.DB
-	hub               *service.LogHub
-	multipliers       any
-	quotaLimited      bool
-	quotaBudgetMicros int64
-	requestBodyBytes  int64
-	buf               bytes.Buffer
-	firstToken        bool
-	closed            bool
-	cutoff            bool
+	start         time.Time
+	log           *model.APILog
+	db            *gorm.DB
+	hub           *service.LogHub
+	multipliers   any
+	reservationID uint
+	buf           bytes.Buffer
+	firstToken    bool
+	closed        bool
 }
 
 func (r *usageStreamReadCloser) Read(p []byte) (int, error) {
-	if r.cutoff {
-		r.finish()
-		return 0, io.EOF
-	}
 	n, err := r.ReadCloser.Read(p)
 	if n > 0 {
 		if !r.firstToken {
@@ -281,12 +400,6 @@ func (r *usageStreamReadCloser) Read(p []byte) (int, error) {
 			r.firstToken = true
 		}
 		r.buf.Write(p[:n])
-		if r.streamBudgetExceeded() {
-			r.cutoff = true
-			_ = r.ReadCloser.Close()
-			r.finish()
-			return 0, io.EOF
-		}
 	}
 	if err == io.EOF {
 		r.finish()
@@ -305,20 +418,7 @@ func (r *usageStreamReadCloser) finish() {
 	}
 	r.closed = true
 	fillStreamUsage(r.db, r.log, r.buf.Bytes(), r.multipliers)
-	if r.cutoff || capResponseToQuota(r.log, r.quotaBudgetMicros) {
-		r.log.StatusCode = http.StatusTooManyRequests
-	}
-	finalizeUsageLog(r.db, r.hub, r.log, r.start, r.multipliers)
-}
-
-func (r *usageStreamReadCloser) streamBudgetExceeded() bool {
-	if !r.quotaLimited {
-		return false
-	}
-	if streamExceedsQuota(r.db, r.log, r.buf.Bytes(), r.multipliers, r.quotaBudgetMicros) {
-		return true
-	}
-	return estimateUsageMicros(r.db, r.log.ModelName, r.requestBodyBytes, int64(r.buf.Len()), r.multipliers) >= r.quotaBudgetMicros
+	finalizeUsageLog(r.db, r.hub, r.log, r.start, r.reservationID, r.multipliers)
 }
 
 func fillStreamUsage(db *gorm.DB, log *model.APILog, body []byte, groupMultipliers ...any) {
@@ -337,21 +437,7 @@ func fillStreamUsage(db *gorm.DB, log *model.APILog, body []byte, groupMultiplie
 	}
 }
 
-func streamExceedsQuota(db *gorm.DB, log *model.APILog, body []byte, groupMultipliers any, quotaBudgetMicros int64) bool {
-	current := *log
-	fillStreamUsage(db, &current, body, groupMultipliers)
-	return current.EstimatedUSDMicros >= quotaBudgetMicros
-}
-
-func capResponseToQuota(log *model.APILog, quotaBudgetMicros int64) bool {
-	if quotaBudgetMicros <= 0 || log == nil || log.EstimatedUSDMicros <= quotaBudgetMicros {
-		return false
-	}
-	log.ErrorMessage = appendErrorMessage(log.ErrorMessage, "令牌额度耗尽")
-	return true
-}
-
-func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start time.Time, groupMultipliers ...any) {
+func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start time.Time, reservationID uint, groupMultipliers ...any) {
 	now := time.Now()
 	if log.RequestType == "" {
 		log.RequestType = requestType(log.Path, false)
@@ -363,7 +449,7 @@ func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start
 		applyBillingResult(log, service.BillUsageWithGroupMultipliers(db, log.ModelName, log.PromptTokens, log.CachedInputTokens, log.CompletionTokens, log.TotalTokens, firstGroupMultipliers(groupMultipliers)))
 	}
 	log.LatencyMs = time.Since(start).Milliseconds()
-	service.CreateAPILogWithinPlanQuota(db, log, now)
+	service.CompleteQuotaReservationWithAPILog(db, reservationID, log, now)
 	hub.Broadcast(service.LogEvent{
 		UserID:     log.UserID,
 		APIKeyID:   log.APIKeyID,
@@ -373,48 +459,6 @@ func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start
 		LatencyMs:  log.LatencyMs,
 		CreatedAt:  now,
 	})
-}
-
-func requestQuotaBudgetMicros(db *gorm.DB, user model.User, now time.Time) (int64, bool) {
-	usage, ok := service.UserPlanQuotaUsage(db, user, now)
-	if !ok || usage.LimitUSDCents <= 0 {
-		return 0, false
-	}
-	if usage.RemainingCents <= 0 {
-		return 0, true
-	}
-	return usage.RemainingCents * 10_000, true
-}
-
-func estimateUsageMicros(db *gorm.DB, modelName string, inputBytes int64, outputBytes int64, groupMultipliers any) int64 {
-	inputTokens := estimatedTokensFromBytes(inputBytes)
-	outputTokens := estimatedTokensFromBytes(outputBytes)
-	if inputTokens <= 0 && outputTokens <= 0 {
-		return 0
-	}
-	return service.BillUsageWithGroupMultipliers(db, modelName, inputTokens, 0, outputTokens, inputTokens+outputTokens, groupMultipliers).TotalUSDMicros
-}
-
-func estimatedTokensFromBytes(value int64) int64 {
-	if value <= 0 {
-		return 0
-	}
-	return (value + 1) / 2
-}
-
-func appendErrorMessage(current string, next string) string {
-	current = strings.TrimSpace(current)
-	if current == "" {
-		return next
-	}
-	if strings.Contains(current, next) {
-		return current
-	}
-	return current + "; " + next
-}
-
-func quotaExceededBody() []byte {
-	return []byte(`{"error":"令牌额度耗尽"}`)
 }
 
 func isEventStream(resp *http.Response) bool {

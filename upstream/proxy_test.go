@@ -1,6 +1,10 @@
 package upstream
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
 	"testing"
 
 	"ai-gateway/model"
@@ -236,31 +240,63 @@ func TestFillUsageAppliesChannelGroupMultiplier(t *testing.T) {
 	}
 }
 
-func TestCapResponseToQuotaMarksExceeded(t *testing.T) {
-	log := model.APILog{EstimatedUSDMicros: 9_000_000}
-
-	if !capResponseToQuota(&log, 1_000_000) {
-		t.Fatal("capResponseToQuota() = false, want true")
+func TestApplyDynamicOutputLimitCapsResponsesRequest(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","input":"hello"}`)
+	req, err := http.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if log.ErrorMessage != "令牌额度耗尽" {
-		t.Fatalf("ErrorMessage = %q", log.ErrorMessage)
+	info := requestInfo{Model: "gpt-5.5", BodyBytes: int64(len(body))}
+
+	nextInfo, ok, err := applyDynamicOutputLimit(nil, req, info, 100, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("applyDynamicOutputLimit() denied request, want allowed")
+	}
+	if nextInfo.BodyBytes <= info.BodyBytes {
+		t.Fatalf("BodyBytes = %d, want capped body larger than original %d", nextInfo.BodyBytes, info.BodyBytes)
+	}
+	updated, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(updated, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := numericJSONInt(payload["max_output_tokens"]); !ok || got <= 0 {
+		t.Fatalf("max_output_tokens = %v, want positive integer", payload["max_output_tokens"])
 	}
 }
 
-func TestStreamExceedsQuotaAtBudgetBoundary(t *testing.T) {
-	log := model.APILog{}
-	body := []byte("data: {\"model\":\"gpt-4o-mini\",\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":7,\"total_tokens\":17,\"cost_usd\":0.017485}}\n\n")
+func TestApplyDynamicOutputLimitKeepsLowerClientLimit(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"max_tokens":7}`)
+	req, err := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := requestInfo{Model: "gpt-5.5", BodyBytes: int64(len(body))}
 
-	if !streamExceedsQuota(nil, &log, body, nil, 17485) {
-		t.Fatal("streamExceedsQuota() = false, want true at quota boundary")
+	if _, ok, err := applyDynamicOutputLimit(nil, req, info, 100, nil); err != nil || !ok {
+		t.Fatalf("applyDynamicOutputLimit() ok=%v err=%v, want allowed without error", ok, err)
+	}
+	updated, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(updated, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := numericJSONInt(payload["max_tokens"]); got != 7 {
+		t.Fatalf("max_tokens = %d, want existing lower limit 7", got)
 	}
 }
 
-func TestEstimatedTokensFromBytesRoundsConservatively(t *testing.T) {
-	if got := estimatedTokensFromBytes(1); got != 1 {
-		t.Fatalf("estimatedTokensFromBytes(1) = %d, want 1", got)
-	}
-	if got := estimatedTokensFromBytes(3); got != 2 {
-		t.Fatalf("estimatedTokensFromBytes(3) = %d, want 2", got)
+func TestDynamicMaxOutputTokensDeniesWhenInputEstimateExceedsBudget(t *testing.T) {
+	if got := dynamicMaxOutputTokens(nil, "gpt-5.5", 1_000_000, 1, nil); got != 0 {
+		t.Fatalf("dynamicMaxOutputTokens() = %d, want 0 when input estimate exceeds budget", got)
 	}
 }

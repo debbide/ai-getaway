@@ -196,6 +196,10 @@ func QuotaUsageWindow(period string, activeFrom *time.Time, now time.Time) (time
 }
 
 func UsedUSDCentsSince(db *gorm.DB, userID uint, since time.Time) int64 {
+	return usedAPILogUSDCentsSince(db, userID, since) + ActiveReservedUSDCentsSince(db, userID, since, 0)
+}
+
+func usedAPILogUSDCentsSince(db *gorm.DB, userID uint, since time.Time) int64 {
 	if db == nil {
 		return 0
 	}
@@ -204,6 +208,20 @@ func UsedUSDCentsSince(db *gorm.DB, userID uint, since time.Time) int64 {
 		Where("user_id = ? AND created_at >= ?", userID, since).
 		Select("COALESCE(SUM(CASE WHEN estimated_usd_micros > 0 THEN CEILING(estimated_usd_micros / 10000) ELSE estimated_usd_cents END), 0)").
 		Scan(&total)
+	return total
+}
+
+func ActiveReservedUSDCentsSince(db *gorm.DB, userID uint, since time.Time, excludeReservationID uint) int64 {
+	if db == nil {
+		return 0
+	}
+	query := db.Model(&model.QuotaReservation{}).
+		Where("user_id = ? AND status = ? AND created_at >= ?", userID, model.QuotaReservationStatusActive, since)
+	if excludeReservationID > 0 {
+		query = query.Where("id <> ?", excludeReservationID)
+	}
+	var total int64
+	query.Select("COALESCE(SUM(reserved_usd_cents), 0)").Scan(&total)
 	return total
 }
 
@@ -255,6 +273,103 @@ func CreateAPILogWithinPlanQuota(db *gorm.DB, log *model.APILog, now time.Time) 
 				Update("remaining_usd_cents", gorm.Expr("remaining_usd_cents - ?", cost)).Error
 		}
 		return tx.Create(log).Error
+	})
+}
+
+func BeginQuotaReservation(db *gorm.DB, user model.User, apiKeyID uint, now time.Time) (*model.QuotaReservation, bool, error) {
+	if db == nil {
+		return nil, true, nil
+	}
+	if !HasActiveSubscription(user, now) || user.Plan == nil {
+		return nil, true, nil
+	}
+
+	var reservation *model.QuotaReservation
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var lockedUser model.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Preload("Plan").First(&lockedUser, user.ID).Error; err != nil {
+			return err
+		}
+		if !HasActiveSubscription(lockedUser, now) || lockedUser.Plan == nil {
+			return nil
+		}
+		startedAt := SubscriptionStartAt(tx, lockedUser, now)
+		usage := PlanQuotaUsageFrom(tx, lockedUser.ID, lockedUser.Plan, startedAt, now)
+		if !QuotaAllowsRequest(usage) {
+			reservation = nil
+			return nil
+		}
+		reserved := usage.RemainingCents - MinQuotaRemainingUSDCents
+		if reserved <= 0 {
+			reservation = nil
+			return nil
+		}
+		item := model.QuotaReservation{
+			UserID:           lockedUser.ID,
+			APIKeyID:         apiKeyID,
+			ReservedUSDCents: reserved,
+			Status:           model.QuotaReservationStatusActive,
+		}
+		if err := tx.Create(&item).Error; err != nil {
+			return err
+		}
+		reservation = &item
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if reservation == nil {
+		return nil, false, nil
+	}
+	return reservation, true, nil
+}
+
+func CompleteQuotaReservationWithAPILog(db *gorm.DB, reservationID uint, log *model.APILog, now time.Time) error {
+	if reservationID == 0 {
+		return CreateAPILogWithinPlanQuota(db, log, now)
+	}
+	if db == nil || log == nil {
+		return nil
+	}
+	if log.CreatedAt.IsZero() {
+		log.CreatedAt = now
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		var reservation model.QuotaReservation
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&reservation, reservationID).Error; err != nil {
+			return err
+		}
+		if reservation.Status != model.QuotaReservationStatusActive {
+			return tx.Create(log).Error
+		}
+
+		var user model.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Preload("Plan").Preload("PublicChannel").First(&user, reservation.UserID).Error; err != nil {
+			return err
+		}
+		if HasActiveSubscription(user, now) && user.Plan != nil {
+			startedAt := SubscriptionStartAt(tx, user, now)
+			start, _ := QuotaUsageWindow(user.Plan.QuotaPeriod, startedAt, now)
+			limit := user.Plan.SettlementUSDCents
+			usedLogs := capUsedUSDCents(usedAPILogUSDCentsSince(tx, user.ID, start), limit)
+			otherReserved := ActiveReservedUSDCentsSince(tx, user.ID, start, reservation.ID)
+			available := limit - usedLogs - otherReserved
+			if available < 0 {
+				available = 0
+			}
+			capAPILogCost(log, available)
+		}
+		if err := tx.Create(log).Error; err != nil {
+			return err
+		}
+		completedAt := now
+		return tx.Model(&reservation).Updates(map[string]interface{}{
+			"reserved_usd_cents": 0,
+			"status":             model.QuotaReservationStatusCompleted,
+			"completed_at":       &completedAt,
+		}).Error
 	})
 }
 
