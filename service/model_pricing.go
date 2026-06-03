@@ -73,6 +73,9 @@ func SyncOfficialOpenAIModelPrices(db *gorm.DB) (int, error) {
 	for _, item := range OfficialOpenAIModelPrices() {
 		var existing model.ModelPricing
 		err := db.Unscoped().Where("model = ?", item.ModelName).First(&existing).Error
+		if err == nil && existing.DeletedAt.Valid {
+			continue
+		}
 		pricing := model.ModelPricing{
 			ModelName:                item.ModelName,
 			DisplayName:              item.DisplayName,
@@ -91,7 +94,7 @@ func SyncOfficialOpenAIModelPrices(db *gorm.DB) (int, error) {
 			Notes:                    item.Notes,
 		}
 		if err == nil {
-			if err := db.Unscoped().Model(&existing).Updates(modelPricingSyncUpdates(existing, pricing)).Error; err != nil {
+			if err := db.Model(&existing).Updates(modelPricingSyncUpdates(existing, pricing)).Error; err != nil {
 				return synced, err
 			}
 			synced++
@@ -134,7 +137,6 @@ func modelPricingSyncUpdates(existing model.ModelPricing, pricing model.ModelPri
 		"official_source":              pricing.OfficialSource,
 		"official_synced_at":           pricing.OfficialSyncedAt,
 		"notes":                        pricing.Notes,
-		"deleted_at":                   nil,
 	}
 	if existing.Status == "" {
 		updates["status"] = model.ModelPricingStatusActive

@@ -80,9 +80,6 @@ func Seed(db *gorm.DB, cfg config.Config) {
 
 	seedDocs(db)
 	service.SeedEmailTemplates(db)
-	if _, err := service.SyncOfficialOpenAIModelPrices(db); err != nil {
-		log.Printf("seed model pricing failed: %v", err)
-	}
 
 	db.FirstOrCreate(&model.SystemSetting{}, model.SystemSetting{Model: gorm.Model{ID: 1}, AllowRegistration: true})
 
