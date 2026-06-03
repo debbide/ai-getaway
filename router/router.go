@@ -170,8 +170,8 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 		}
 	}
 
-	r.Any("/v1/*path", middleware.APIKeyAuth(db, redisClient), upstream.ProxyHandler(db, logHub))
-	r.Any("/messages", middleware.APIKeyAuth(db, redisClient), upstream.ProxyHandler(db, logHub))
+	r.Any("/v1/*path", middleware.APIKeyAuth(cfg, db, redisClient), upstream.ProxyHandler(cfg, db, logHub))
+	r.Any("/messages", middleware.APIKeyAuth(cfg, db, redisClient), upstream.ProxyHandler(cfg, db, logHub))
 	return r
 }
 

@@ -8,26 +8,30 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
-	AppEnv            string
-	AppPort           string
-	DBDSN             string
-	RedisAddr         string
-	RedisPassword     string
-	RedisDB           int
-	JWTSecret         string
-	DefaultAdminMail  string
-	DefaultAdminPass  string
-	UpstreamTimeout   string
-	AllowedOrigins    []string
-	PublicBaseURL     string
-	ClusterMode       bool
-	InstanceID        string
-	InstanceURL       string
-	ClusterToken      string
-	RunBackgroundJobs bool
+	AppEnv                 string
+	AppPort                string
+	DBDSN                  string
+	RedisAddr              string
+	RedisPassword          string
+	RedisDB                int
+	JWTSecret              string
+	DefaultAdminMail       string
+	DefaultAdminPass       string
+	UpstreamTimeout        time.Duration
+	MaxProxyBodyBytes      int64
+	MaxSSEUsageBufferBytes int64
+	APIKeyRateLimitPerMin  int
+	AllowedOrigins         []string
+	PublicBaseURL          string
+	ClusterMode            bool
+	InstanceID             string
+	InstanceURL            string
+	ClusterToken           string
+	RunBackgroundJobs      bool
 }
 
 func Load() Config {
@@ -37,23 +41,26 @@ func Load() Config {
 	dbDSN := normalizeMySQLDSN(getEnv("DB_DSN", "root:password@tcp(127.0.0.1:3306)/ai_gateway?charset=utf8mb4&parseTime=True&loc=Local"))
 
 	cfg := Config{
-		AppEnv:            getEnv("APP_ENV", "development"),
-		AppPort:           appPort,
-		DBDSN:             dbDSN,
-		RedisAddr:         getEnv("REDIS_ADDR", "127.0.0.1:6379"),
-		RedisPassword:     getEnv("REDIS_PASSWORD", ""),
-		RedisDB:           getEnvInt("REDIS_DB", 0),
-		JWTSecret:         jwtSecret,
-		DefaultAdminMail:  getEnv("DEFAULT_ADMIN_EMAIL", "admin@example.com"),
-		DefaultAdminPass:  getEnv("DEFAULT_ADMIN_PASSWORD", "admin123456"),
-		UpstreamTimeout:   getEnv("UPSTREAM_TIMEOUT", "120s"),
-		AllowedOrigins:    splitCSV(getEnv("ALLOWED_ORIGINS", "*")),
-		PublicBaseURL:     strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
-		ClusterMode:       getEnvBool("CLUSTER_MODE", false),
-		InstanceID:        getEnv("INSTANCE_ID", defaultInstanceID()),
-		InstanceURL:       strings.TrimRight(getEnv("INSTANCE_ADVERTISE_URL", "http://127.0.0.1:"+appPort), "/"),
-		ClusterToken:      getEnv("CLUSTER_INTERNAL_TOKEN", jwtSecret),
-		RunBackgroundJobs: getEnvBool("RUN_BACKGROUND_JOBS", true),
+		AppEnv:                 getEnv("APP_ENV", "development"),
+		AppPort:                appPort,
+		DBDSN:                  dbDSN,
+		RedisAddr:              getEnv("REDIS_ADDR", "127.0.0.1:6379"),
+		RedisPassword:          getEnv("REDIS_PASSWORD", ""),
+		RedisDB:                getEnvInt("REDIS_DB", 0),
+		JWTSecret:              jwtSecret,
+		DefaultAdminMail:       getEnv("DEFAULT_ADMIN_EMAIL", "admin@example.com"),
+		DefaultAdminPass:       getEnv("DEFAULT_ADMIN_PASSWORD", "admin123456"),
+		UpstreamTimeout:        getEnvDuration("UPSTREAM_TIMEOUT", 120*time.Second),
+		MaxProxyBodyBytes:      getEnvInt64("MAX_PROXY_BODY_BYTES", 10*1024*1024),
+		MaxSSEUsageBufferBytes: getEnvInt64("MAX_SSE_USAGE_BUFFER_BYTES", 1024*1024),
+		APIKeyRateLimitPerMin:  getEnvInt("API_KEY_RATE_LIMIT_PER_MINUTE", 120),
+		AllowedOrigins:         splitCSV(getEnv("ALLOWED_ORIGINS", "*")),
+		PublicBaseURL:          strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
+		ClusterMode:            getEnvBool("CLUSTER_MODE", false),
+		InstanceID:             getEnv("INSTANCE_ID", defaultInstanceID()),
+		InstanceURL:            strings.TrimRight(getEnv("INSTANCE_ADVERTISE_URL", "http://127.0.0.1:"+appPort), "/"),
+		ClusterToken:           getEnv("CLUSTER_INTERNAL_TOKEN", jwtSecret),
+		RunBackgroundJobs:      getEnvBool("RUN_BACKGROUND_JOBS", true),
 	}
 	if err := cfg.Validate(); err != nil {
 		panic(err)
@@ -107,6 +114,30 @@ func getEnvInt(key string, fallback int) int {
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func getEnvInt64(key string, fallback int64) int64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func getEnvDuration(key string, fallback time.Duration) time.Duration {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
 		return fallback
 	}
 	return parsed

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-gateway/config"
 	"ai-gateway/model"
 	"ai-gateway/response"
 	"ai-gateway/service"
@@ -16,7 +17,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
+func APIKeyAuth(cfg config.Config, db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetHeader("X-API-Key")
 		if token == "" {
@@ -55,7 +56,7 @@ func APIKeyAuth(db *gorm.DB, redisClient *redis.Client) gin.HandlerFunc {
 			return
 		}
 
-		if !allowAPIKey(redisClient, apiKey.ID) {
+		if !allowAPIKey(redisClient, apiKey.ID, cfg.APIKeyRateLimitPerMin) {
 			response.Error(c, 429, "rate limit exceeded")
 			c.Abort()
 			return
@@ -182,7 +183,10 @@ func allowPlanQuota(db *gorm.DB, user model.User) bool {
 	return true
 }
 
-func allowAPIKey(redisClient *redis.Client, apiKeyID uint) bool {
+func allowAPIKey(redisClient *redis.Client, apiKeyID uint, limitPerMinute int) bool {
+	if limitPerMinute <= 0 {
+		return true
+	}
 	if redisClient == nil {
 		return true
 	}
@@ -197,5 +201,5 @@ func allowAPIKey(redisClient *redis.Client, apiKeyID uint) bool {
 	if count == 1 {
 		redisClient.Expire(ctx, key, time.Minute)
 	}
-	return count <= 120
+	return count <= int64(limitPerMinute)
 }

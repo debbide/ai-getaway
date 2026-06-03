@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -13,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-gateway/config"
 	"ai-gateway/model"
 	"ai-gateway/service"
 
@@ -20,7 +23,12 @@ import (
 	"gorm.io/gorm"
 )
 
-func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
+const defaultMaxSSELineBytes = 1024 * 1024
+
+var errBodyTooLarge = errors.New("proxy body too large")
+
+func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
+	transport := newProxyTransport(cfg.UpstreamTimeout)
 	return func(c *gin.Context) {
 		service.AddActiveAPIConnection(1)
 		defer service.AddActiveAPIConnection(-1)
@@ -53,7 +61,15 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 		}
 
 		start := time.Now()
-		requestInfo := parseRequestInfo(c.Request)
+		requestInfo, err := parseRequestInfo(c.Request, cfg.MaxProxyBodyBytes)
+		if errors.Is(err, errBodyTooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "请求体过大"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求体解析失败"})
+			return
+		}
 		quotaReservation, quotaAllowed, err := service.BeginQuotaReservation(db, apiKey.User, apiKey.ID, start)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "额度预占失败"})
@@ -66,7 +82,11 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 		quotaReservationID := uint(0)
 		if quotaReservation != nil {
 			quotaReservationID = quotaReservation.ID
-			if cappedInfo, ok, err := applyDynamicOutputLimit(db, c.Request, requestInfo, quotaReservation.ReservedUSDCents, groupMultipliers); err != nil {
+			if cappedInfo, ok, err := applyDynamicOutputLimit(db, c.Request, requestInfo, quotaReservation.ReservedUSDCents, groupMultipliers, cfg.MaxProxyBodyBytes); errors.Is(err, errBodyTooLarge) {
+				service.CancelQuotaReservation(db, quotaReservationID, time.Now())
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "请求体过大"})
+				return
+			} else if err != nil {
 				service.CancelQuotaReservation(db, quotaReservationID, time.Now())
 				c.JSON(http.StatusBadRequest, gin.H{"error": "请求体解析失败"})
 				return
@@ -83,6 +103,7 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 			protocol = service.NormalizeProtocol(value.(string))
 		}
 		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy.Transport = transport
 		originalDirector := proxy.Director
 		proxy.Director = func(req *http.Request) {
 			originalDirector(req)
@@ -115,16 +136,18 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 			}
 			if isEventStream(resp) {
 				resp.Body = &usageStreamReadCloser{
-					ReadCloser:    resp.Body,
-					start:         start,
-					log:           &log,
-					db:            db,
-					hub:           hub,
-					multipliers:   groupMultipliers,
-					reservationID: quotaReservationID,
+					ReadCloser:     resp.Body,
+					start:          start,
+					log:            &log,
+					db:             db,
+					hub:            hub,
+					multipliers:    groupMultipliers,
+					reservationID:  quotaReservationID,
+					maxBufferBytes: cfg.MaxSSEUsageBufferBytes,
+					maxLineBytes:   defaultMaxSSELineBytes,
 				}
 			} else {
-				body, err := io.ReadAll(resp.Body)
+				body, err := readAllLimited(resp.Body, cfg.MaxProxyBodyBytes)
 				if err == nil {
 					fillUsage(db, &log, body, groupMultipliers)
 					finalizeUsageLog(db, hub, &log, start, quotaReservationID, groupMultipliers)
@@ -146,19 +169,44 @@ func ProxyHandler(db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 	}
 }
 
+func newProxyTransport(upstreamTimeout time.Duration) *http.Transport {
+	if upstreamTimeout <= 0 {
+		upstreamTimeout = 120 * time.Second
+	}
+	responseHeaderTimeout := upstreamTimeout
+	if responseHeaderTimeout > 30*time.Second {
+		responseHeaderTimeout = 30 * time.Second
+	}
+	dialer := &net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   50,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+	}
+}
+
 type requestInfo struct {
 	Model     string
 	Stream    bool
 	BodyBytes int64
 }
 
-func parseRequestInfo(req *http.Request) requestInfo {
+func parseRequestInfo(req *http.Request, maxBodyBytes int64) (requestInfo, error) {
 	if req.Body == nil || req.Method == http.MethodGet {
-		return requestInfo{}
+		return requestInfo{}, nil
 	}
-	body, err := io.ReadAll(req.Body)
+	body, err := readAllLimited(req.Body, maxBodyBytes)
 	if err != nil {
-		return requestInfo{}
+		return requestInfo{}, err
 	}
 	req.Body = io.NopCloser(bytes.NewReader(body))
 
@@ -167,16 +215,34 @@ func parseRequestInfo(req *http.Request) requestInfo {
 		Stream bool   `json:"stream"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return requestInfo{BodyBytes: int64(len(body))}
+		return requestInfo{BodyBytes: int64(len(body))}, nil
 	}
-	return requestInfo{Model: payload.Model, Stream: payload.Stream, BodyBytes: int64(len(body))}
+	return requestInfo{Model: payload.Model, Stream: payload.Stream, BodyBytes: int64(len(body))}, nil
 }
 
-func applyDynamicOutputLimit(db *gorm.DB, req *http.Request, info requestInfo, reservedUSDCents int64, groupMultipliers any) (requestInfo, bool, error) {
+func readAllLimited(reader io.Reader, maxBytes int64) ([]byte, error) {
+	if reader == nil {
+		return nil, nil
+	}
+	if maxBytes <= 0 {
+		return io.ReadAll(reader)
+	}
+	limited := io.LimitReader(reader, maxBytes+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return body, err
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, errBodyTooLarge
+	}
+	return body, nil
+}
+
+func applyDynamicOutputLimit(db *gorm.DB, req *http.Request, info requestInfo, reservedUSDCents int64, groupMultipliers any, maxBodyBytes int64) (requestInfo, bool, error) {
 	if req == nil || req.Body == nil || req.Method == http.MethodGet || reservedUSDCents <= 0 || info.BodyBytes <= 0 || info.Model == "" {
 		return info, true, nil
 	}
-	body, err := io.ReadAll(req.Body)
+	body, err := readAllLimited(req.Body, maxBodyBytes)
 	if err != nil {
 		return info, true, err
 	}
@@ -378,15 +444,19 @@ func usesRequestBilling(db *gorm.DB, modelName string) bool {
 
 type usageStreamReadCloser struct {
 	io.ReadCloser
-	start         time.Time
-	log           *model.APILog
-	db            *gorm.DB
-	hub           *service.LogHub
-	multipliers   any
-	reservationID uint
-	buf           bytes.Buffer
-	firstToken    bool
-	closed        bool
+	start            time.Time
+	log              *model.APILog
+	db               *gorm.DB
+	hub              *service.LogHub
+	multipliers      any
+	reservationID    uint
+	lineBuf          bytes.Buffer
+	bufferedBytes    int64
+	maxBufferBytes   int64
+	maxLineBytes     int64
+	bufferingStopped bool
+	firstToken       bool
+	closed           bool
 }
 
 func (r *usageStreamReadCloser) Read(p []byte) (int, error) {
@@ -396,7 +466,7 @@ func (r *usageStreamReadCloser) Read(p []byte) (int, error) {
 			r.log.FirstTokenMs = time.Since(r.start).Milliseconds()
 			r.firstToken = true
 		}
-		r.buf.Write(p[:n])
+		r.consume(p[:n])
 	}
 	if err == io.EOF {
 		r.finish()
@@ -414,24 +484,61 @@ func (r *usageStreamReadCloser) finish() {
 		return
 	}
 	r.closed = true
-	fillStreamUsage(r.db, r.log, r.buf.Bytes(), r.multipliers)
+	r.flushLine()
 	finalizeUsageLog(r.db, r.hub, r.log, r.start, r.reservationID, r.multipliers)
+}
+
+func (r *usageStreamReadCloser) consume(chunk []byte) {
+	if r.bufferingStopped {
+		return
+	}
+	if r.maxBufferBytes > 0 && r.bufferedBytes+int64(len(chunk)) > r.maxBufferBytes {
+		r.bufferingStopped = true
+		r.lineBuf.Reset()
+		return
+	}
+	r.bufferedBytes += int64(len(chunk))
+
+	for _, b := range chunk {
+		if b == '\n' {
+			r.flushLine()
+			continue
+		}
+		if r.maxLineBytes > 0 && int64(r.lineBuf.Len()) >= r.maxLineBytes {
+			r.bufferingStopped = true
+			r.lineBuf.Reset()
+			return
+		}
+		_ = r.lineBuf.WriteByte(b)
+	}
+}
+
+func (r *usageStreamReadCloser) flushLine() {
+	if r.lineBuf.Len() == 0 {
+		return
+	}
+	line := strings.TrimSpace(r.lineBuf.String())
+	r.lineBuf.Reset()
+	fillStreamUsageLine(r.db, r.log, line, r.multipliers)
 }
 
 func fillStreamUsage(db *gorm.DB, log *model.APILog, body []byte, groupMultipliers ...any) {
 	scanner := bufio.NewScanner(bytes.NewReader(body))
 	scanner.Buffer(make([]byte, 1024), 1024*1024*10)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" {
-			continue
-		}
-		fillUsage(db, log, []byte(data), firstGroupMultipliers(groupMultipliers))
+		fillStreamUsageLine(db, log, strings.TrimSpace(scanner.Text()), firstGroupMultipliers(groupMultipliers))
 	}
+}
+
+func fillStreamUsageLine(db *gorm.DB, log *model.APILog, line string, groupMultipliers any) {
+	if !strings.HasPrefix(line, "data:") {
+		return
+	}
+	data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	if data == "" || data == "[DONE]" {
+		return
+	}
+	fillUsage(db, log, []byte(data), groupMultipliers)
 }
 
 func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start time.Time, reservationID uint, groupMultipliers ...any) {
@@ -447,15 +554,17 @@ func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start
 	}
 	log.LatencyMs = time.Since(start).Milliseconds()
 	service.CompleteQuotaReservationWithAPILog(db, reservationID, log, now)
-	hub.Broadcast(service.LogEvent{
-		UserID:     log.UserID,
-		APIKeyID:   log.APIKeyID,
-		Method:     log.Method,
-		Path:       log.Path,
-		StatusCode: log.StatusCode,
-		LatencyMs:  log.LatencyMs,
-		CreatedAt:  now,
-	})
+	if hub != nil {
+		hub.Broadcast(service.LogEvent{
+			UserID:     log.UserID,
+			APIKeyID:   log.APIKeyID,
+			Method:     log.Method,
+			Path:       log.Path,
+			StatusCode: log.StatusCode,
+			LatencyMs:  log.LatencyMs,
+			CreatedAt:  now,
+		})
+	}
 }
 
 func isEventStream(resp *http.Response) bool {

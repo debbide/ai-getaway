@@ -51,6 +51,55 @@ func TestFillStreamUsageResponseCompletedEvent(t *testing.T) {
 	}
 }
 
+func TestUsageStreamReadCloserParsesUsageIncrementally(t *testing.T) {
+	log := model.APILog{ModelName: "gpt-5.3-codex"}
+	body := "data: {\"response\":{\"model\":\"gpt-5.3-codex-spark\",\"usage\":{\"input_tokens\":44,\"output_tokens\":11,\"total_tokens\":55}}}\n" +
+		"data: [DONE]\n"
+	reader := &usageStreamReadCloser{
+		ReadCloser:     io.NopCloser(bytes.NewReader([]byte(body))),
+		log:            &log,
+		maxBufferBytes: 1024,
+		maxLineBytes:   defaultMaxSSELineBytes,
+	}
+
+	buf := make([]byte, 17)
+	for {
+		if _, err := reader.Read(buf); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if log.ModelName != "gpt-5.3-codex-spark" {
+		t.Fatalf("ModelName = %q, want gpt-5.3-codex-spark", log.ModelName)
+	}
+	if log.PromptTokens != 44 || log.CompletionTokens != 11 || log.TotalTokens != 55 {
+		t.Fatalf("usage = %d/%d/%d, want 44/11/55", log.PromptTokens, log.CompletionTokens, log.TotalTokens)
+	}
+}
+
+func TestUsageStreamReadCloserStopsBufferingAfterLimit(t *testing.T) {
+	log := model.APILog{ModelName: "gpt-5.3-codex"}
+	body := "data: {\"response\":{\"model\":\"gpt-5.3-codex-spark\",\"usage\":{\"input_tokens\":44,\"output_tokens\":11,\"total_tokens\":55}}}\n"
+	reader := &usageStreamReadCloser{
+		ReadCloser:     io.NopCloser(bytes.NewReader([]byte(body))),
+		log:            &log,
+		maxBufferBytes: 10,
+		maxLineBytes:   defaultMaxSSELineBytes,
+	}
+
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatal(err)
+	}
+	if !reader.bufferingStopped {
+		t.Fatal("bufferingStopped = false, want true after limit")
+	}
+	if log.PromptTokens != 0 || log.CompletionTokens != 0 || log.TotalTokens != 0 {
+		t.Fatalf("usage = %d/%d/%d, want no parsed usage after buffer limit", log.PromptTokens, log.CompletionTokens, log.TotalTokens)
+	}
+}
+
 func TestFillUsageChatCompletionsShape(t *testing.T) {
 	log := model.APILog{}
 
@@ -248,7 +297,7 @@ func TestApplyDynamicOutputLimitCapsResponsesRequest(t *testing.T) {
 	}
 	info := requestInfo{Model: "gpt-5.5", BodyBytes: int64(len(body))}
 
-	nextInfo, ok, err := applyDynamicOutputLimit(nil, req, info, 100, nil)
+	nextInfo, ok, err := applyDynamicOutputLimit(nil, req, info, 100, nil, 1024*1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +328,7 @@ func TestApplyDynamicOutputLimitKeepsLowerClientLimit(t *testing.T) {
 	}
 	info := requestInfo{Model: "gpt-5.5", BodyBytes: int64(len(body))}
 
-	if _, ok, err := applyDynamicOutputLimit(nil, req, info, 100, nil); err != nil || !ok {
+	if _, ok, err := applyDynamicOutputLimit(nil, req, info, 100, nil, 1024*1024); err != nil || !ok {
 		t.Fatalf("applyDynamicOutputLimit() ok=%v err=%v, want allowed without error", ok, err)
 	}
 	updated, err := io.ReadAll(req.Body)
@@ -292,6 +341,29 @@ func TestApplyDynamicOutputLimitKeepsLowerClientLimit(t *testing.T) {
 	}
 	if got, _ := numericJSONInt(payload["max_tokens"]); got != 7 {
 		t.Fatalf("max_tokens = %d, want existing lower limit 7", got)
+	}
+}
+
+func TestParseRequestInfoRejectsBodyOverLimit(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5.5"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseRequestInfo(req, 5); err != errBodyTooLarge {
+		t.Fatalf("parseRequestInfo() err = %v, want errBodyTooLarge", err)
+	}
+}
+
+func TestApplyDynamicOutputLimitRejectsBodyOverLimit(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","input":"hello"}`)
+	req, err := http.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := requestInfo{Model: "gpt-5.5", BodyBytes: int64(len(body))}
+
+	if _, _, err := applyDynamicOutputLimit(nil, req, info, 100, nil, 5); err != errBodyTooLarge {
+		t.Fatalf("applyDynamicOutputLimit() err = %v, want errBodyTooLarge", err)
 	}
 }
 
