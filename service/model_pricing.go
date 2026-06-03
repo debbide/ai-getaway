@@ -10,6 +10,7 @@ import (
 	"ai-gateway/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const OpenAIPricingSourceURL = "https://openai.com/api/pricing/"
@@ -71,7 +72,7 @@ func SyncOfficialOpenAIModelPrices(db *gorm.DB) (int, error) {
 	synced := 0
 	for _, item := range OfficialOpenAIModelPrices() {
 		var existing model.ModelPricing
-		err := db.Where("model = ?", item.ModelName).First(&existing).Error
+		err := db.Unscoped().Where("model = ?", item.ModelName).First(&existing).Error
 		pricing := model.ModelPricing{
 			ModelName:                item.ModelName,
 			DisplayName:              item.DisplayName,
@@ -90,34 +91,7 @@ func SyncOfficialOpenAIModelPrices(db *gorm.DB) (int, error) {
 			Notes:                    item.Notes,
 		}
 		if err == nil {
-			multiplier := existing.BillingMultiplier
-			if multiplier <= 0 {
-				multiplier = 1
-			}
-			groupMultiplier := existing.GroupMultiplier
-			if groupMultiplier <= 0 {
-				groupMultiplier = 1
-			}
-			billingMode := fallbackBillingMode(existing.BillingMode)
-			updates := map[string]interface{}{
-				"display_name":                 pricing.DisplayName,
-				"provider":                     pricing.Provider,
-				"input_usd_per_million":        pricing.InputUSDPerMillion,
-				"cached_input_usd_per_million": pricing.CachedInputUSDPerMillion,
-				"output_usd_per_million":       pricing.OutputUSDPerMillion,
-				"billing_mode":                 billingMode,
-				"request_usd":                  existing.RequestUSD,
-				"billing_multiplier":           multiplier,
-				"group_multiplier":             groupMultiplier,
-				"official":                     true,
-				"official_source":              pricing.OfficialSource,
-				"official_synced_at":           pricing.OfficialSyncedAt,
-				"notes":                        pricing.Notes,
-			}
-			if existing.Status == "" {
-				updates["status"] = model.ModelPricingStatusActive
-			}
-			if err := db.Model(&existing).Updates(updates).Error; err != nil {
+			if err := db.Unscoped().Model(&existing).Updates(modelPricingSyncUpdates(existing, pricing)).Error; err != nil {
 				return synced, err
 			}
 			synced++
@@ -126,12 +100,46 @@ func SyncOfficialOpenAIModelPrices(db *gorm.DB) (int, error) {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return synced, err
 		}
-		if err := db.Create(&pricing).Error; err != nil {
+		if err := db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "model"}},
+			DoNothing: true,
+		}).Create(&pricing).Error; err != nil {
 			return synced, err
 		}
 		synced++
 	}
 	return synced, nil
+}
+
+func modelPricingSyncUpdates(existing model.ModelPricing, pricing model.ModelPricing) map[string]interface{} {
+	multiplier := existing.BillingMultiplier
+	if multiplier <= 0 {
+		multiplier = 1
+	}
+	groupMultiplier := existing.GroupMultiplier
+	if groupMultiplier <= 0 {
+		groupMultiplier = 1
+	}
+	updates := map[string]interface{}{
+		"display_name":                 pricing.DisplayName,
+		"provider":                     pricing.Provider,
+		"input_usd_per_million":        pricing.InputUSDPerMillion,
+		"cached_input_usd_per_million": pricing.CachedInputUSDPerMillion,
+		"output_usd_per_million":       pricing.OutputUSDPerMillion,
+		"billing_mode":                 fallbackBillingMode(existing.BillingMode),
+		"request_usd":                  existing.RequestUSD,
+		"billing_multiplier":           multiplier,
+		"group_multiplier":             groupMultiplier,
+		"official":                     true,
+		"official_source":              pricing.OfficialSource,
+		"official_synced_at":           pricing.OfficialSyncedAt,
+		"notes":                        pricing.Notes,
+		"deleted_at":                   nil,
+	}
+	if existing.Status == "" {
+		updates["status"] = model.ModelPricingStatusActive
+	}
+	return updates
 }
 
 func BillUsage(db *gorm.DB, modelName string, inputTokens, cachedInputTokens, outputTokens, totalTokens int64) BillingResult {

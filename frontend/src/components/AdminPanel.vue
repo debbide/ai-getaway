@@ -252,6 +252,7 @@ const clusterNodes = computed(() => Array.isArray(loadBalancer.value.nodes) ? lo
 const clusterSummary = computed(() => loadBalancer.value.summary || { total: 0, online: 0, warning: 0, offline: 0 })
 const selectedClusterNodeDetail = computed(() => clusterNodes.value.find((node) => node.instance_id === selectedClusterNode.value))
 const modalDialogWidth = computed(() => {
+  if (isMobileLayout.value) return 'calc(100vw - 24px)'
   if (modal.fullscreen) return 'calc(100vw - 32px)'
   if (modal.type === 'create-polling-pool' || modal.type === 'edit-polling-pool') return '980px'
   return '760px'
