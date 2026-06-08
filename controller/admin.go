@@ -666,11 +666,87 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 }
 
 func (a *AdminController) DeleteUser(c *gin.Context) {
-	if err := a.db.Delete(&model.User{}, c.Param("id")).Error; err != nil {
+	userID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || userID == 0 {
+		response.Error(c, 400, "invalid user")
+		return
+	}
+	if err := a.deleteUserWithRelatedData(uint(userID)); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Error(c, 404, "user not found")
+			return
+		}
 		response.Error(c, 500, "failed to delete user")
 		return
 	}
 	response.OK(c, nil)
+}
+
+func (a *AdminController) deleteUserWithRelatedData(userID uint) error {
+	return a.db.Transaction(func(tx *gorm.DB) error {
+		var orderIDs []uint
+		if err := tx.Model(&model.Order{}).Where("user_id = ?", userID).Pluck("id", &orderIDs).Error; err != nil {
+			return err
+		}
+		var keyIDs []uint
+		if err := tx.Model(&model.APIKey{}).Where("user_id = ?", userID).Pluck("id", &keyIDs).Error; err != nil {
+			return err
+		}
+		if len(keyIDs) > 0 {
+			if err := tx.Where("api_key_id IN ?", keyIDs).Delete(&model.APILog{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("api_key_id IN ?", keyIDs).Delete(&model.QuotaReservation{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("user_id = ?", userID).Delete(&model.APILog{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", userID).Delete(&model.QuotaReservation{}).Error; err != nil {
+			return err
+		}
+		if len(orderIDs) > 0 {
+			if err := tx.Model(&model.RedeemCode{}).Where("order_id IN ?", orderIDs).Updates(map[string]interface{}{"order_id": nil}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("order_id IN ?", orderIDs).Delete(&model.EmailNotificationLog{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&model.RedeemCode{}).Where("redeemed_by = ?", userID).Updates(map[string]interface{}{"redeemed_by": nil}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.RedeemCode{}).Where("created_by = ?", userID).Updates(map[string]interface{}{"created_by": nil}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", userID).Delete(&model.EmailNotificationLog{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Order{}).Where("approved_by_id = ?", userID).Update("approved_by_id", nil).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", userID).Delete(&model.Order{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", userID).Delete(&model.APIKey{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", userID).Delete(&model.UpstreamAccount{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", userID).Delete(&model.OAuthAccount{}).Error; err != nil {
+			return err
+		}
+		result := tx.Delete(&model.User{}, userID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
 }
 
 func (a *AdminController) Orders(c *gin.Context) {
@@ -2143,7 +2219,7 @@ func (a *AdminController) CreateUpstreamChannel(c *gin.Context) {
 		GroupMultipliers: service.EncodeGroupMultipliers(req.GroupMultipliers),
 		Enabled:          req.Enabled,
 	}
-	if err := a.db.Create(&channel).Error; err != nil {
+	if err := a.db.Select("Name", "BaseURL", "SupportsGPT", "SupportsClaude", "GroupMultipliers", "Enabled").Create(&channel).Error; err != nil {
 		response.Error(c, 500, "failed to create upstream channel")
 		return
 	}
@@ -2209,7 +2285,7 @@ func (a *AdminController) CreatePublicChannel(c *gin.Context) {
 		RemainingUSDCents: req.RemainingUSDCents,
 		Enabled:           req.Enabled,
 	}
-	if err := a.db.Create(&channel).Error; err != nil {
+	if err := a.db.Select("Name", "BaseURL", "APIKey", "SupportsGPT", "SupportsClaude", "GroupMultipliers", "TotalUSDCents", "RemainingUSDCents", "Enabled").Create(&channel).Error; err != nil {
 		response.Error(c, 500, "failed to create public channel")
 		return
 	}
@@ -2271,9 +2347,19 @@ func (a *AdminController) CreatePollingPool(c *gin.Context) {
 		SupportsGPT:    req.SupportsGPT,
 		SupportsClaude: req.SupportsClaude,
 		Enabled:        req.Enabled,
-		Accounts:       accounts,
 	}
-	if err := a.db.Create(&pool).Error; err != nil {
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Select("Name", "SupportsGPT", "SupportsClaude", "Enabled").Create(&pool).Error; err != nil {
+			return err
+		}
+		for i := range accounts {
+			accounts[i].PollingPoolID = pool.ID
+		}
+		if len(accounts) > 0 {
+			return tx.Create(&accounts).Error
+		}
+		return nil
+	}); err != nil {
 		response.Error(c, 500, "failed to create polling pool")
 		return
 	}

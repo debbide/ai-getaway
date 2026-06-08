@@ -369,16 +369,37 @@ func (a *APIKeyController) AdminUpdate(c *gin.Context) {
 }
 
 func (a *APIKeyController) AdminDelete(c *gin.Context) {
-	result := a.db.Model(&model.APIKey{}).
-		Where("id = ?", c.Param("id")).
-		Update("status", model.APIKeyStatusDisabled)
-	if result.Error != nil {
+	keyID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || keyID == 0 {
+		response.Error(c, 400, "invalid api key")
+		return
+	}
+	if err := deleteAPIKeyWithRelatedData(a.db, uint(keyID)); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Error(c, 404, "api key not found")
+			return
+		}
 		response.Error(c, 500, "failed to delete api key")
 		return
 	}
-	if result.RowsAffected == 0 {
-		response.Error(c, 404, "api key not found")
-		return
-	}
 	response.OK(c, nil)
+}
+
+func deleteAPIKeyWithRelatedData(db *gorm.DB, keyID uint) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("api_key_id = ?", keyID).Delete(&model.APILog{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("api_key_id = ?", keyID).Delete(&model.QuotaReservation{}).Error; err != nil {
+			return err
+		}
+		result := tx.Delete(&model.APIKey{}, keyID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
 }
