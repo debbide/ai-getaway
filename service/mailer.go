@@ -453,8 +453,11 @@ func emailTemplateVariables(input EmailTemplateInput, extra map[string]string) m
 		vars["order_id"] = fmt.Sprintf("%d", input.Order.ID)
 		vars["payment_ref"] = input.Order.PaymentRef
 		vars["amount"] = fmt.Sprintf("%.2f", float64(input.Order.AmountCents)/100)
+		if input.Order.OrderType == model.OrderTypeBalance {
+			vars["plan_name"] = fmt.Sprintf("余额充值 $%.2f", float64(input.Order.SettlementUSDCents)/100)
+		}
 	}
-	if input.Plan != nil {
+	if input.Plan != nil && input.Plan.Name != "" {
 		vars["plan_name"] = input.Plan.Name
 		vars["duration_days"] = fmt.Sprintf("%d", input.Plan.DurationDays)
 	}

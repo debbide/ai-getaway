@@ -31,6 +31,7 @@ const modalError = ref('')
 const loading = reactive({ announcements: false, keys: false, orders: false, plan: false })
 const endpointSpeedStates = reactive({})
 const redeemForm = reactive({ code: '' })
+const balanceForm = reactive({ amountUsd: 100, paymentMethod: 'online', rateRmbPerUsd: 0.7 })
 const redeeming = ref(false)
 const orderPage = ref(1)
 const nowMs = ref(Date.now())
@@ -57,6 +58,9 @@ const hasActiveSubscription = computed(() => {
   if (!u.expires_at) return false
   return new Date(u.expires_at) > new Date()
 })
+const currentBalanceUSDCents = computed(() => Number(auth.user?.balance_usd_cents || 0))
+const balanceRechargeUSDCents = computed(() => Math.max(0, Math.round(Number(balanceForm.amountUsd || 0) * 100)))
+const balanceRechargeRMBCents = computed(() => Math.max(0, Math.round(balanceRechargeUSDCents.value * Number(balanceForm.rateRmbPerUsd || 0.7))))
 
 const planPeriodStartIso = computed(() => {
   const u = auth.user
@@ -131,10 +135,11 @@ async function loadAll() {
   loading.plan = true
   error.value = ''
   try {
-    const [orderRes, keyRes, announcementRes] = await Promise.all([api.get('/orders'), api.get('/keys'), api.get('/announcements')])
+    const [orderRes, keyRes, announcementRes, settingsRes] = await Promise.all([api.get('/orders'), api.get('/keys'), api.get('/announcements'), api.get('/settings/public')])
     orders.value = orderRes.data || []
     keys.value = keyRes.data || []
     announcements.value = announcementRes.data || []
+    balanceForm.rateRmbPerUsd = Number(settingsRes.data?.balance_recharge_rate_rmb_per_usd || 0.7)
     if (orderPage.value > totalOrderPages.value) orderPage.value = totalOrderPages.value
     await auth.loadMe()
     if (auth.meError) showNotice(auth.meError, 'warning')
@@ -201,6 +206,38 @@ async function refreshPlan() {
     showNotice(err.message, err.authExpired ? 'error' : 'warning')
   } finally {
     loading.plan = false
+  }
+}
+
+async function createBalanceRecharge() {
+  if (balanceRechargeUSDCents.value <= 0) {
+    showNotice('请输入充值美元额度', 'warning')
+    return
+  }
+  modalError.value = ''
+  try {
+    const res = await api.post('/balance/recharge', {
+      amount_usd: Number(balanceForm.amountUsd || 0),
+      payment_method: balanceForm.paymentMethod
+    })
+    const order = res.data?.order
+    if (!order) throw new Error('充值订单创建失败')
+    orderForm.order = order
+    orderForm.paymentMethod = order.PaymentMethod || balanceForm.paymentMethod
+    orderForm.paymentUrl = ''
+    orderForm.paymentOpened = false
+    orderForm.manualNote = accountPaymentNote()
+    if (isManualPaymentOrder(order)) {
+      orderForm.manualQRCode = ''
+      showModal('manual-pay-order', `余额充值订单 #${order.ID}`, '已扫码，提交审核')
+      loadManualPaymentInfo()
+    } else {
+      showModal('pay-order', `余额充值订单 #${order.ID}`, '已完成支付')
+      startPaymentPolling()
+    }
+    await loadOrders({ showLoading: false })
+  } catch (err) {
+    showNotice(err.message || '充值订单创建失败', err.authExpired ? 'error' : 'warning')
   }
 }
 
@@ -450,6 +487,11 @@ function submitModal() {
 
 function isManualPaymentOrder(order) {
   return order?.PaymentMethod === 'manual' || order?.PaymentChannel === 'manual'
+}
+
+function orderTitle(order) {
+  if (order?.OrderType === 'balance_recharge') return `余额充值 ${usd(order.SettlementUSDCents || 0)}`
+  return order?.Plan?.Name || '套餐订单'
 }
 
 function accountPaymentNote() {
@@ -841,7 +883,7 @@ function statusLabel(value) {
                   <template #default="{ row: order }">#{{ order.ID }}</template>
                 </el-table-column>
                 <el-table-column label="套餐" min-width="140">
-                  <template #default="{ row: order }">{{ order.Plan?.Name || '-' }}</template>
+                  <template #default="{ row: order }">{{ orderTitle(order) }}</template>
                 </el-table-column>
                 <el-table-column label="金额" width="110">
                   <template #default="{ row: order }">{{ money(order.AmountCents) }}</template>
@@ -954,6 +996,40 @@ function statusLabel(value) {
                   ⧉
                 </button>
               </article>
+            </div>
+          </section>
+
+          <section class="panel-surface dashboard-card dashboard-card--balance p-4">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">Balance</p>
+                <h3>余额充值</h3>
+                <p class="section-subtitle text-muted">无套餐时按调用成本扣费</p>
+              </div>
+            </div>
+            <div class="balance-card-body">
+              <div class="balance-amount-row">
+                <span>当前余额</span>
+                <strong>{{ usd(currentBalanceUSDCents) }}</strong>
+              </div>
+              <el-form class="balance-recharge-form" label-position="top" @submit.prevent="createBalanceRecharge">
+                <el-form-item label="充值金额（USD）">
+                  <el-input-number v-model="balanceForm.amountUsd" class="w-full" :min="1" :step="1" :precision="2" />
+                </el-form-item>
+                <div class="balance-pay-preview">
+                  <span>实际支付</span>
+                  <strong>{{ money(balanceRechargeRMBCents) }}</strong>
+                  <small>汇率 {{ Number(balanceForm.rateRmbPerUsd || 0.7).toFixed(2) }} RMB / 1 USD</small>
+                </div>
+                <el-segmented
+                  v-model="balanceForm.paymentMethod"
+                  :options="[
+                    { label: '在线支付', value: 'online' },
+                    { label: '人工支付', value: 'manual' }
+                  ]"
+                />
+                <el-button type="primary" native-type="submit" class="w-full">创建充值订单</el-button>
+              </el-form>
             </div>
           </section>
 
@@ -1097,7 +1173,7 @@ function statusLabel(value) {
 
         <div v-if="modal.type === 'pay-order'" class="modal-body">
           <div class="payment-panel">
-            <strong>{{ orderForm.order?.Plan?.Name || '套餐订单' }}</strong>
+            <strong>{{ orderTitle(orderForm.order) }}</strong>
             <span>订单金额：{{ money(orderForm.order?.AmountCents) }}</span>
             <span v-if="orderForm.order?.Status === 'pending_payment'" class="payment-countdown">支付剩余时间：{{ orderCountdown(orderForm.order) }}</span>
             <span v-else-if="orderForm.order?.Status" class="payment-countdown">当前状态：{{ statusLabel(orderForm.order.Status) }}</span>
@@ -1110,7 +1186,7 @@ function statusLabel(value) {
 
         <div v-if="modal.type === 'manual-pay-order'" class="modal-body">
           <div class="payment-panel manual-payment-panel">
-            <strong>{{ orderForm.order?.Plan?.Name || '套餐订单' }}</strong>
+            <strong>{{ orderTitle(orderForm.order) }}</strong>
             <span>订单金额：{{ money(orderForm.order?.AmountCents) }}</span>
             <p>请使用下方付款二维码扫码支付，支付时备注或留言你的当前账号，方便管理员核对。人工支付可节省在线支付手续费。</p>
             <div v-if="orderForm.manualQRCode" class="manual-payment-qr">

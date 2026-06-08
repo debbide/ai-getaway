@@ -38,6 +38,7 @@ func InitRedis(cfg config.Config) *redis.Client {
 
 func AutoMigrate(db *gorm.DB) {
 	backfillOrderPaymentRefs(db)
+	prepareAccessSourceMigration(db)
 	if err := db.AutoMigrate(
 		&model.User{},
 		&model.OAuthAccount{},
@@ -65,7 +66,67 @@ func AutoMigrate(db *gorm.DB) {
 		log.Fatalf("auto migrate failed: %v", err)
 	}
 	dropLegacyQuotaColumns(db)
+	ensureBalanceColumns(db)
+	ensureAccessSourceColumns(db)
 	backfillOrderPaymentRefs(db)
+}
+
+func prepareAccessSourceMigration(db *gorm.DB) {
+	if db == nil || !db.Migrator().HasTable(&model.UpstreamAccount{}) {
+		return
+	}
+	if db.Migrator().HasIndex(&model.UpstreamAccount{}, "uni_upstream_accounts_user_id") {
+		if err := db.Migrator().DropIndex(&model.UpstreamAccount{}, "uni_upstream_accounts_user_id"); err != nil {
+			log.Printf("drop legacy upstream user unique index before migrate failed: %v", err)
+		}
+	}
+}
+
+func ensureBalanceColumns(db *gorm.DB) {
+	if db == nil {
+		return
+	}
+	if db.Migrator().HasTable(&model.User{}) && !db.Migrator().HasColumn(&model.User{}, "balance_usd_cents") {
+		if err := db.Exec("ALTER TABLE `users` ADD COLUMN `balance_usd_cents` BIGINT DEFAULT 0").Error; err != nil {
+			log.Printf("add balance_usd_cents column failed: %v", err)
+		}
+	}
+}
+
+func ensureAccessSourceColumns(db *gorm.DB) {
+	if db == nil {
+		return
+	}
+	if db.Migrator().HasTable(&model.UpstreamAccount{}) {
+		if !db.Migrator().HasColumn(&model.UpstreamAccount{}, "access_type") {
+			if err := db.Exec("ALTER TABLE `upstream_accounts` ADD COLUMN `access_type` VARCHAR(32) DEFAULT 'plan'").Error; err != nil {
+				log.Printf("add upstream access_type column failed: %v", err)
+			}
+		}
+		if err := db.Exec("UPDATE `upstream_accounts` SET `access_type` = 'plan' WHERE `access_type` IS NULL OR `access_type` = ''").Error; err != nil {
+			log.Printf("backfill upstream access_type failed: %v", err)
+		}
+		if db.Migrator().HasIndex(&model.UpstreamAccount{}, "uni_upstream_accounts_user_id") {
+			if err := db.Migrator().DropIndex(&model.UpstreamAccount{}, "uni_upstream_accounts_user_id"); err != nil {
+				log.Printf("drop legacy upstream user unique index failed: %v", err)
+			}
+		}
+		if !db.Migrator().HasIndex(&model.UpstreamAccount{}, "idx_upstream_user_access") {
+			if err := db.Migrator().CreateIndex(&model.UpstreamAccount{}, "idx_upstream_user_access"); err != nil {
+				log.Printf("create upstream user access index failed: %v", err)
+			}
+		}
+	}
+	if db.Migrator().HasTable(&model.QuotaReservation{}) && !db.Migrator().HasColumn(&model.QuotaReservation{}, "access_source") {
+		if err := db.Exec("ALTER TABLE `quota_reservations` ADD COLUMN `access_source` VARCHAR(32) DEFAULT 'plan'").Error; err != nil {
+			log.Printf("add quota reservation access_source column failed: %v", err)
+		}
+	}
+	if db.Migrator().HasTable(&model.APILog{}) && !db.Migrator().HasColumn(&model.APILog{}, "access_source") {
+		if err := db.Exec("ALTER TABLE `api_logs` ADD COLUMN `access_source` VARCHAR(32) DEFAULT 'plan'").Error; err != nil {
+			log.Printf("add api log access_source column failed: %v", err)
+		}
+	}
 }
 
 func Seed(db *gorm.DB, cfg config.Config) {

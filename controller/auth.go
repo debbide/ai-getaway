@@ -288,13 +288,14 @@ func (a *AuthController) ChangePassword(c *gin.Context) {
 
 func publicUser(user model.User) gin.H {
 	body := gin.H{
-		"id":             user.ID,
-		"username":       user.Username,
-		"email":          user.Email,
-		"role":           user.Role,
-		"status":         user.Status,
-		"expires_at":     user.ExpiresAt,
-		"email_verified": user.EmailVerified,
+		"id":                user.ID,
+		"username":          user.Username,
+		"email":             user.Email,
+		"role":              user.Role,
+		"status":            user.Status,
+		"balance_usd_cents": user.BalanceUSDCents,
+		"expires_at":        user.ExpiresAt,
+		"email_verified":    user.EmailVerified,
 	}
 	if service.HasActiveSubscription(user, time.Now()) && user.Plan != nil {
 		body["plan"] = gin.H{

@@ -22,42 +22,43 @@ func NewSettingsController(db *gorm.DB) *SettingsController {
 }
 
 type updateSettingsRequest struct {
-	SiteTitle                      string `json:"site_title"`
-	ContactEmail                   string `json:"contact_email"`
-	APIEndpoints                   string `json:"api_endpoints"`
-	NavigationItems                string `json:"navigation_items"`
-	PricingTitle                   string `json:"pricing_title"`
-	PricingSubtitle                string `json:"pricing_subtitle"`
-	PricingNotice                  string `json:"pricing_notice"`
-	AllowRegistration              bool   `json:"allow_registration"`
-	EmailWhitelist                 string `json:"email_whitelist"`
-	SMTPHost                       string `json:"smtp_host"`
-	SMTPPort                       int    `json:"smtp_port"`
-	SMTPUsername                   string `json:"smtp_username"`
-	SMTPPassword                   string `json:"smtp_password"`
-	SMTPFromEmail                  string `json:"smtp_from_email"`
-	SMTPFromName                   string `json:"smtp_from_name"`
-	SMTPUseTLS                     bool   `json:"smtp_use_tls"`
-	OrderPaymentAdminEmailEnabled  bool   `json:"order_payment_admin_email_enabled"`
-	OrderApprovedUserEmailEnabled  bool   `json:"order_approved_user_email_enabled"`
-	SubscriptionExpireEmailEnabled bool   `json:"subscription_expire_email_enabled"`
-	SubscriptionExpireRemindDays   int    `json:"subscription_expire_remind_days"`
-	EpayPID                        string `json:"epay_pid"`
-	EpayKey                        string `json:"epay_key"`
-	EpayNotifyURL                  string `json:"epay_notify_url"`
-	EpayReturnURL                  string `json:"epay_return_url"`
-	EpaySubmitURL                  string `json:"epay_submit_url"`
-	OnlinePaymentEnabled           bool   `json:"online_payment_enabled"`
-	ManualPaymentEnabled           bool   `json:"manual_payment_enabled"`
-	ManualPaymentQRCode            string `json:"manual_payment_qr_code"`
-	MockAPIOnlineEnabled           bool   `json:"mock_api_online_enabled"`
-	MockAPIOnlineBase              int    `json:"mock_api_online_base"`
-	GitHubOAuthEnabled             bool   `json:"github_oauth_enabled"`
-	GitHubOAuthClientID            string `json:"github_oauth_client_id"`
-	GitHubOAuthClientSecret        string `json:"github_oauth_client_secret"`
-	GoogleOAuthEnabled             bool   `json:"google_oauth_enabled"`
-	GoogleOAuthClientID            string `json:"google_oauth_client_id"`
-	GoogleOAuthClientSecret        string `json:"google_oauth_client_secret"`
+	SiteTitle                      string  `json:"site_title"`
+	ContactEmail                   string  `json:"contact_email"`
+	APIEndpoints                   string  `json:"api_endpoints"`
+	NavigationItems                string  `json:"navigation_items"`
+	PricingTitle                   string  `json:"pricing_title"`
+	PricingSubtitle                string  `json:"pricing_subtitle"`
+	PricingNotice                  string  `json:"pricing_notice"`
+	AllowRegistration              bool    `json:"allow_registration"`
+	EmailWhitelist                 string  `json:"email_whitelist"`
+	SMTPHost                       string  `json:"smtp_host"`
+	SMTPPort                       int     `json:"smtp_port"`
+	SMTPUsername                   string  `json:"smtp_username"`
+	SMTPPassword                   string  `json:"smtp_password"`
+	SMTPFromEmail                  string  `json:"smtp_from_email"`
+	SMTPFromName                   string  `json:"smtp_from_name"`
+	SMTPUseTLS                     bool    `json:"smtp_use_tls"`
+	OrderPaymentAdminEmailEnabled  bool    `json:"order_payment_admin_email_enabled"`
+	OrderApprovedUserEmailEnabled  bool    `json:"order_approved_user_email_enabled"`
+	SubscriptionExpireEmailEnabled bool    `json:"subscription_expire_email_enabled"`
+	SubscriptionExpireRemindDays   int     `json:"subscription_expire_remind_days"`
+	EpayPID                        string  `json:"epay_pid"`
+	EpayKey                        string  `json:"epay_key"`
+	EpayNotifyURL                  string  `json:"epay_notify_url"`
+	EpayReturnURL                  string  `json:"epay_return_url"`
+	EpaySubmitURL                  string  `json:"epay_submit_url"`
+	OnlinePaymentEnabled           bool    `json:"online_payment_enabled"`
+	ManualPaymentEnabled           bool    `json:"manual_payment_enabled"`
+	ManualPaymentQRCode            string  `json:"manual_payment_qr_code"`
+	BalanceRechargeRateRMBPerUSD   float64 `json:"balance_recharge_rate_rmb_per_usd"`
+	MockAPIOnlineEnabled           bool    `json:"mock_api_online_enabled"`
+	MockAPIOnlineBase              int     `json:"mock_api_online_base"`
+	GitHubOAuthEnabled             bool    `json:"github_oauth_enabled"`
+	GitHubOAuthClientID            string  `json:"github_oauth_client_id"`
+	GitHubOAuthClientSecret        string  `json:"github_oauth_client_secret"`
+	GoogleOAuthEnabled             bool    `json:"google_oauth_enabled"`
+	GoogleOAuthClientID            string  `json:"google_oauth_client_id"`
+	GoogleOAuthClientSecret        string  `json:"google_oauth_client_secret"`
 }
 
 type testSMTPRequest struct {
@@ -78,20 +79,21 @@ func (s *SettingsController) Public(c *gin.Context) {
 	}
 	setting := loadSettings(s.db)
 	response.OK(c, gin.H{
-		"site_title":              setting.SiteTitle,
-		"contact_email":           setting.ContactEmail,
-		"api_endpoints":           setting.APIEndpoints,
-		"navigation_items":        setting.NavigationItems,
-		"pricing_title":           setting.PricingTitle,
-		"pricing_subtitle":        setting.PricingSubtitle,
-		"pricing_notice":          setting.PricingNotice,
-		"allow_registration":      setting.AllowRegistration,
-		"email_whitelist":         setting.EmailWhitelist,
-		"online_payment_enabled":  setting.OnlinePaymentEnabled,
-		"manual_payment_enabled":  setting.ManualPaymentEnabled,
-		"mock_api_online_enabled": setting.MockAPIOnlineEnabled,
-		"mock_api_online_base":    normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase),
-		"oauth_providers":         publicOAuthProviders(setting),
+		"site_title":                        setting.SiteTitle,
+		"contact_email":                     setting.ContactEmail,
+		"api_endpoints":                     setting.APIEndpoints,
+		"navigation_items":                  setting.NavigationItems,
+		"pricing_title":                     setting.PricingTitle,
+		"pricing_subtitle":                  setting.PricingSubtitle,
+		"pricing_notice":                    setting.PricingNotice,
+		"allow_registration":                setting.AllowRegistration,
+		"email_whitelist":                   setting.EmailWhitelist,
+		"online_payment_enabled":            setting.OnlinePaymentEnabled,
+		"manual_payment_enabled":            setting.ManualPaymentEnabled,
+		"balance_recharge_rate_rmb_per_usd": normalizeBalanceRechargeRate(setting.BalanceRechargeRateRMBPerUSD),
+		"mock_api_online_enabled":           setting.MockAPIOnlineEnabled,
+		"mock_api_online_base":              normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase),
+		"oauth_providers":                   publicOAuthProviders(setting),
 	})
 }
 
@@ -147,6 +149,7 @@ func (s *SettingsController) Get(c *gin.Context) {
 		"manual_payment_enabled":                setting.ManualPaymentEnabled,
 		"epay_key_configured":                   setting.EpayKey != "",
 		"manual_payment_qr_code":                setting.ManualPaymentQRCode,
+		"balance_recharge_rate_rmb_per_usd":     normalizeBalanceRechargeRate(setting.BalanceRechargeRateRMBPerUSD),
 		"mock_api_online_enabled":               setting.MockAPIOnlineEnabled,
 		"mock_api_online_base":                  normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase),
 		"github_oauth_enabled":                  setting.GitHubOAuthEnabled,
@@ -197,6 +200,7 @@ func (s *SettingsController) Update(c *gin.Context) {
 		"online_payment_enabled":            req.OnlinePaymentEnabled,
 		"manual_payment_enabled":            req.ManualPaymentEnabled,
 		"manual_payment_qr_code":            req.ManualPaymentQRCode,
+		"balance_recharge_rate_rmb_per_usd": normalizeBalanceRechargeRate(req.BalanceRechargeRateRMBPerUSD),
 		"mock_api_online_enabled":           req.MockAPIOnlineEnabled,
 		"mock_api_online_base":              normalizeMockAPIOnlineBase(req.MockAPIOnlineBase),
 		"github_oauth_enabled":              req.GitHubOAuthEnabled,
@@ -281,6 +285,7 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 		"online_payment_enabled":            "BOOLEAN DEFAULT TRUE",
 		"manual_payment_enabled":            "BOOLEAN DEFAULT TRUE",
 		"manual_payment_qr_code":            "LONGTEXT",
+		"balance_recharge_rate_rmb_per_usd": "DOUBLE DEFAULT 0.7",
 		"mock_api_online_enabled":           "BOOLEAN DEFAULT FALSE",
 		"mock_api_online_base":              "INT DEFAULT 0",
 		"github_oauth_enabled":              "BOOLEAN DEFAULT FALSE",
@@ -405,6 +410,7 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 		setting.SubscriptionExpireRemindDays = 3
 	}
 	setting.EmailWhitelist = normalizeEmailWhitelistJSON(setting.EmailWhitelist)
+	setting.BalanceRechargeRateRMBPerUSD = normalizeBalanceRechargeRate(setting.BalanceRechargeRateRMBPerUSD)
 	setting.MockAPIOnlineBase = normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase)
 	return setting
 }
@@ -436,6 +442,13 @@ func normalizeMockAPIOnlineBase(value int) int {
 	}
 	if value > 1000000 {
 		return 1000000
+	}
+	return value
+}
+
+func normalizeBalanceRechargeRate(value float64) float64 {
+	if value <= 0 {
+		return 0.7
 	}
 	return value
 }

@@ -241,6 +241,7 @@ type adminUserResponse struct {
 type adminUpstreamResponse struct {
 	ID                 uint               `json:"ID"`
 	UserID             uint               `json:"UserID"`
+	AccessType         string             `json:"AccessType"`
 	ChannelID          *uint              `json:"ChannelID"`
 	Channel            string             `json:"Channel"`
 	BaseURL            string             `json:"BaseURL"`
@@ -644,8 +645,9 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 			UserID: user.ID,
 			Status: model.UpstreamStatusActive,
 		}
-		if err := a.db.Where(model.UpstreamAccount{UserID: user.ID}).
+		if err := a.db.Where(model.UpstreamAccount{UserID: user.ID, AccessType: model.AccessSourcePlan}).
 			Assign(map[string]interface{}{
+				"access_type":       model.AccessSourcePlan,
 				"channel_id":        selectedChannel.ID,
 				"channel":           selectedChannel.Name,
 				"base_url":          selectedChannel.BaseURL,
@@ -1131,12 +1133,28 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 			return gorm.ErrRecordNotFound
 		}
 
-		if err := applyApprovedSubscription(tx, &order, order.Plan, now); err != nil {
-			return err
+		if order.OrderType == model.OrderTypeBalance {
+			if err := tx.Model(&model.User{}).
+				Where("id = ?", order.UserID).
+				Updates(map[string]interface{}{
+					"status":            model.UserStatusApproved,
+					"balance_usd_cents": gorm.Expr("balance_usd_cents + ?", order.SettlementUSDCents),
+				}).Error; err != nil {
+				return err
+			}
+		} else {
+			if err := applyApprovedSubscription(tx, &order, order.Plan, now); err != nil {
+				return err
+			}
 		}
 
+		accessType := model.AccessSourcePlan
+		if order.OrderType == model.OrderTypeBalance {
+			accessType = model.AccessSourceBalance
+		}
 		upstream := model.UpstreamAccount{
 			UserID:         order.UserID,
+			AccessType:     accessType,
 			ChannelID:      nil,
 			Channel:        req.Channel,
 			BaseURL:        req.BaseURL,
@@ -1155,7 +1173,7 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 				upstream.GroupMultipliers = channel.GroupMultipliers
 			}
 		}
-		return tx.Where(model.UpstreamAccount{UserID: order.UserID}).Assign(upstream).FirstOrCreate(&upstream).Error
+		return tx.Where(model.UpstreamAccount{UserID: order.UserID, AccessType: accessType}).Assign(upstream).FirstOrCreate(&upstream).Error
 	})
 	if err != nil {
 		response.Error(c, 500, "failed to approve order")
@@ -1175,6 +1193,10 @@ func (a *AdminController) CompleteOrderPayment(c *gin.Context) {
 	}
 	if order.Status == model.OrderStatusPendingPayment && expirePendingPaymentOrder(a.db, &order) {
 		response.Error(c, 409, "order payment timeout")
+		return
+	}
+	if order.OrderType == model.OrderTypeBalance && (order.Status == model.OrderStatusPendingReview || order.Status == model.OrderStatusManualReview || order.Status == model.OrderStatusPaidLate) {
+		response.Error(c, 409, "balance recharge requires review")
 		return
 	}
 	if order.Plan.PlanType == model.PlanTypePublic && (order.Status == model.OrderStatusPendingReview || order.Status == model.OrderStatusManualReview || order.Status == model.OrderStatusPaidLate) {
@@ -1441,8 +1463,9 @@ func (a *AdminController) UpdateOrder(c *gin.Context) {
 				return nil
 			}
 			upstream := model.UpstreamAccount{
-				UserID: order.UserID,
-				Status: model.UpstreamStatusActive,
+				UserID:     order.UserID,
+				AccessType: orderAccessType(order),
+				Status:     model.UpstreamStatusActive,
 			}
 			if req.ChannelID > 0 {
 				upstream.ChannelID = &req.ChannelID
@@ -1462,7 +1485,7 @@ func (a *AdminController) UpdateOrder(c *gin.Context) {
 			if req.APIKey != "" {
 				upstream.APIKey = req.APIKey
 			}
-			return tx.Where(model.UpstreamAccount{UserID: order.UserID}).Assign(upstreamUpdates).FirstOrCreate(&upstream).Error
+			return tx.Where(model.UpstreamAccount{UserID: order.UserID, AccessType: orderAccessType(order)}).Assign(upstreamUpdates).FirstOrCreate(&upstream).Error
 		}
 		return nil
 	})
@@ -1529,21 +1552,28 @@ func (a *AdminController) syncUserAccessState(user *model.User, updates map[stri
 	now := time.Now()
 	planActive := status == model.UserStatusApproved && planID != nil && (expiresAt == nil || now.Before(*expiresAt))
 	publicActive := status == model.UserStatusApproved && publicChannelID != nil && (service.DirectPublicChannelPeriod(publicPeriod) == model.QuotaPeriodPublic || (expiresAt != nil && now.Before(*expiresAt)))
+	balanceActive := status == model.UserStatusApproved && user.BalanceUSDCents > service.MinQuotaRemainingUSDCents
 	if (planActive || publicActive) && !planChanged && !publicChannelChanged {
 		return nil
 	}
 
 	return a.db.Transaction(func(tx *gorm.DB) error {
-		if !planActive && !publicActive {
+		if !planActive && !publicActive && !balanceActive {
 			if err := tx.Model(&model.APIKey{}).
 				Where("user_id = ?", user.ID).
 				Update("status", model.APIKeyStatusDisabled).Error; err != nil {
 				return err
 			}
 		}
-		return tx.Model(&model.UpstreamAccount{}).
+		query := tx.Model(&model.UpstreamAccount{}).
 			Where("user_id = ?", user.ID).
-			Update("status", model.UpstreamStatusDisabled).Error
+			Update("status", model.UpstreamStatusDisabled)
+		if balanceActive {
+			query = tx.Model(&model.UpstreamAccount{}).
+				Where("user_id = ? AND access_type = ?", user.ID, model.AccessSourcePlan).
+				Update("status", model.UpstreamStatusDisabled)
+		}
+		return query.Error
 	})
 }
 
@@ -1834,6 +1864,7 @@ func mapAdminUpstream(upstream model.UpstreamAccount) *adminUpstreamResponse {
 	return &adminUpstreamResponse{
 		ID:                 upstream.ID,
 		UserID:             upstream.UserID,
+		AccessType:         orderAccessTypeFromString(upstream.AccessType),
 		ChannelID:          upstream.ChannelID,
 		Channel:            upstream.Channel,
 		BaseURL:            upstream.BaseURL,
@@ -1849,6 +1880,20 @@ func mapAdminUpstream(upstream model.UpstreamAccount) *adminUpstreamResponse {
 		CreatedAt:          upstream.CreatedAt,
 		UpdatedAt:          upstream.UpdatedAt,
 	}
+}
+
+func orderAccessType(order model.Order) string {
+	if order.OrderType == model.OrderTypeBalance {
+		return model.AccessSourceBalance
+	}
+	return model.AccessSourcePlan
+}
+
+func orderAccessTypeFromString(value string) string {
+	if strings.TrimSpace(value) == model.AccessSourceBalance {
+		return model.AccessSourceBalance
+	}
+	return model.AccessSourcePlan
 }
 
 func mapAdminPublicChannel(channel model.PublicChannel) adminPublicChannelResponse {

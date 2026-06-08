@@ -55,8 +55,103 @@ type createOrderRequest struct {
 	PaymentMethod string `json:"payment_method"`
 }
 
+type createBalanceRechargeRequest struct {
+	AmountUSD     float64 `json:"amount_usd"`
+	PaymentMethod string  `json:"payment_method"`
+}
+
 type submitManualPaymentRequest struct {
 	UserPaymentNote string `json:"user_payment_note"`
+}
+
+func (o *OrderController) CreateBalanceRecharge(c *gin.Context) {
+	ctxUser := c.MustGet("user").(model.User)
+	expirePendingPaymentOrders(o.db)
+
+	var req createBalanceRechargeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	settlementUSDCents := int64(math.Round(req.AmountUSD * 100))
+	if settlementUSDCents <= 0 {
+		response.Error(c, 400, "recharge amount required")
+		return
+	}
+	if err := ensureSystemSettingColumns(o.db); err != nil {
+		response.Error(c, 500, "failed to load settings")
+		return
+	}
+	setting := loadSettings(o.db)
+	paymentMethod := normalizePaymentMethod(req.PaymentMethod)
+	if paymentMethod == model.PaymentMethodOnline && !setting.OnlinePaymentEnabled {
+		response.Error(c, 400, "online payment disabled")
+		return
+	}
+	if paymentMethod == model.PaymentMethodManual && !setting.ManualPaymentEnabled {
+		response.Error(c, 400, "manual payment disabled")
+		return
+	}
+
+	amountCents := balanceRechargeRMBCents(settlementUSDCents, setting.BalanceRechargeRateRMBPerUSD)
+	if amountCents <= 0 {
+		response.Error(c, 400, "recharge amount required")
+		return
+	}
+
+	var existing model.Order
+	err := o.db.Where("user_id = ? AND order_type = ? AND status IN ?", ctxUser.ID, model.OrderTypeBalance, []string{model.OrderStatusPendingPayment, model.OrderStatusPendingReview}).
+		Order("id desc").
+		First(&existing).Error
+	if err == nil {
+		if existing.Status == model.OrderStatusPendingReview {
+			response.Error(c, 409, "order already waiting review")
+			return
+		}
+		updates := map[string]interface{}{}
+		if existing.PaymentURLGeneratedAt == nil {
+			updates["settlement_usd_cents"] = settlementUSDCents
+			updates["amount_cents"] = amountCents
+		}
+		if paymentUpdates, changed := pendingOrderPaymentMethodUpdates(existing, paymentMethod, ctxUser.ID); changed {
+			existing.PaymentMethod = paymentMethod
+			for key, value := range paymentUpdates {
+				updates[key] = value
+			}
+		}
+		if len(updates) > 0 {
+			if err := o.db.Model(&existing).Updates(updates).Error; err != nil {
+				response.Error(c, 500, "failed to create order")
+				return
+			}
+			if err := o.db.First(&existing, existing.ID).Error; err != nil {
+				response.Error(c, 500, "failed to create order")
+				return
+			}
+		}
+		response.OK(c, gin.H{"order": existing, "reused": true})
+		return
+	}
+	if err != nil && err != gorm.ErrRecordNotFound {
+		response.Error(c, 500, "failed to create order")
+		return
+	}
+
+	order := model.Order{
+		UserID:             ctxUser.ID,
+		PlanID:             0,
+		OrderType:          model.OrderTypeBalance,
+		AmountCents:        amountCents,
+		SettlementUSDCents: settlementUSDCents,
+		Status:             model.OrderStatusPendingPayment,
+		PaymentMethod:      paymentMethod,
+		PaymentRef:         fmt.Sprintf("BALANCE%d%d", ctxUser.ID, time.Now().UnixNano()),
+	}
+	if err := o.db.Create(&order).Error; err != nil {
+		response.Error(c, 500, "failed to create order")
+		return
+	}
+	response.Created(c, gin.H{"order": order, "reused": false})
 }
 
 func (o *OrderController) Create(c *gin.Context) {
@@ -664,6 +759,9 @@ func expirePendingPaymentOrder(db *gorm.DB, order *model.Order) bool {
 }
 
 func completePaidOrder(db *gorm.DB, order *model.Order, payment *epayPaymentResult, approvedByID *uint) error {
+	if order.OrderType == model.OrderTypeBalance {
+		return completePaidBalanceRechargeOrder(db, order, payment, approvedByID)
+	}
 	if order.Plan.ID == 0 {
 		if err := db.Preload("Plan").First(order, order.ID).Error; err != nil {
 			return err
@@ -718,6 +816,25 @@ func completePaidOrder(db *gorm.DB, order *model.Order, payment *epayPaymentResu
 	order.Status = model.OrderStatusApproved
 	order.ApprovedAt = &now
 	go service.SendOrderApprovedUserNotification(db, order.ID, order.AdminNote)
+	return nil
+}
+
+func completePaidBalanceRechargeOrder(db *gorm.DB, order *model.Order, payment *epayPaymentResult, approvedByID *uint) error {
+	now := time.Now()
+	updates := paymentOrderUpdates(model.OrderStatusPendingReview, payment, now)
+	result := db.Model(&model.Order{}).
+		Where("id = ? AND status = ?", order.ID, model.OrderStatusPendingPayment).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return handlePaidOrderAlreadyProcessed(db, order, payment)
+	}
+	if err := db.First(order, order.ID).Error; err != nil {
+		return err
+	}
+	go service.SendOrderPaymentAdminNotification(db, order.ID)
 	return nil
 }
 
@@ -860,7 +977,7 @@ func buildEpayURL(c *gin.Context, cfg config.Config, setting model.SystemSetting
 		"out_trade_no": order.PaymentRef,
 		"notify_url":   notifyURL,
 		"return_url":   returnURL,
-		"name":         order.Plan.Name,
+		"name":         orderPaymentName(order),
 		"money":        fmt.Sprintf("%.2f", float64(order.AmountCents)/100),
 	}
 	params["sign"] = epaySign(params, setting.EpayKey)
@@ -875,6 +992,24 @@ func buildEpayURL(c *gin.Context, cfg config.Config, setting model.SystemSetting
 		separator = "&"
 	}
 	return submitURL + separator + values.Encode(), nil
+}
+
+func orderPaymentName(order model.Order) string {
+	if order.OrderType == model.OrderTypeBalance {
+		return balanceRechargeOrderName(order)
+	}
+	if order.Plan.Name != "" {
+		return order.Plan.Name
+	}
+	return "套餐订单"
+}
+
+func balanceRechargeOrderName(order model.Order) string {
+	return fmt.Sprintf("余额充值 $%.2f", float64(order.SettlementUSDCents)/100)
+}
+
+func balanceRechargeRMBCents(usdCents int64, rate float64) int64 {
+	return int64(math.Round(float64(usdCents) * normalizeBalanceRechargeRate(rate)))
 }
 
 func normalizeEpaySubmitURL(rawURL string) string {

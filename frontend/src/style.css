@@ -10155,3 +10155,39 @@ html[data-theme="dark"] .api-online-widget {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.dashboard-card--balance {
+  display: grid;
+  gap: 14px;
+}
+
+.balance-card-body,
+.balance-recharge-form {
+  display: grid;
+  gap: 12px;
+}
+
+.balance-amount-row,
+.balance-pay-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.balance-amount-row strong,
+.balance-pay-preview strong {
+  font-size: 1.25rem;
+}
+
+.balance-pay-preview {
+  flex-wrap: wrap;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.balance-pay-preview small {
+  width: 100%;
+  color: var(--muted);
+}

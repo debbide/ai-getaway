@@ -22,6 +22,7 @@ type QuotaUsage struct {
 }
 
 const MinQuotaRemainingUSDCents int64 = 10
+const AccessSourcePlanFallback = ""
 
 func PlanQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, now time.Time) QuotaUsage {
 	return PlanQuotaUsageFrom(db, userID, plan, nil, now)
@@ -39,11 +40,14 @@ func UserAccessQuotaUsage(db *gorm.DB, user model.User, now time.Time) (QuotaUsa
 	if HasActiveSubscription(user, now) && user.Plan != nil {
 		return UserPlanQuotaUsage(db, user, now)
 	}
-	if !HasDirectPublicChannelAccess(user, now) || user.PublicChannel == nil {
-		return QuotaUsage{}, false
+	if HasDirectPublicChannelAccess(user, now) && user.PublicChannel != nil {
+		startedAt := SubscriptionStartAt(db, user, now)
+		return DirectPublicChannelQuotaUsageFrom(db, user.ID, user.PublicChannel, user.PublicChannelPeriod, startedAt, now), true
 	}
-	startedAt := SubscriptionStartAt(db, user, now)
-	return DirectPublicChannelQuotaUsageFrom(db, user.ID, user.PublicChannel, user.PublicChannelPeriod, startedAt, now), true
+	if HasBalanceAccess(user, now) {
+		return BalanceQuotaUsage(user, now), true
+	}
+	return QuotaUsage{}, false
 }
 
 func QuotaAllowsRequest(usage QuotaUsage) bool {
@@ -66,7 +70,7 @@ func PlanQuotaUsageFrom(db *gorm.DB, userID uint, plan *model.Plan, activeFrom *
 	if plan != nil {
 		limit = plan.SettlementUSDCents
 	}
-	used := capUsedUSDCents(UsedUSDCentsSince(db, userID, start), limit)
+	used := capUsedUSDCents(UsedUSDCentsSinceSource(db, userID, start, model.AccessSourcePlan, true), limit)
 	remaining := limit - used
 	if remaining < 0 {
 		remaining = 0
@@ -100,7 +104,7 @@ func PlanTotalQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, start time.
 	}
 
 	limit := PlanTotalLimitUSDCents(plan)
-	used := capUsedUSDCents(UsedUSDCentsSince(db, userID, start), limit)
+	used := capUsedUSDCents(UsedUSDCentsSinceSource(db, userID, start, model.AccessSourcePlan, true), limit)
 	remaining := limit - used
 	if remaining < 0 {
 		remaining = 0
@@ -128,7 +132,7 @@ func PlanTotalQuotaUsage(db *gorm.DB, userID uint, plan *model.Plan, start time.
 func DirectPublicChannelQuotaUsageFrom(db *gorm.DB, userID uint, channel *model.PublicChannel, period string, activeFrom *time.Time, now time.Time) QuotaUsage {
 	normalizedPeriod := DirectPublicChannelPeriod(period)
 	start, end := QuotaUsageWindow(normalizedPeriod, activeFrom, now)
-	used := UsedUSDCentsSince(db, userID, start)
+	used := UsedUSDCentsSinceSource(db, userID, start, model.AccessSourcePlan, true)
 	remaining := int64(0)
 	if channel != nil && channel.RemainingUSDCents > 0 {
 		remaining = channel.RemainingUSDCents
@@ -149,6 +153,22 @@ func DirectPublicChannelQuotaUsageFrom(db *gorm.DB, userID uint, channel *model.
 		WindowStart:    start,
 		WindowEnd:      end,
 		Percent:        percent,
+	}
+}
+
+func BalanceQuotaUsage(user model.User, now time.Time) QuotaUsage {
+	remaining := user.BalanceUSDCents
+	if remaining < 0 {
+		remaining = 0
+	}
+	return QuotaUsage{
+		Period:         "balance",
+		LimitUSDCents:  remaining,
+		UsedUSDCents:   0,
+		RemainingCents: remaining,
+		WindowStart:    time.Time{},
+		WindowEnd:      now.AddDate(100, 0, 0),
+		Percent:        0,
 	}
 }
 
@@ -199,19 +219,30 @@ func UsedUSDCentsSince(db *gorm.DB, userID uint, since time.Time) int64 {
 	return usedAPILogUSDCentsSince(db, userID, since) + ActiveReservedUSDCentsSince(db, userID, since, 0)
 }
 
+func UsedUSDCentsSinceSource(db *gorm.DB, userID uint, since time.Time, source string, includeLegacy bool) int64 {
+	return usedAPILogUSDCentsSinceSource(db, userID, since, source, includeLegacy) + ActiveReservedUSDCentsSinceSource(db, userID, since, 0, source, includeLegacy)
+}
+
 func usedAPILogUSDCentsSince(db *gorm.DB, userID uint, since time.Time) int64 {
+	return usedAPILogUSDCentsSinceSource(db, userID, since, "", true)
+}
+
+func usedAPILogUSDCentsSinceSource(db *gorm.DB, userID uint, since time.Time, source string, includeLegacy bool) int64 {
 	if db == nil {
 		return 0
 	}
 	var total int64
-	db.Model(&model.APILog{}).
-		Where("user_id = ? AND created_at >= ?", userID, since).
-		Select("COALESCE(SUM(CASE WHEN estimated_usd_micros > 0 THEN CEILING(estimated_usd_micros / 10000) ELSE estimated_usd_cents END), 0)").
-		Scan(&total)
+	query := db.Model(&model.APILog{}).Where("user_id = ? AND created_at >= ?", userID, since)
+	query = applyAccessSourceFilter(query, source, includeLegacy)
+	query.Select("COALESCE(SUM(CASE WHEN estimated_usd_micros > 0 THEN CEILING(estimated_usd_micros / 10000) ELSE estimated_usd_cents END), 0)").Scan(&total)
 	return total
 }
 
 func ActiveReservedUSDCentsSince(db *gorm.DB, userID uint, since time.Time, excludeReservationID uint) int64 {
+	return ActiveReservedUSDCentsSinceSource(db, userID, since, excludeReservationID, "", true)
+}
+
+func ActiveReservedUSDCentsSinceSource(db *gorm.DB, userID uint, since time.Time, excludeReservationID uint, source string, includeLegacy bool) int64 {
 	if db == nil {
 		return 0
 	}
@@ -220,9 +251,21 @@ func ActiveReservedUSDCentsSince(db *gorm.DB, userID uint, since time.Time, excl
 	if excludeReservationID > 0 {
 		query = query.Where("id <> ?", excludeReservationID)
 	}
+	query = applyAccessSourceFilter(query, source, includeLegacy)
 	var total int64
 	query.Select("COALESCE(SUM(reserved_usd_cents), 0)").Scan(&total)
 	return total
+}
+
+func applyAccessSourceFilter(query *gorm.DB, source string, includeLegacy bool) *gorm.DB {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return query
+	}
+	if includeLegacy {
+		return query.Where("(access_source = ? OR access_source = ? OR access_source IS NULL)", source, AccessSourcePlanFallback)
+	}
+	return query.Where("access_source = ?", source)
 }
 
 func capUsedUSDCents(used int64, limit int64) int64 {
@@ -254,6 +297,8 @@ func CreateAPILogWithinPlanQuota(db *gorm.DB, log *model.APILog, now time.Time) 
 			if usage.LimitUSDCents > 0 {
 				capAPILogCost(log, usage.RemainingCents)
 			}
+			log.AccessSource = model.AccessSourcePlan
+			return tx.Create(log).Error
 		}
 		if user.PlanID == nil && HasDirectPublicChannelAccess(user, now) && user.PublicChannelID != nil {
 			var channel model.PublicChannel
@@ -262,6 +307,7 @@ func CreateAPILogWithinPlanQuota(db *gorm.DB, log *model.APILog, now time.Time) 
 			}
 			capAPILogCost(log, channel.RemainingUSDCents)
 			cost := APILogUSDCents(log)
+			log.AccessSource = model.AccessSourcePlan
 			if err := tx.Create(log).Error; err != nil {
 				return err
 			}
@@ -272,6 +318,28 @@ func CreateAPILogWithinPlanQuota(db *gorm.DB, log *model.APILog, now time.Time) 
 				Where("id = ? AND remaining_usd_cents >= ?", channel.ID, cost).
 				Update("remaining_usd_cents", gorm.Expr("remaining_usd_cents - ?", cost)).Error
 		}
+		if HasBalanceAccess(user, now) {
+			capAPILogCost(log, user.BalanceUSDCents)
+			cost := APILogUSDCents(log)
+			log.AccessSource = model.AccessSourceBalance
+			if err := tx.Create(log).Error; err != nil {
+				return err
+			}
+			if cost <= 0 {
+				return nil
+			}
+			result := tx.Model(&model.User{}).
+				Where("id = ? AND balance_usd_cents >= ?", user.ID, cost).
+				Update("balance_usd_cents", gorm.Expr("balance_usd_cents - ?", cost))
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return gorm.ErrRecordNotFound
+			}
+			return nil
+		}
+		log.AccessSource = model.AccessSourcePlan
 		return tx.Create(log).Error
 	})
 }
@@ -280,40 +348,51 @@ func BeginQuotaReservation(db *gorm.DB, user model.User, apiKeyID uint, now time
 	if db == nil {
 		return nil, true, nil
 	}
-	if !HasActiveSubscription(user, now) || user.Plan == nil {
-		return nil, true, nil
-	}
-
 	var reservation *model.QuotaReservation
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var lockedUser model.User
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Preload("Plan").First(&lockedUser, user.ID).Error; err != nil {
 			return err
 		}
-		if !HasActiveSubscription(lockedUser, now) || lockedUser.Plan == nil {
-			return nil
+		if HasActiveSubscription(lockedUser, now) && lockedUser.Plan != nil {
+			startedAt := SubscriptionStartAt(tx, lockedUser, now)
+			usage := PlanQuotaUsageFrom(tx, lockedUser.ID, lockedUser.Plan, startedAt, now)
+			if QuotaAllowsRequest(usage) {
+				reserved := usage.RemainingCents - MinQuotaRemainingUSDCents
+				if reserved > 0 {
+					item := model.QuotaReservation{
+						UserID:           lockedUser.ID,
+						APIKeyID:         apiKeyID,
+						ReservedUSDCents: reserved,
+						AccessSource:     model.AccessSourcePlan,
+						Status:           model.QuotaReservationStatusActive,
+					}
+					if err := tx.Create(&item).Error; err != nil {
+						return err
+					}
+					reservation = &item
+					return nil
+				}
+			}
 		}
-		startedAt := SubscriptionStartAt(tx, lockedUser, now)
-		usage := PlanQuotaUsageFrom(tx, lockedUser.ID, lockedUser.Plan, startedAt, now)
-		if !QuotaAllowsRequest(usage) {
-			reservation = nil
-			return nil
+		if HasBalanceAccess(lockedUser, now) {
+			available := lockedUser.BalanceUSDCents - ActiveReservedUSDCentsSinceSource(tx, lockedUser.ID, time.Time{}, 0, model.AccessSourceBalance, false)
+			if available <= MinQuotaRemainingUSDCents {
+				reservation = nil
+				return nil
+			}
+			item := model.QuotaReservation{
+				UserID:           lockedUser.ID,
+				APIKeyID:         apiKeyID,
+				ReservedUSDCents: available - MinQuotaRemainingUSDCents,
+				AccessSource:     model.AccessSourceBalance,
+				Status:           model.QuotaReservationStatusActive,
+			}
+			if err := tx.Create(&item).Error; err != nil {
+				return err
+			}
+			reservation = &item
 		}
-		reserved := usage.RemainingCents - MinQuotaRemainingUSDCents
-		if reserved <= 0 {
-			reservation = nil
-			return nil
-		}
-		item := model.QuotaReservation{
-			UserID:           lockedUser.ID,
-			APIKeyID:         apiKeyID,
-			ReservedUSDCents: reserved,
-			Status:           model.QuotaReservationStatusActive,
-		}
-		if err := tx.Create(&item).Error; err != nil {
-			return err
-		}
-		reservation = &item
 		return nil
 	})
 	if err != nil {
@@ -349,13 +428,22 @@ func CompleteQuotaReservationWithAPILog(db *gorm.DB, reservationID uint, log *mo
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Preload("Plan").Preload("PublicChannel").First(&user, reservation.UserID).Error; err != nil {
 			return err
 		}
-		if HasActiveSubscription(user, now) && user.Plan != nil {
+		source := normalizeAccessSource(reservation.AccessSource)
+		log.AccessSource = source
+		if source == model.AccessSourcePlan && HasActiveSubscription(user, now) && user.Plan != nil {
 			startedAt := SubscriptionStartAt(tx, user, now)
 			start, _ := QuotaUsageWindow(user.Plan.QuotaPeriod, startedAt, now)
 			limit := user.Plan.SettlementUSDCents
-			usedLogs := capUsedUSDCents(usedAPILogUSDCentsSince(tx, user.ID, start), limit)
-			otherReserved := ActiveReservedUSDCentsSince(tx, user.ID, start, reservation.ID)
+			usedLogs := capUsedUSDCents(usedAPILogUSDCentsSinceSource(tx, user.ID, start, model.AccessSourcePlan, true), limit)
+			otherReserved := ActiveReservedUSDCentsSinceSource(tx, user.ID, start, reservation.ID, model.AccessSourcePlan, true)
 			available := limit - usedLogs - otherReserved
+			if available < 0 {
+				available = 0
+			}
+			capAPILogCost(log, available)
+		} else if source == model.AccessSourceBalance {
+			otherReserved := ActiveReservedUSDCentsSinceSource(tx, user.ID, time.Time{}, reservation.ID, model.AccessSourceBalance, false)
+			available := user.BalanceUSDCents - otherReserved
 			if available < 0 {
 				available = 0
 			}
@@ -364,6 +452,20 @@ func CompleteQuotaReservationWithAPILog(db *gorm.DB, reservationID uint, log *mo
 		if err := tx.Create(log).Error; err != nil {
 			return err
 		}
+		if source == model.AccessSourceBalance {
+			cost := APILogUSDCents(log)
+			if cost > 0 {
+				result := tx.Model(&model.User{}).
+					Where("id = ? AND balance_usd_cents >= ?", user.ID, cost).
+					Update("balance_usd_cents", gorm.Expr("balance_usd_cents - ?", cost))
+				if result.Error != nil {
+					return result.Error
+				}
+				if result.RowsAffected == 0 {
+					return gorm.ErrRecordNotFound
+				}
+			}
+		}
 		completedAt := now
 		return tx.Model(&reservation).Updates(map[string]interface{}{
 			"reserved_usd_cents": 0,
@@ -371,6 +473,13 @@ func CompleteQuotaReservationWithAPILog(db *gorm.DB, reservationID uint, log *mo
 			"completed_at":       &completedAt,
 		}).Error
 	})
+}
+
+func normalizeAccessSource(source string) string {
+	if strings.TrimSpace(source) == model.AccessSourceBalance {
+		return model.AccessSourceBalance
+	}
+	return model.AccessSourcePlan
 }
 
 func CancelQuotaReservation(db *gorm.DB, reservationID uint, now time.Time) error {

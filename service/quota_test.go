@@ -7,6 +7,25 @@ import (
 	"ai-gateway/model"
 )
 
+func TestHasBalanceAccessAllowsActiveSubscriptionFallback(t *testing.T) {
+	expiresAt := time.Now().Add(time.Hour)
+	planID := uint(1)
+	user := model.User{
+		Status:          model.UserStatusApproved,
+		PlanID:          &planID,
+		Plan:            &model.Plan{PlanType: model.PlanTypeSubscription, SettlementUSDCents: 100},
+		ExpiresAt:       &expiresAt,
+		BalanceUSDCents: MinQuotaRemainingUSDCents + 1,
+	}
+
+	if !HasActiveSubscription(user, time.Now()) {
+		t.Fatal("expected active subscription")
+	}
+	if !HasBalanceAccess(user, time.Now()) {
+		t.Fatal("expected balance access to remain available as quota fallback")
+	}
+}
+
 func TestQuotaUsageWindowStartsAtSubscriptionStartInsideNaturalWindow(t *testing.T) {
 	now := time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)
 	startedAt := now.Add(-1 * time.Hour)

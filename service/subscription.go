@@ -38,7 +38,12 @@ func HasDirectPublicChannelAccess(user model.User, now time.Time) bool {
 }
 
 func HasCallableAccess(user model.User, now time.Time) bool {
-	return HasActiveSubscription(user, now) || HasDirectPublicChannelAccess(user, now)
+	return HasActiveSubscription(user, now) || HasDirectPublicChannelAccess(user, now) || HasBalanceAccess(user, now)
+}
+
+func HasBalanceAccess(user model.User, now time.Time) bool {
+	return user.Status == model.UserStatusApproved &&
+		user.BalanceUSDCents > MinQuotaRemainingUSDCents
 }
 
 func SubscriptionStartAt(db *gorm.DB, user model.User, now time.Time) *time.Time {

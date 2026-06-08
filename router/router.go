@@ -85,6 +85,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client) *gin.Engine 
 			authed.GET("/auth/oauth/:provider/bind", authController.StartOAuthBind)
 			authed.DELETE("/auth/oauth/:provider", authController.UnbindOAuthAccount)
 			authed.POST("/orders", orderController.Create)
+			authed.POST("/balance/recharge", orderController.CreateBalanceRecharge)
 			authed.POST("/redeem-codes/redeem", redeemCodeController.Redeem)
 			authed.GET("/orders", orderController.ListMine)
 			authed.POST("/endpoint-speed", endpointSpeedController.Test)

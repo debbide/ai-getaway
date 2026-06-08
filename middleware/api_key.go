@@ -40,7 +40,7 @@ func APIKeyAuth(cfg config.Config, db *gorm.DB, redisClient *redis.Client) gin.H
 			c.Abort()
 			return
 		}
-		if apiKey.User.ExpiresAt != nil && time.Now().After(*apiKey.User.ExpiresAt) {
+		if apiKey.User.ExpiresAt != nil && time.Now().After(*apiKey.User.ExpiresAt) && !service.HasBalanceAccess(apiKey.User, time.Now()) {
 			response.Error(c, 403, "subscription expired")
 			c.Abort()
 			return
@@ -50,12 +50,6 @@ func APIKeyAuth(cfg config.Config, db *gorm.DB, redisClient *redis.Client) gin.H
 			c.Abort()
 			return
 		}
-		if !allowPlanQuota(db, apiKey.User) {
-			response.Error(c, 429, "令牌额度耗尽")
-			c.Abort()
-			return
-		}
-
 		if !allowAPIKey(redisClient, apiKey.ID, cfg.APIKeyRateLimitPerMin) {
 			response.Error(c, 429, "rate limit exceeded")
 			c.Abort()
@@ -65,84 +59,9 @@ func APIKeyAuth(cfg config.Config, db *gorm.DB, redisClient *redis.Client) gin.H
 		now := time.Now()
 		protocol := requestProtocol(c)
 		db.Model(&apiKey).Updates(map[string]interface{}{"last_used_at": &now})
-		channelMultiplierByName := loadEnabledChannelMultipliers(db)
 
 		c.Set("api_key", apiKey)
 		c.Set("protocol", protocol)
-		if service.HasDirectPublicChannelAccess(apiKey.User, now) && apiKey.User.PlanID == nil {
-			if apiKey.User.PublicChannelID == nil {
-				response.Error(c, 403, "public channel sold out")
-				c.Abort()
-				return
-			}
-			var publicChannel model.PublicChannel
-			if db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *apiKey.User.PublicChannelID, true).First(&publicChannel).Error != nil ||
-				!service.SupportsProtocol(publicChannel.SupportsGPT, publicChannel.SupportsClaude, protocol) {
-				response.Error(c, 403, "public channel sold out")
-				c.Abort()
-				return
-			}
-			db.Model(&publicChannel).Updates(map[string]interface{}{"last_used_at": &now})
-			c.Set("public_channel", publicChannel)
-		} else if apiKey.User.Plan != nil && apiKey.User.Plan.PlanType == model.PlanTypePublic {
-			if !service.PlanChannelSupportsProtocol(apiKey.User.Plan, protocol) {
-				response.Error(c, 403, "protocol not supported by plan")
-				c.Abort()
-				return
-			}
-			if apiKey.User.Plan.PublicChannelID != nil {
-				var publicChannel model.PublicChannel
-				if db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *apiKey.User.Plan.PublicChannelID, true).First(&publicChannel).Error != nil ||
-					!service.SupportsProtocol(publicChannel.SupportsGPT, publicChannel.SupportsClaude, protocol) {
-					response.Error(c, 403, "public channel sold out")
-					c.Abort()
-					return
-				}
-				db.Model(&publicChannel).Updates(map[string]interface{}{"last_used_at": &now})
-				c.Set("public_channel", publicChannel)
-			} else if apiKey.User.Plan.PollingPoolID != nil {
-				var poolAccount model.PollingPoolAccount
-				if db.Joins("JOIN polling_pools ON polling_pools.id = polling_pool_accounts.polling_pool_id").
-					Where("polling_pool_accounts.polling_pool_id = ? AND polling_pool_accounts.enabled = ? AND polling_pool_accounts.remaining_usd_cents > 0 AND polling_pools.enabled = ?", *apiKey.User.Plan.PollingPoolID, true, true).
-					Order("polling_pool_accounts.sort_order asc, polling_pool_accounts.id asc").
-					First(&poolAccount).Error != nil {
-					response.Error(c, 403, "public channel sold out")
-					c.Abort()
-					return
-				}
-				db.Model(&poolAccount).Updates(map[string]interface{}{"last_used_at": &now})
-				c.Set("pool_account", poolAccount)
-			} else {
-				response.Error(c, 403, "public channel sold out")
-				c.Abort()
-				return
-			}
-		} else {
-			var upstream model.UpstreamAccount
-			if err := db.Where("user_id = ? AND status = ?", apiKey.UserID, model.UpstreamStatusActive).First(&upstream).Error; err != nil {
-				response.Error(c, 403, "no active upstream account bound")
-				c.Abort()
-				return
-			}
-			if !service.SupportsProtocol(upstream.SupportsGPT, upstream.SupportsClaude, protocol) {
-				response.Error(c, 403, "protocol not supported by upstream")
-				c.Abort()
-				return
-			}
-			if upstream.GroupMultipliers == "" {
-				if channelID := upstream.ChannelID; channelID != nil {
-					var channel model.UpstreamChannel
-					if db.Select("group_multipliers").Where("id = ?", *channelID).First(&channel).Error == nil {
-						upstream.GroupMultipliers = channel.GroupMultipliers
-					}
-				}
-				if upstream.GroupMultipliers == "" {
-					upstream.GroupMultipliers = channelMultiplierByName[upstream.Channel]
-				}
-			}
-			db.Model(&upstream).Updates(map[string]interface{}{"last_used_at": &now})
-			c.Set("upstream", upstream)
-		}
 		c.Next()
 	}
 }
@@ -166,21 +85,6 @@ func requestProtocol(c *gin.Context) string {
 		return model.ProtocolClaude
 	}
 	return model.ProtocolGPT
-}
-
-func allowPlanQuota(db *gorm.DB, user model.User) bool {
-	if !service.HasCallableAccess(user, time.Now()) {
-		return false
-	}
-	now := time.Now()
-	usage, ok := service.UserAccessQuotaUsage(db, user, now)
-	if !ok {
-		return false
-	}
-	if !service.QuotaAllowsRequest(usage) {
-		return false
-	}
-	return true
 }
 
 func allowAPIKey(redisClient *redis.Client, apiKeyID uint, limitPerMinute int) bool {

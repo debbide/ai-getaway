@@ -65,9 +65,14 @@ func (a *APIKeyController) dedupeUserAPIKeys(userID uint) {
 	}
 }
 
-func (a *APIKeyController) loadUpstream(userID uint) (*model.UpstreamAccount, error) {
+func (a *APIKeyController) loadUpstream(userID uint, accessType string) (*model.UpstreamAccount, error) {
 	var upstream model.UpstreamAccount
-	if err := a.db.Where("user_id = ? AND status = ?", userID, model.UpstreamStatusActive).First(&upstream).Error; err != nil {
+	if err := a.db.Where("user_id = ? AND access_type = ? AND status = ?", userID, accessType, model.UpstreamStatusActive).First(&upstream).Error; err != nil {
+		if accessType == model.AccessSourcePlan {
+			if fallbackErr := a.db.Where("user_id = ? AND (access_type = ? OR access_type IS NULL) AND status = ?", userID, "", model.UpstreamStatusActive).First(&upstream).Error; fallbackErr == nil {
+				return &upstream, nil
+			}
+		}
 		return nil, err
 	}
 	return &upstream, nil
@@ -88,15 +93,32 @@ func (a *APIKeyController) ensureCallablePlan(user model.User) error {
 		return nil
 	}
 	if fresh.Plan == nil {
+		if service.HasBalanceAccess(fresh, time.Now()) {
+			if _, err := a.loadUpstream(user.ID, model.AccessSourceBalance); err != nil {
+				return errors.New("no active upstream account bound")
+			}
+			return nil
+		}
 		return errors.New("subscription expired")
 	}
 	if fresh.Plan.PlanType == model.PlanTypePublic {
 		if !service.PlanChannelHasQuota(*fresh.Plan) {
+			if service.HasBalanceAccess(fresh, time.Now()) {
+				if _, err := a.loadUpstream(user.ID, model.AccessSourceBalance); err != nil {
+					return errors.New("no active upstream account bound")
+				}
+				return nil
+			}
 			return errors.New("public channel sold out")
 		}
 		return nil
 	}
-	if _, err := a.loadUpstream(user.ID); err != nil {
+	if _, err := a.loadUpstream(user.ID, model.AccessSourcePlan); err != nil {
+		if service.HasBalanceAccess(fresh, time.Now()) {
+			if _, balanceErr := a.loadUpstream(user.ID, model.AccessSourceBalance); balanceErr == nil {
+				return nil
+			}
+		}
 		return errors.New("no active upstream account bound")
 	}
 	return nil

@@ -28,6 +28,7 @@ const (
 	OrderTypePurchase = "purchase"
 	OrderTypeRenewal  = "renewal"
 	OrderTypeUpgrade  = "upgrade"
+	OrderTypeBalance  = "balance_recharge"
 
 	APIKeyStatusActive   = "active"
 	APIKeyStatusDisabled = "disabled"
@@ -68,6 +69,9 @@ const (
 	QuotaReservationStatusActive    = "active"
 	QuotaReservationStatusCompleted = "completed"
 	QuotaReservationStatusCanceled  = "canceled"
+
+	AccessSourcePlan    = "plan"
+	AccessSourceBalance = "balance"
 )
 
 type User struct {
@@ -83,6 +87,7 @@ type User struct {
 	PublicChannelID       *uint `gorm:"index"`
 	PublicChannel         *PublicChannel
 	PublicChannelPeriod   string `gorm:"size:16;default:'';index"`
+	BalanceUSDCents       int64  `gorm:"default:0;index"`
 	ExpiresAt             *time.Time
 	SubscriptionStartedAt *time.Time
 }
@@ -129,7 +134,7 @@ type Order struct {
 	gorm.Model
 	UserID                uint `gorm:"index;not null"`
 	User                  User
-	PlanID                uint `gorm:"index;not null"`
+	PlanID                uint `gorm:"index;default:0"`
 	Plan                  Plan
 	OrderType             string `gorm:"size:32;default:purchase;index"`
 	AmountCents           int64
@@ -167,8 +172,9 @@ type RedeemCode struct {
 
 type UpstreamAccount struct {
 	gorm.Model
-	UserID           uint `gorm:"uniqueIndex;not null"`
+	UserID           uint `gorm:"uniqueIndex:idx_upstream_user_access;not null"`
 	User             User
+	AccessType       string `gorm:"size:32;default:plan;uniqueIndex:idx_upstream_user_access;index"`
 	ChannelID        *uint  `gorm:"index"`
 	Channel          string `gorm:"size:64;not null"`
 	BaseURL          string `gorm:"size:255;not null"`
@@ -332,6 +338,7 @@ type APILog struct {
 	BillingMultiplier        float64 `gorm:"default:1"`
 	GroupMultiplier          float64 `gorm:"default:1"`
 	BillingSource            string  `gorm:"size:64"`
+	AccessSource             string  `gorm:"size:32;default:plan;index"`
 	FirstTokenMs             int64
 	LatencyMs                int64
 	ErrorMessage             string `gorm:"size:512"`
@@ -344,48 +351,50 @@ type QuotaReservation struct {
 	APIKeyID         uint `gorm:"index;not null"`
 	APIKey           APIKey
 	ReservedUSDCents int64      `gorm:"default:0;index"`
+	AccessSource     string     `gorm:"size:32;default:plan;index"`
 	Status           string     `gorm:"size:32;default:active;index"`
 	CompletedAt      *time.Time `gorm:"index"`
 }
 
 type SystemSetting struct {
 	gorm.Model
-	SiteTitle                      string `gorm:"size:128;default:星空AI"`
-	ContactEmail                   string `gorm:"size:128;default:support@example.com"`
-	APIEndpoints                   string `gorm:"type:text"`
-	NavigationItems                string `gorm:"type:text"`
-	PricingTitle                   string `gorm:"size:128;default:简单透明的定价"`
-	PricingSubtitle                string `gorm:"size:255;default:保质保量无降智不掺假"`
-	PricingNotice                  string `gorm:"size:512;default:本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转"`
-	AllowRegistration              bool   `gorm:"default:true"`
-	EmailWhitelist                 string `gorm:"type:text"`
-	SMTPHost                       string `gorm:"size:128"`
-	SMTPPort                       int    `gorm:"default:587"`
-	SMTPUsername                   string `gorm:"size:128"`
-	SMTPPassword                   string `gorm:"size:255" json:"-"`
-	SMTPFromEmail                  string `gorm:"size:128"`
-	SMTPFromName                   string `gorm:"size:128"`
-	SMTPUseTLS                     bool   `gorm:"default:true"`
-	OrderPaymentAdminEmailEnabled  bool   `gorm:"default:false"`
-	OrderApprovedUserEmailEnabled  bool   `gorm:"default:false"`
-	SubscriptionExpireEmailEnabled bool   `gorm:"default:false"`
-	SubscriptionExpireRemindDays   int    `gorm:"default:3"`
-	EpayPID                        string `gorm:"column:epay_pid;size:128"`
-	EpayKey                        string `gorm:"size:255" json:"-"`
-	EpayNotifyURL                  string `gorm:"size:512"`
-	EpayReturnURL                  string `gorm:"size:512"`
-	EpaySubmitURL                  string `gorm:"size:512"`
-	OnlinePaymentEnabled           bool   `gorm:"default:true"`
-	ManualPaymentEnabled           bool   `gorm:"default:true"`
-	ManualPaymentQRCode            string `gorm:"type:longtext"`
-	MockAPIOnlineEnabled           bool   `gorm:"default:false"`
-	MockAPIOnlineBase              int    `gorm:"default:0"`
-	GitHubOAuthEnabled             bool   `gorm:"column:github_oauth_enabled;default:false"`
-	GitHubOAuthClientID            string `gorm:"column:github_oauth_client_id;size:191"`
-	GitHubOAuthClientSecret        string `gorm:"column:github_oauth_client_secret;size:255" json:"-"`
-	GoogleOAuthEnabled             bool   `gorm:"column:google_oauth_enabled;default:false"`
-	GoogleOAuthClientID            string `gorm:"column:google_oauth_client_id;size:191"`
-	GoogleOAuthClientSecret        string `gorm:"column:google_oauth_client_secret;size:255" json:"-"`
+	SiteTitle                      string  `gorm:"size:128;default:星空AI"`
+	ContactEmail                   string  `gorm:"size:128;default:support@example.com"`
+	APIEndpoints                   string  `gorm:"type:text"`
+	NavigationItems                string  `gorm:"type:text"`
+	PricingTitle                   string  `gorm:"size:128;default:简单透明的定价"`
+	PricingSubtitle                string  `gorm:"size:255;default:保质保量无降智不掺假"`
+	PricingNotice                  string  `gorm:"size:512;default:本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转"`
+	AllowRegistration              bool    `gorm:"default:true"`
+	EmailWhitelist                 string  `gorm:"type:text"`
+	SMTPHost                       string  `gorm:"size:128"`
+	SMTPPort                       int     `gorm:"default:587"`
+	SMTPUsername                   string  `gorm:"size:128"`
+	SMTPPassword                   string  `gorm:"size:255" json:"-"`
+	SMTPFromEmail                  string  `gorm:"size:128"`
+	SMTPFromName                   string  `gorm:"size:128"`
+	SMTPUseTLS                     bool    `gorm:"default:true"`
+	OrderPaymentAdminEmailEnabled  bool    `gorm:"default:false"`
+	OrderApprovedUserEmailEnabled  bool    `gorm:"default:false"`
+	SubscriptionExpireEmailEnabled bool    `gorm:"default:false"`
+	SubscriptionExpireRemindDays   int     `gorm:"default:3"`
+	EpayPID                        string  `gorm:"column:epay_pid;size:128"`
+	EpayKey                        string  `gorm:"size:255" json:"-"`
+	EpayNotifyURL                  string  `gorm:"size:512"`
+	EpayReturnURL                  string  `gorm:"size:512"`
+	EpaySubmitURL                  string  `gorm:"size:512"`
+	OnlinePaymentEnabled           bool    `gorm:"default:true"`
+	ManualPaymentEnabled           bool    `gorm:"default:true"`
+	ManualPaymentQRCode            string  `gorm:"type:longtext"`
+	BalanceRechargeRateRMBPerUSD   float64 `gorm:"default:0.7"`
+	MockAPIOnlineEnabled           bool    `gorm:"default:false"`
+	MockAPIOnlineBase              int     `gorm:"default:0"`
+	GitHubOAuthEnabled             bool    `gorm:"column:github_oauth_enabled;default:false"`
+	GitHubOAuthClientID            string  `gorm:"column:github_oauth_client_id;size:191"`
+	GitHubOAuthClientSecret        string  `gorm:"column:github_oauth_client_secret;size:255" json:"-"`
+	GoogleOAuthEnabled             bool    `gorm:"column:google_oauth_enabled;default:false"`
+	GoogleOAuthClientID            string  `gorm:"column:google_oauth_client_id;size:191"`
+	GoogleOAuthClientSecret        string  `gorm:"column:google_oauth_client_secret;size:255" json:"-"`
 }
 
 type EmailTemplate struct {

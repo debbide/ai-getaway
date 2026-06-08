@@ -230,6 +230,7 @@ const settings = reactive({
   epay_submit_url: '',
   online_payment_enabled: true,
   manual_payment_enabled: true,
+  balance_recharge_rate_rmb_per_usd: 0.7,
   mock_api_online_enabled: false,
   mock_api_online_base: 0,
   github_oauth_enabled: false,
@@ -260,8 +261,8 @@ const modalDialogWidth = computed(() => {
 const modalCanFullscreen = computed(() => ['create-doc', 'edit-doc', 'create-announcement', 'edit-announcement'].includes(modal.type))
 const enabledPlans = computed(() => stats.value.enabled_plans ?? plans.value.filter((plan) => plan.Enabled).length)
 const enabledModels = computed(() => models.value.filter((item) => item.Status === 'active').length)
-const availableModelOptions = computed(() => models.value.filter((item) => item.Status !== 'disabled' && modelOptionName(item)))
-const availableModelNames = computed(() => new Set(availableModelOptions.value.map((item) => modelOptionName(item))))
+const availableModelOptions = computed(() => currentAvailableModelOptions())
+const availableModelNames = computed(() => currentAvailableModelNames())
 const planModelOptions = computed(() => availableModelOptions.value)
 const approvedUsers = computed(() => stats.value.approved_users ?? users.value.filter((user) => user.Status === 'approved').length)
 const enabledChannels = computed(() => channels.value.filter((channel) => channel.Enabled).length)
@@ -1668,7 +1669,7 @@ function openApproveModal(order) {
     planId: order.PlanID || order.Plan?.ID || '',
     amountRmb: centsToAmount(order.AmountCents),
     status: order.Status,
-    planType: order.Plan?.PlanType || '',
+    planType: isBalanceOrder(order) ? 'balance' : (order.Plan?.PlanType || ''),
     quotaPeriod: order.Plan?.QuotaPeriod || '',
   })
   showModal('approve-order', `审核订单 #${order.ID}`, isPublic ? '确认通过' : '通过并开通', { order })
@@ -1690,7 +1691,7 @@ function openEditOrderModal(order) {
     planId: order.PlanID || order.Plan?.ID || '',
     amountRmb: centsToAmount(order.AmountCents),
     status: order.Status,
-    planType: order.Plan?.PlanType || '',
+    planType: isBalanceOrder(order) ? 'balance' : (order.Plan?.PlanType || ''),
     quotaPeriod: order.Plan?.QuotaPeriod || '',
   })
   showModal('edit-order', `编辑订单 #${order.ID}`, '保存修改', { order })
@@ -2092,7 +2093,7 @@ function normalizePlan(plan) {
 
 function normalizePlanModelNames(values) {
   const seen = new Set()
-  const validNames = availableModelNames.value
+  const validNames = currentAvailableModelNames()
   return (Array.isArray(values) ? values : [])
     .map((value) => String(value || '').trim())
     .filter((value) => {
@@ -2223,8 +2224,16 @@ function modelStatusLabel(value) {
   return value === 'disabled' ? '已停用' : '已启用'
 }
 
+function currentAvailableModelOptions() {
+  return models.value.filter((item) => item.Status !== 'disabled' && modelOptionName(item))
+}
+
+function currentAvailableModelNames() {
+  return new Set(currentAvailableModelOptions().map((item) => modelOptionName(item)))
+}
+
 function defaultGroupMultipliers() {
-  return availableModelOptions.value.map((item) => ({
+  return currentAvailableModelOptions().map((item) => ({
     model: modelOptionName(item),
     multiplier: Number(item.GroupMultiplier || 1)
   }))
@@ -2235,7 +2244,7 @@ function normalizeGroupMultiplierRows(value) {
   const existing = value && typeof value === 'object' && !Array.isArray(value)
     ? value
     : parseGroupMultipliers(value)
-  availableModelOptions.value.forEach((item) => {
+  currentAvailableModelOptions().forEach((item) => {
     const modelName = modelOptionName(item)
     if (!modelName) return
     const override = existing[modelName]
@@ -2258,7 +2267,7 @@ function parseGroupMultipliers(value) {
 }
 
 function groupMultiplierPayload(rows = []) {
-  const validNames = availableModelNames.value
+  const validNames = currentAvailableModelNames()
   return Object.fromEntries(
     rows
       .map((row) => [String(row.model || '').trim(), Number(row.multiplier || 1)])
@@ -2516,6 +2525,15 @@ function isPublicPlan(plan) {
 
 function isPublicOrder(order) {
   return isPublicPlan(order?.Plan)
+}
+
+function isBalanceOrder(order) {
+  return order?.OrderType === 'balance_recharge'
+}
+
+function orderDisplayName(order) {
+  if (isBalanceOrder(order)) return `余额充值 ${usd(order.SettlementUSDCents || 0)}`
+  return order?.Plan?.Name || '-'
 }
 
 function approveOrderUsesPublicChannel() {
@@ -2803,7 +2821,7 @@ function submitModal() {
                 <article v-for="order in pendingReviewOrders.slice(0, 4)" :key="order.ID" class="list-row">
                   <div>
                     <strong>#{{ order.ID }} · {{ order.User?.Email || '未知用户' }}</strong>
-                    <span>{{ order.Plan?.Name || '未关联套餐' }} · {{ money(order.AmountCents) }}</span>
+                    <span>{{ orderDisplayName(order) }} · {{ money(order.AmountCents) }}</span>
                   </div>
                   <el-button type="primary" size="small" :icon="Check" aria-label="审核订单" title="审核订单" @click="openApproveModal(order)" />
                 </article>
@@ -3178,7 +3196,7 @@ function submitModal() {
                   </template>
                 </el-table-column>
                 <el-table-column label="套餐" min-width="150">
-                  <template #default="{ row: order }">{{ order.Plan?.Name || '-' }}</template>
+                  <template #default="{ row: order }">{{ orderDisplayName(order) }}</template>
                 </el-table-column>
                 <el-table-column label="上游渠道" min-width="170">
                   <template #default="{ row: order }">{{ isPublicOrder(order) ? (order.Plan?.PublicChannel?.Name || '公共渠道') : (order.Upstream?.Channel || '-') }}</template>
@@ -4128,6 +4146,9 @@ function submitModal() {
               <el-form-item class="md:col-span-2" label="启用在线支付">
                 <el-switch v-model="settings.online_payment_enabled" active-text="前端展示在线支付" />
               </el-form-item>
+              <el-form-item class="md:col-span-2" label="余额充值汇率（RMB / 1 USD）">
+                <el-input-number v-model="settings.balance_recharge_rate_rmb_per_usd" class="w-full" :min="0.01" :step="0.01" />
+              </el-form-item>
               <el-form-item class="md:col-span-2" label="接口网址">
                 <el-input v-model="settings.epay_submit_url" placeholder="https://mapi.example.com/" />
               </el-form-item>
@@ -4601,6 +4622,10 @@ function submitModal() {
           <div v-if="approveOrderUsesPublicChannel()" class="order-flow-note md:col-span-2">
             <strong>公共套餐无需审核绑定上游</strong>
             <span>公共套餐在支付完成时会自动扣减公共渠道额度并开通，此处不需要填写上游账号、密码或 API Key。</span>
+          </div>
+          <div v-if="approve.planType === 'balance'" class="order-flow-note md:col-span-2">
+            <strong>余额充值审核</strong>
+            <span>审核通过后会增加用户余额，并按下方上游渠道绑定逻辑开通调用能力。</span>
           </div>
           <el-form-item v-if="!approveOrderUsesPublicChannel()" label="上游渠道">
             <el-select v-model="approve.channelId" required @change="syncApproveChannel">

@@ -26,6 +26,7 @@ import (
 const defaultMaxSSELineBytes = 1024 * 1024
 
 var errBodyTooLarge = errors.New("proxy body too large")
+var errNoUpstreamForAccess = errors.New("令牌额度耗尽")
 
 func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.HandlerFunc {
 	transport := newProxyTransport(cfg.UpstreamTimeout)
@@ -34,32 +35,6 @@ func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.Handl
 		defer service.AddActiveAPIConnection(-1)
 
 		apiKey := c.MustGet("api_key").(model.APIKey)
-		upstreamBaseURL := ""
-		upstreamAPIKey := ""
-		groupMultipliers := ""
-		if publicChannelValue, ok := c.Get("public_channel"); ok {
-			publicChannel := publicChannelValue.(model.PublicChannel)
-			upstreamBaseURL = publicChannel.BaseURL
-			upstreamAPIKey = publicChannel.APIKey
-			groupMultipliers = publicChannel.GroupMultipliers
-		} else if poolAccountValue, ok := c.Get("pool_account"); ok {
-			poolAccount := poolAccountValue.(model.PollingPoolAccount)
-			upstreamBaseURL = poolAccount.BaseURL
-			upstreamAPIKey = poolAccount.APIKey
-			groupMultipliers = poolAccount.GroupMultipliers
-		} else {
-			upstreamAccount := c.MustGet("upstream").(model.UpstreamAccount)
-			upstreamBaseURL = upstreamAccount.BaseURL
-			upstreamAPIKey = upstreamAccount.APIKey
-			groupMultipliers = upstreamAccount.GroupMultipliers
-		}
-
-		target, err := url.Parse(strings.TrimRight(upstreamBaseURL, "/"))
-		if err != nil {
-			c.JSON(500, gin.H{"error": "invalid upstream base url"})
-			return
-		}
-
 		start := time.Now()
 		requestInfo, err := parseRequestInfo(c.Request, cfg.MaxProxyBodyBytes)
 		if errors.Is(err, errBodyTooLarge) {
@@ -80,8 +55,32 @@ func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.Handl
 			return
 		}
 		quotaReservationID := uint(0)
+		accessSource := model.AccessSourcePlan
 		if quotaReservation != nil {
 			quotaReservationID = quotaReservation.ID
+			accessSource = proxyAccessSource(quotaReservation.AccessSource)
+		}
+		protocol := model.ProtocolGPT
+		if value, ok := c.Get("protocol"); ok {
+			protocol = service.NormalizeProtocol(value.(string))
+		}
+		upstreamBaseURL, upstreamAPIKey, groupMultipliers, err := selectProxyUpstream(db, apiKey, accessSource, protocol, start)
+		if err != nil {
+			service.CancelQuotaReservation(db, quotaReservationID, time.Now())
+			status := http.StatusForbidden
+			if err == errNoUpstreamForAccess {
+				status = http.StatusTooManyRequests
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+		target, err := url.Parse(strings.TrimRight(upstreamBaseURL, "/"))
+		if err != nil {
+			service.CancelQuotaReservation(db, quotaReservationID, time.Now())
+			c.JSON(500, gin.H{"error": "invalid upstream base url"})
+			return
+		}
+		if quotaReservation != nil {
 			if cappedInfo, ok, err := applyDynamicOutputLimit(db, c.Request, requestInfo, quotaReservation.ReservedUSDCents, groupMultipliers, cfg.MaxProxyBodyBytes); errors.Is(err, errBodyTooLarge) {
 				service.CancelQuotaReservation(db, quotaReservationID, time.Now())
 				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "请求体过大"})
@@ -97,10 +96,6 @@ func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.Handl
 			} else {
 				requestInfo = cappedInfo
 			}
-		}
-		protocol := model.ProtocolGPT
-		if value, ok := c.Get("protocol"); ok {
-			protocol = service.NormalizeProtocol(value.(string))
 		}
 		proxy := httputil.NewSingleHostReverseProxy(target)
 		proxy.Transport = transport
@@ -126,13 +121,14 @@ func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.Handl
 				return nil
 			}
 			log := model.APILog{
-				UserID:      apiKey.UserID,
-				APIKeyID:    apiKey.ID,
-				Method:      c.Request.Method,
-				Path:        c.Request.URL.Path,
-				ModelName:   requestInfo.Model,
-				StatusCode:  resp.StatusCode,
-				RequestType: requestType(c.Request.URL.Path, requestInfo.Stream),
+				UserID:       apiKey.UserID,
+				APIKeyID:     apiKey.ID,
+				Method:       c.Request.Method,
+				Path:         c.Request.URL.Path,
+				ModelName:    requestInfo.Model,
+				StatusCode:   resp.StatusCode,
+				RequestType:  requestType(c.Request.URL.Path, requestInfo.Stream),
+				AccessSource: accessSource,
 			}
 			if isEventStream(resp) {
 				resp.Body = &usageStreamReadCloser{
@@ -167,6 +163,102 @@ func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.Handl
 
 		proxy.ServeHTTP(c.Writer, c.Request)
 	}
+}
+
+func selectProxyUpstream(db *gorm.DB, apiKey model.APIKey, accessSource string, protocol string, now time.Time) (string, string, string, error) {
+	if accessSource == model.AccessSourcePlan {
+		if service.HasDirectPublicChannelAccess(apiKey.User, now) && apiKey.User.PlanID == nil {
+			if apiKey.User.PublicChannelID == nil {
+				return "", "", "", errNoUpstreamForAccess
+			}
+			var publicChannel model.PublicChannel
+			if db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *apiKey.User.PublicChannelID, true).First(&publicChannel).Error != nil {
+				return "", "", "", errNoUpstreamForAccess
+			}
+			if !service.SupportsProtocol(publicChannel.SupportsGPT, publicChannel.SupportsClaude, protocol) {
+				return "", "", "", errors.New("protocol not supported by plan")
+			}
+			db.Model(&publicChannel).Updates(map[string]interface{}{"last_used_at": &now})
+			return publicChannel.BaseURL, publicChannel.APIKey, publicChannel.GroupMultipliers, nil
+		}
+		if service.HasActiveSubscription(apiKey.User, now) && apiKey.User.Plan != nil && apiKey.User.Plan.PlanType == model.PlanTypePublic {
+			if !service.PlanChannelSupportsProtocol(apiKey.User.Plan, protocol) {
+				return "", "", "", errors.New("protocol not supported by plan")
+			}
+			if apiKey.User.Plan.PublicChannelID != nil {
+				var publicChannel model.PublicChannel
+				if db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *apiKey.User.Plan.PublicChannelID, true).First(&publicChannel).Error != nil {
+					return "", "", "", errNoUpstreamForAccess
+				}
+				if !service.SupportsProtocol(publicChannel.SupportsGPT, publicChannel.SupportsClaude, protocol) {
+					return "", "", "", errors.New("protocol not supported by plan")
+				}
+				db.Model(&publicChannel).Updates(map[string]interface{}{"last_used_at": &now})
+				return publicChannel.BaseURL, publicChannel.APIKey, publicChannel.GroupMultipliers, nil
+			}
+			if apiKey.User.Plan.PollingPoolID != nil {
+				var poolAccount model.PollingPoolAccount
+				if db.Joins("JOIN polling_pools ON polling_pools.id = polling_pool_accounts.polling_pool_id").
+					Where("polling_pool_accounts.polling_pool_id = ? AND polling_pool_accounts.enabled = ? AND polling_pool_accounts.remaining_usd_cents > 0 AND polling_pools.enabled = ?", *apiKey.User.Plan.PollingPoolID, true, true).
+					Order("polling_pool_accounts.sort_order asc, polling_pool_accounts.id asc").
+					First(&poolAccount).Error != nil {
+					return "", "", "", errNoUpstreamForAccess
+				}
+				db.Model(&poolAccount).Updates(map[string]interface{}{"last_used_at": &now})
+				return poolAccount.BaseURL, poolAccount.APIKey, poolAccount.GroupMultipliers, nil
+			}
+			return "", "", "", errNoUpstreamForAccess
+		}
+	}
+
+	upstream, err := loadUserUpstreamForAccess(db, apiKey.UserID, accessSource)
+	if err != nil && accessSource == model.AccessSourcePlan {
+		upstream, err = loadUserUpstreamForAccess(db, apiKey.UserID, model.AccessSourceBalance)
+	}
+	if err != nil {
+		return "", "", "", errors.New("no active upstream account bound")
+	}
+	if !service.SupportsProtocol(upstream.SupportsGPT, upstream.SupportsClaude, protocol) {
+		return "", "", "", errors.New("protocol not supported by upstream")
+	}
+	if upstream.GroupMultipliers == "" {
+		upstream.GroupMultipliers = loadUpstreamGroupMultipliers(db, upstream)
+	}
+	db.Model(&upstream).Updates(map[string]interface{}{"last_used_at": &now})
+	return upstream.BaseURL, upstream.APIKey, upstream.GroupMultipliers, nil
+}
+
+func loadUserUpstreamForAccess(db *gorm.DB, userID uint, accessType string) (model.UpstreamAccount, error) {
+	var upstream model.UpstreamAccount
+	err := db.Where("user_id = ? AND access_type = ? AND status = ?", userID, proxyAccessSource(accessType), model.UpstreamStatusActive).First(&upstream).Error
+	if err == nil {
+		return upstream, nil
+	}
+	if accessType == model.AccessSourcePlan {
+		err = db.Where("user_id = ? AND (access_type = ? OR access_type IS NULL) AND status = ?", userID, "", model.UpstreamStatusActive).First(&upstream).Error
+	}
+	return upstream, err
+}
+
+func loadUpstreamGroupMultipliers(db *gorm.DB, upstream model.UpstreamAccount) string {
+	if channelID := upstream.ChannelID; channelID != nil {
+		var channel model.UpstreamChannel
+		if db.Select("group_multipliers").Where("id = ?", *channelID).First(&channel).Error == nil {
+			return channel.GroupMultipliers
+		}
+	}
+	var channel model.UpstreamChannel
+	if db.Select("group_multipliers").Where("enabled = ? AND name = ?", true, upstream.Channel).First(&channel).Error == nil {
+		return channel.GroupMultipliers
+	}
+	return ""
+}
+
+func proxyAccessSource(source string) string {
+	if strings.TrimSpace(source) == model.AccessSourceBalance {
+		return model.AccessSourceBalance
+	}
+	return model.AccessSourcePlan
 }
 
 func newProxyTransport(upstreamTimeout time.Duration) *http.Transport {
