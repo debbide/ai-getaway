@@ -178,7 +178,7 @@ type RedeemCode struct {
 
 type UpstreamAccount struct {
 	gorm.Model
-	UserID           uint `gorm:"uniqueIndex:idx_upstream_user_access;not null"`
+	UserID           uint `gorm:"index:idx_upstream_accounts_user_id;uniqueIndex:idx_upstream_user_access;not null"`
 	User             User
 	AccessType       string `gorm:"size:32;default:plan;uniqueIndex:idx_upstream_user_access;index"`
 	ChannelID        *uint  `gorm:"index"`
