@@ -260,7 +260,9 @@ const modalDialogWidth = computed(() => {
 const modalCanFullscreen = computed(() => ['create-doc', 'edit-doc', 'create-announcement', 'edit-announcement'].includes(modal.type))
 const enabledPlans = computed(() => stats.value.enabled_plans ?? plans.value.filter((plan) => plan.Enabled).length)
 const enabledModels = computed(() => models.value.filter((item) => item.Status === 'active').length)
-const planModelOptions = computed(() => models.value.filter((item) => item.Status !== 'disabled'))
+const availableModelOptions = computed(() => models.value.filter((item) => item.Status !== 'disabled' && modelOptionName(item)))
+const availableModelNames = computed(() => new Set(availableModelOptions.value.map((item) => modelOptionName(item))))
+const planModelOptions = computed(() => availableModelOptions.value)
 const approvedUsers = computed(() => stats.value.approved_users ?? users.value.filter((user) => user.Status === 'approved').length)
 const enabledChannels = computed(() => channels.value.filter((channel) => channel.Enabled).length)
 const enabledPublicChannels = computed(() => publicChannels.value.filter((channel) => channel.Enabled).length)
@@ -1065,7 +1067,7 @@ function openPlanModal(plan = null) {
       duration_days: plan.DurationDays,
       public_expires_enabled: (plan.PlanType === 'public' || plan.QuotaPeriod === 'public') && Number(plan.DurationDays || 0) > 0,
       description: plan.Description,
-      model_names: Array.isArray(plan.ModelNames) ? plan.ModelNames : [],
+      model_names: filterAvailableModelNames(plan.ModelNames),
       is_lottery: Boolean(plan.IsLottery),
       lottery_url: plan.LotteryURL || '',
       enabled: plan.Enabled
@@ -2090,13 +2092,27 @@ function normalizePlan(plan) {
 
 function normalizePlanModelNames(values) {
   const seen = new Set()
+  const validNames = availableModelNames.value
   return (Array.isArray(values) ? values : [])
     .map((value) => String(value || '').trim())
     .filter((value) => {
-      if (!value || seen.has(value)) return false
+      if (!value || seen.has(value) || !validNames.has(value)) return false
       seen.add(value)
       return true
     })
+}
+
+function filterAvailableModelNames(values) {
+  return normalizePlanModelNames(values)
+}
+
+function modelOptionName(item) {
+  return String(item?.ModelName || item?.model || '').trim()
+}
+
+function modelOptionLabel(item) {
+  const name = modelOptionName(item)
+  return item?.DisplayName ? `${item.DisplayName}（${name}）` : name
 }
 
 function paginateItems(items, pager) {
@@ -2208,8 +2224,8 @@ function modelStatusLabel(value) {
 }
 
 function defaultGroupMultipliers() {
-  return models.value.map((item) => ({
-    model: item.ModelName || item.model || '',
+  return availableModelOptions.value.map((item) => ({
+    model: modelOptionName(item),
     multiplier: Number(item.GroupMultiplier || 1)
   }))
 }
@@ -2219,19 +2235,14 @@ function normalizeGroupMultiplierRows(value) {
   const existing = value && typeof value === 'object' && !Array.isArray(value)
     ? value
     : parseGroupMultipliers(value)
-  const names = new Set()
-  models.value.forEach((item) => {
-    const modelName = item.ModelName || item.model || ''
+  availableModelOptions.value.forEach((item) => {
+    const modelName = modelOptionName(item)
     if (!modelName) return
     const override = existing[modelName]
-    names.add(modelName)
     rows.push({
       model: modelName,
       multiplier: Number(override === undefined ? (item.GroupMultiplier || 1) : override)
     })
-  })
-  Object.entries(existing).forEach(([modelName, multiplier]) => {
-    if (!names.has(modelName)) rows.push({ model: modelName, multiplier: Number(multiplier || 1) })
   })
   return rows
 }
@@ -2247,10 +2258,11 @@ function parseGroupMultipliers(value) {
 }
 
 function groupMultiplierPayload(rows = []) {
+  const validNames = availableModelNames.value
   return Object.fromEntries(
     rows
       .map((row) => [String(row.model || '').trim(), Number(row.multiplier || 1)])
-      .filter(([modelName, multiplier]) => modelName && multiplier > 0)
+      .filter(([modelName, multiplier]) => modelName && validNames.has(modelName) && multiplier > 0)
   )
 }
 
@@ -4235,7 +4247,7 @@ function submitModal() {
           <el-form-item v-if="planForm.quota_period !== 'public'" label="预计总美元额度"><el-input :model-value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></el-form-item>
           <el-form-item class="md:col-span-2" label="绑定模型">
             <el-select v-model="planForm.model_names" multiple filterable collapse-tags collapse-tags-tooltip placeholder="请选择套餐支持的模型">
-              <el-option v-for="item in planModelOptions" :key="item.ModelName" :label="item.DisplayName ? `${item.DisplayName}（${item.ModelName}）` : item.ModelName" :value="item.ModelName" />
+              <el-option v-for="item in planModelOptions" :key="modelOptionName(item)" :label="modelOptionLabel(item)" :value="modelOptionName(item)" />
             </el-select>
           </el-form-item>
           <el-form-item class="md:col-span-2" label="套餐说明"><el-input v-model="planForm.description" type="textarea" :rows="3" /></el-form-item>
