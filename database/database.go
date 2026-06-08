@@ -38,14 +38,15 @@ func InitRedis(cfg config.Config) *redis.Client {
 
 func AutoMigrate(db *gorm.DB) {
 	backfillOrderPaymentRefs(db)
+	upstreamAccountsExist := db != nil && db.Migrator().HasTable(&model.UpstreamAccount{})
 	prepareAccessSourceMigration(db)
-	if err := db.AutoMigrate(
+
+	migrateModels := []interface{}{
 		&model.User{},
 		&model.OAuthAccount{},
 		&model.Plan{},
 		&model.Order{},
 		&model.RedeemCode{},
-		&model.UpstreamAccount{},
 		&model.UpstreamChannel{},
 		&model.PublicChannel{},
 		&model.PollingPool{},
@@ -62,7 +63,12 @@ func AutoMigrate(db *gorm.DB) {
 		&model.EmailTemplate{},
 		&model.EmailNotificationLog{},
 		&model.EmailVerification{},
-	); err != nil {
+	}
+	if !upstreamAccountsExist {
+		migrateModels = append(migrateModels, &model.UpstreamAccount{})
+	}
+
+	if err := db.AutoMigrate(migrateModels...); err != nil {
 		log.Fatalf("auto migrate failed: %v", err)
 	}
 	dropLegacyQuotaColumns(db)
