@@ -450,7 +450,7 @@ func emailTemplateVariables(input EmailTemplateInput, extra map[string]string) m
 		vars["email"] = input.User.Email
 	}
 	if input.Order != nil {
-		vars["order_id"] = fmt.Sprintf("%d", input.Order.ID)
+		vars["order_id"] = fallback(input.Order.OrderNo, fmt.Sprintf("%d", input.Order.ID))
 		vars["payment_ref"] = input.Order.PaymentRef
 		vars["amount"] = fmt.Sprintf("%.2f", float64(input.Order.AmountCents)/100)
 		if input.Order.OrderType == model.OrderTypeBalance {

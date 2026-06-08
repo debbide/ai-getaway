@@ -106,6 +106,11 @@ const orderStatusMap = {
   pending_manual_review: '待人工处理'
 }
 
+const genericStatusMap = {
+  active: '已启用',
+  disabled: '已停用'
+}
+
 const reviewableOrderStatuses = ['pending_review', 'pending_manual_review', 'paid_late']
 
 const active = ref('overview')
@@ -147,8 +152,8 @@ const filterTimers = {}
 let overviewMetricsTimer = null
 let loadBalancerTimer = null
 const modal = reactive({ open: false, type: '', title: '', actionLabel: '', danger: false, payload: null, fullscreen: false })
-const approve = reactive({ orderId: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountRmb: 0, status: '', planType: '', quotaPeriod: '' })
-const rejectForm = reactive({ orderId: '', adminNote: '' })
+const approve = reactive({ orderId: '', orderNo: '', channelId: '', channel: '', baseUrl: '', username: '', password: '', apiKey: '', adminNote: '', planId: '', amountRmb: 0, status: '', planType: '', quotaPeriod: '' })
+const rejectForm = reactive({ orderId: '', orderNo: '', adminNote: '' })
 const planForm = reactive(emptyPlan())
 const lotteryDrawForm = reactive({ planId: '', winnerEmail: '' })
 const redeemCodeForm = reactive(emptyRedeemCode())
@@ -158,6 +163,10 @@ const publicChannelForm = reactive(emptyPublicChannel())
 const pollingPoolForm = reactive(emptyPollingPool())
 const channelMonitorForm = reactive(emptyChannelMonitor())
 const userForm = reactive(emptyUser())
+const userUpstreamForm = reactive({
+  plan: emptyUserUpstreamForm('plan'),
+  balance: emptyUserUpstreamForm('balance')
+})
 const apiKeyForm = reactive(emptyApiKey())
 const docForm = reactive(emptyDoc())
 const announcementForm = reactive(emptyAnnouncement())
@@ -450,6 +459,17 @@ function emptyUser() {
     upstream_username: '',
     upstream_password: '',
     api_key: ''
+  }
+}
+
+function emptyUserUpstreamForm(accessType) {
+  return {
+    access_type: accessType,
+    channel_id: '',
+    upstream_username: '',
+    upstream_password: '',
+    api_key: '',
+    status: 'active'
   }
 }
 
@@ -1584,20 +1604,41 @@ async function submitUser() {
 
 async function openUserUpstreamModal(user) {
   error.value = ''
-  const cached = user.Upstream
-  if (cached) {
-    showModal('user-upstream', `渠道 #${user.ID}`, '关闭', { user, upstream: cached })
+  const cached = normalizeUserUpstreams(user.upstreams, user.Upstream)
+  if (hasAnyUserUpstream(cached)) {
+    setUserUpstreamForms(cached)
+    showModal('user-upstream', `渠道 #${user.ID}`, '保存', { user, upstreams: cached })
     return
   }
   try {
     const res = await api.get(`/admin/users/${user.ID}/upstream`)
-    showModal('user-upstream', `渠道 #${user.ID}`, '关闭', { user, upstream: res.data })
+    const upstreams = normalizeUserUpstreams(res.data)
+    setUserUpstreamForms(upstreams)
+    showModal('user-upstream', `渠道 #${user.ID}`, '保存', { user, upstreams })
   } catch (err) {
     if (err.status === 404 && err.rawMessage === 'upstream account not found') {
-      showModal('user-upstream', `渠道 #${user.ID}`, '关闭', { user, upstream: null })
+      const upstreams = normalizeUserUpstreams(null)
+      setUserUpstreamForms(upstreams)
+      showModal('user-upstream', `渠道 #${user.ID}`, '保存', { user, upstreams })
       return
     }
     error.value = err.message
+  }
+}
+
+function setUserUpstreamForms(upstreams) {
+  Object.assign(userUpstreamForm.plan, upstreamToForm('plan', upstreams?.plan))
+  Object.assign(userUpstreamForm.balance, upstreamToForm('balance', upstreams?.balance))
+}
+
+function upstreamToForm(accessType, upstream) {
+  return {
+    access_type: accessType,
+    channel_id: upstream?.ChannelID || '',
+    upstream_username: upstream?.Username || '',
+    upstream_password: upstream?.Password || '',
+    api_key: upstream?.APIKey || '',
+    status: upstream?.Status || 'active'
   }
 }
 
@@ -1659,6 +1700,7 @@ function openApproveModal(order) {
   const isPublic = isPublicOrder(order)
   Object.assign(approve, {
     orderId: String(order.ID),
+    orderNo: String(orderNo(order)),
     channelId: channel?.ID || '',
     channel: channel?.Name || '',
     baseUrl: channel?.BaseURL || '',
@@ -1672,7 +1714,7 @@ function openApproveModal(order) {
     planType: isBalanceOrder(order) ? 'balance' : (order.Plan?.PlanType || ''),
     quotaPeriod: order.Plan?.QuotaPeriod || '',
   })
-  showModal('approve-order', `审核订单 #${order.ID}`, isPublic ? '确认通过' : '通过并开通', { order })
+  showModal('approve-order', `审核订单 #${orderNo(order)}`, isPublic ? '确认通过' : '通过并开通', { order })
 }
 
 function openEditOrderModal(order) {
@@ -1681,6 +1723,7 @@ function openEditOrderModal(order) {
   const isPublic = isPublicOrder(order)
   Object.assign(approve, {
     orderId: String(order.ID),
+    orderNo: String(orderNo(order)),
     channelId: channel?.ID || '',
     channel: upstream.Channel || '',
     baseUrl: upstream.BaseURL || '',
@@ -1694,12 +1737,12 @@ function openEditOrderModal(order) {
     planType: isBalanceOrder(order) ? 'balance' : (order.Plan?.PlanType || ''),
     quotaPeriod: order.Plan?.QuotaPeriod || '',
   })
-  showModal('edit-order', `编辑订单 #${order.ID}`, '保存修改', { order })
+  showModal('edit-order', `编辑订单 #${orderNo(order)}`, '保存修改', { order })
 }
 
 function openRejectModal(order) {
-  Object.assign(rejectForm, { orderId: String(order.ID), adminNote: '' })
-  showModal('reject-order', `拒绝订单 #${order.ID}`, '确认拒绝', null, true)
+  Object.assign(rejectForm, { orderId: String(order.ID), orderNo: String(orderNo(order)), adminNote: '' })
+  showModal('reject-order', `拒绝订单 #${orderNo(order)}`, '确认拒绝', null, true)
 }
 
 function selectedApproveChannel() {
@@ -1716,6 +1759,62 @@ function syncApproveChannel() {
   const channel = selectedApproveChannel()
   approve.channel = channel?.Name || ''
   approve.baseUrl = channel?.BaseURL || ''
+}
+
+function selectedUserUpstreamChannel(form) {
+  return channels.value.find((channel) => String(channel.ID) === String(form.channel_id)) || null
+}
+
+function userUpstreamBaseURL(form) {
+  return selectedUserUpstreamChannel(form)?.BaseURL || '-'
+}
+
+function userUpstreamChannelName(form) {
+  return selectedUserUpstreamChannel(form)?.Name || '-'
+}
+
+function userUpstreamPayload(form) {
+  return {
+    channel_id: Number(form.channel_id) || 0,
+    upstream_username: String(form.upstream_username || '').trim(),
+    upstream_password: String(form.upstream_password || ''),
+    api_key: String(form.api_key || ''),
+    status: form.status === 'disabled' ? 'disabled' : 'active'
+  }
+}
+
+function validateUserUpstreamForm(form, label) {
+  if (!Number(form.channel_id)) return ''
+  const payload = userUpstreamPayload(form)
+  if (!payload.upstream_username || !payload.upstream_password || !payload.api_key) {
+    return `${label}需要填写上游渠道、账号、密码和 API Key`
+  }
+  return ''
+}
+
+async function updateUserUpstream(accessType, form, label) {
+  if (!Number(form.channel_id)) return null
+  const validation = validateUserUpstreamForm(form, label)
+  if (validation) throw new Error(validation)
+  const userID = modal.payload?.user?.ID
+  if (!userID) throw new Error('用户信息不可用')
+  const res = await api.put(`/admin/users/${userID}/upstreams/${accessType}`, userUpstreamPayload(form))
+  return res.data
+}
+
+async function submitUserUpstreams() {
+  await runAction(async () => {
+    const [plan, balance] = await Promise.all([
+      updateUserUpstream('plan', userUpstreamForm.plan, '订阅渠道'),
+      updateUserUpstream('balance', userUpstreamForm.balance, '余额渠道')
+    ])
+    const upstreams = normalizeUserUpstreams({
+      plan: plan || modal.payload?.upstreams?.plan || null,
+      balance: balance || modal.payload?.upstreams?.balance || null
+    })
+    if (modal.payload) modal.payload.upstreams = upstreams
+    notice.value = '用户渠道配置已更新'
+  })
 }
 
 async function approveOrder() {
@@ -1781,7 +1880,7 @@ async function rejectOrder() {
 }
 
 function confirmCloseOrder(order) {
-  showModal('close-order', `关闭订单 #${order.ID}`, '确认关闭', { order }, true)
+  showModal('close-order', `关闭订单 #${orderNo(order)}`, '确认关闭', { order }, true)
 }
 
 async function closeOrder() {
@@ -1792,7 +1891,7 @@ async function closeOrder() {
 }
 
 function confirmDeleteOrder(order) {
-  showModal('delete-order', `删除订单 #${order.ID}`, '确认删除', { order }, true)
+  showModal('delete-order', `删除订单 #${orderNo(order)}`, '确认删除', { order }, true)
 }
 
 async function deleteOrder() {
@@ -2536,6 +2635,10 @@ function orderDisplayName(order) {
   return order?.Plan?.Name || '-'
 }
 
+function orderNo(order) {
+  return order?.OrderNo || order?.order_no || order?.ID || '-'
+}
+
 function approveOrderUsesPublicChannel() {
   return approve.planType === 'public' || approve.quotaPeriod === 'public'
 }
@@ -2631,6 +2734,69 @@ function planLabel(user) {
   return '未订阅'
 }
 
+function publicPlanChannelName(plan) {
+  if (plan.PollingPoolID || plan.PollingPool) {
+    return plan.PollingPool?.Name || '未绑定轮询号池'
+  }
+  return publicChannelNameById(plan.PublicChannelID, plan.PublicChannel)
+}
+
+function normalizeUserUpstreams(upstreams, legacyUpstream = null) {
+  return {
+    plan: upstreams?.plan || legacyUpstream || null,
+    balance: upstreams?.balance || null
+  }
+}
+
+function userUpstreams(user) {
+  return normalizeUserUpstreams(user?.upstreams, user?.Upstream)
+}
+
+function hasAnyUserUpstream(upstreams) {
+  return Boolean(upstreams?.plan || upstreams?.balance)
+}
+
+function upstreamChannelText(upstream) {
+  if (!upstream) return '未绑定'
+  return upstream.Channel || upstream.BaseURL || '未命名渠道'
+}
+
+function upstreamStatusText(upstream) {
+  if (!upstream) return '未绑定'
+  return statusLabel(upstream.Status || 'active')
+}
+
+function subscriptionChannelText(user) {
+  const upstream = userUpstreams(user).plan
+  if (upstream) return upstreamChannelText(upstream)
+  if (user?.Plan?.Name && isPublicPlan(user.Plan)) return publicPlanChannelName(user.Plan)
+  if (user?.PublicChannelID) return publicChannelNameById(user.PublicChannelID, user.PublicChannel)
+  if (user?.Plan?.Name) return '未绑定订阅上游'
+  return '未订阅'
+}
+
+function subscriptionChannelDetail(user) {
+  const upstream = userUpstreams(user).plan
+  if (upstream) return `订阅渠道 · ${upstreamStatusText(upstream)}`
+  if (user?.Plan?.Name && isPublicPlan(user.Plan)) return `公共套餐 · ${publicPlanDurationText(user.Plan)}`
+  if (user?.PublicChannelID) return `直接公共渠道 · ${quotaPeriodLabel(user.PublicChannelPeriod || 'public')}访问`
+  return user?.Plan?.Name ? '订阅套餐未绑定上游账号' : '暂无订阅渠道'
+}
+
+function balanceChannelText(user) {
+  return upstreamChannelText(userUpstreams(user).balance)
+}
+
+function balanceChannelDetail(user) {
+  const upstream = userUpstreams(user).balance
+  if (upstream) return `余额渠道 · ${upstreamStatusText(upstream)}`
+  return Number(user?.BalanceUSDCents || 0) > 0 ? '有余额但未绑定余额渠道' : '暂无余额渠道'
+}
+
+function userBalanceText(user) {
+  return usd(user.BalanceUSDCents || 0)
+}
+
 function publicChannelNameById(id, fallback = null) {
   return fallback?.Name || publicChannels.value.find((channel) => String(channel.ID) === String(id))?.Name || '未命名'
 }
@@ -2660,7 +2826,7 @@ function userQuotaPeriodText(user) {
 }
 
 function apiKeyStatusLabel(value) {
-  return value === 'disabled' ? '已停用' : '已启用'
+  return genericStatusMap[value] || value || '-'
 }
 
 function apiKeyPrefix(value) {
@@ -2668,7 +2834,7 @@ function apiKeyPrefix(value) {
 }
 
 function statusLabel(value) {
-  return statusOptions.find((item) => item.value === value)?.label || orderStatusMap[value] || value
+  return statusOptions.find((item) => item.value === value)?.label || orderStatusMap[value] || genericStatusMap[value] || value
 }
 
 function redeemCodeStatusLabel(value) {
@@ -2712,7 +2878,7 @@ function submitModal() {
     'create-user': submitUser,
     'edit-user': submitUser,
     'edit-api-key': submitApiKey,
-    'user-upstream': closeModal,
+    'user-upstream': submitUserUpstreams,
     'delete-user': deleteUser,
     'delete-api-key': deleteApiKey,
     'approve-order': approveOrder,
@@ -2820,7 +2986,7 @@ function submitModal() {
               <div class="mt-4 grid gap-3">
                 <article v-for="order in pendingReviewOrders.slice(0, 4)" :key="order.ID" class="list-row">
                   <div>
-                    <strong>#{{ order.ID }} · {{ order.User?.Email || '未知用户' }}</strong>
+                    <strong>#{{ orderNo(order) }} · {{ order.User?.Email || '未知用户' }}</strong>
                     <span>{{ orderDisplayName(order) }} · {{ money(order.AmountCents) }}</span>
                   </div>
                   <el-button type="primary" size="small" :icon="Check" aria-label="审核订单" title="审核订单" @click="openApproveModal(order)" />
@@ -3186,8 +3352,8 @@ function submitModal() {
           <section class="panel-surface overflow-hidden">
             <div class="table-wrap">
               <el-table :data="pagedOrders" border>
-                <el-table-column label="订单" width="90">
-                  <template #default="{ row: order }">#{{ order.ID }}</template>
+                <el-table-column label="订单" min-width="190">
+                  <template #default="{ row: order }">#{{ orderNo(order) }}</template>
                 </el-table-column>
                 <el-table-column label="用户" min-width="220">
                   <template #default="{ row: order }">
@@ -3548,6 +3714,21 @@ function submitModal() {
                 <el-table-column label="角色" width="110"><template #default="{ row: user }">{{ roleLabel(user.Role) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: user }"><el-tag>{{ statusLabel(user.Status) }}</el-tag></template></el-table-column>
                 <el-table-column label="套餐" min-width="150"><template #default="{ row: user }">{{ planLabel(user) }}</template></el-table-column>
+                <el-table-column label="渠道" min-width="240">
+                  <template #default="{ row: user }">
+                    <div class="admin-user-channel-list">
+                      <div>
+                        <strong>订阅：{{ subscriptionChannelText(user) }}</strong>
+                        <small>{{ subscriptionChannelDetail(user) }}</small>
+                      </div>
+                      <div>
+                        <strong>余额：{{ balanceChannelText(user) }}</strong>
+                        <small>{{ balanceChannelDetail(user) }}</small>
+                      </div>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="余额" width="120"><template #default="{ row: user }">{{ userBalanceText(user) }}</template></el-table-column>
                 <el-table-column label="套餐消耗" min-width="240">
                   <template #default="{ row: user }">
                     <div v-if="userQuotaUsage(user)" class="admin-user-quota">
@@ -4598,23 +4779,68 @@ function submitModal() {
         </div>
 
         <div v-if="modal.type === 'user-upstream'" class="modal-body form-grid">
-          <div v-if="!modal.payload?.upstream" class="order-flow-note md:col-span-2">
+          <div v-if="!hasAnyUserUpstream(modal.payload?.upstreams)" class="order-flow-note md:col-span-2">
             <strong>尚未绑定上游渠道</strong>
-            <span>当前用户没有独立上游账号。需要开通时，请在编辑用户时分配套餐并填写上游渠道、账号、密码和 API Key。</span>
+            <span>当前用户没有独立上游账号。需要开通订阅渠道时，请在编辑用户时分配套餐并填写上游渠道、账号、密码和 API Key；余额渠道由余额充值订单审核开通。</span>
           </div>
           <el-form-item label="用户"><el-input :model-value="modal.payload?.user?.Email || '-'" readonly /></el-form-item>
-          <el-form-item label="状态"><el-input :model-value="modal.payload?.upstream ? statusLabel(modal.payload.upstream.Status) : '未绑定'" readonly /></el-form-item>
-          <el-form-item label="上游渠道"><el-input :model-value="modal.payload?.upstream?.Channel || '-'" readonly /></el-form-item>
-          <el-form-item class="md:col-span-2" label="API 地址"><el-input :model-value="modal.payload?.upstream?.BaseURL || '-'" readonly /></el-form-item>
-          <el-form-item label="上游账号"><el-input :model-value="modal.payload?.upstream?.Username || '-'" readonly /></el-form-item>
-          <el-form-item label="上游密码"><el-input :model-value="modal.payload?.upstream?.Password || '-'" readonly /></el-form-item>
-          <el-form-item class="md:col-span-2" label="API Key"><el-input :model-value="modal.payload?.upstream?.APIKey || '-'" type="textarea" :rows="4" readonly /></el-form-item>
-          <el-form-item label="最后使用"><el-input :model-value="formatDate(modal.payload?.upstream?.LastUsedAt)" readonly /></el-form-item>
-          <el-form-item label="更新时间"><el-input :model-value="formatDate(modal.payload?.upstream?.UpdatedAt)" readonly /></el-form-item>
+          <el-form-item label="当前余额"><el-input :model-value="userBalanceText(modal.payload?.user || {})" readonly /></el-form-item>
+
+          <div class="admin-upstream-section md:col-span-2">
+            <div class="admin-upstream-section-head">
+              <strong>订阅渠道</strong>
+              <el-tag>{{ genericStatusMap[userUpstreamForm.plan.status] || userUpstreamForm.plan.status }}</el-tag>
+            </div>
+            <div class="form-grid">
+              <el-form-item label="上游渠道">
+                <el-select v-model="userUpstreamForm.plan.channel_id" clearable filterable placeholder="请选择渠道">
+                  <el-option label="未绑定" value="" />
+                  <el-option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID" :label="channel.Name" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="状态">
+                <el-select v-model="userUpstreamForm.plan.status">
+                  <el-option value="active" label="已启用" />
+                  <el-option value="disabled" label="已停用" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="上游账号"><el-input v-model="userUpstreamForm.plan.upstream_username" placeholder="请输入上游账号" /></el-form-item>
+              <el-form-item label="上游密码"><el-input v-model="userUpstreamForm.plan.upstream_password" type="text" placeholder="请输入上游密码" /></el-form-item>
+              <el-form-item class="md:col-span-2" label="API 地址"><el-input :model-value="userUpstreamBaseURL(userUpstreamForm.plan)" readonly /></el-form-item>
+              <el-form-item class="md:col-span-2" label="API Key"><el-input v-model="userUpstreamForm.plan.api_key" type="textarea" :rows="3" placeholder="请输入上游 API Key" /></el-form-item>
+              <el-form-item label="更新时间"><el-input :model-value="formatDate(modal.payload?.upstreams?.plan?.UpdatedAt)" readonly /></el-form-item>
+            </div>
+          </div>
+
+          <div class="admin-upstream-section md:col-span-2">
+            <div class="admin-upstream-section-head">
+              <strong>余额渠道</strong>
+              <el-tag>{{ genericStatusMap[userUpstreamForm.balance.status] || userUpstreamForm.balance.status }}</el-tag>
+            </div>
+            <div class="form-grid">
+              <el-form-item label="上游渠道">
+                <el-select v-model="userUpstreamForm.balance.channel_id" clearable filterable placeholder="请选择渠道">
+                  <el-option label="未绑定" value="" />
+                  <el-option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID" :label="channel.Name" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="状态">
+                <el-select v-model="userUpstreamForm.balance.status">
+                  <el-option value="active" label="已启用" />
+                  <el-option value="disabled" label="已停用" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="上游账号"><el-input v-model="userUpstreamForm.balance.upstream_username" placeholder="请输入上游账号" /></el-form-item>
+              <el-form-item label="上游密码"><el-input v-model="userUpstreamForm.balance.upstream_password" type="text" placeholder="请输入上游密码" /></el-form-item>
+              <el-form-item class="md:col-span-2" label="API 地址"><el-input :model-value="userUpstreamBaseURL(userUpstreamForm.balance)" readonly /></el-form-item>
+              <el-form-item class="md:col-span-2" label="API Key"><el-input v-model="userUpstreamForm.balance.api_key" type="textarea" :rows="3" placeholder="请输入上游 API Key" /></el-form-item>
+              <el-form-item label="更新时间"><el-input :model-value="formatDate(modal.payload?.upstreams?.balance?.UpdatedAt)" readonly /></el-form-item>
+            </div>
+          </div>
         </div>
 
         <div v-if="modal.type === 'approve-order'" class="modal-body form-grid">
-          <el-form-item label="订单 ID"><el-input v-model="approve.orderId" readonly /></el-form-item>
+          <el-form-item label="订单编号"><el-input v-model="approve.orderNo" readonly /></el-form-item>
           <div v-if="modal.payload?.order?.UserPaymentNote" class="order-flow-note md:col-span-2">
             <strong>用户付款备注</strong>
             <span>{{ modal.payload.order.UserPaymentNote }}</span>
@@ -4640,7 +4866,7 @@ function submitModal() {
         </div>
 
         <div v-if="modal.type === 'edit-order'" class="modal-body form-grid">
-          <el-form-item label="订单 ID"><el-input v-model="approve.orderId" readonly /></el-form-item>
+          <el-form-item label="订单编号"><el-input v-model="approve.orderNo" readonly /></el-form-item>
           <div v-if="modal.payload?.order?.UserPaymentNote" class="order-flow-note md:col-span-2">
             <strong>用户付款备注</strong>
             <span>{{ modal.payload.order.UserPaymentNote }}</span>
@@ -4673,12 +4899,12 @@ function submitModal() {
         </div>
 
         <div v-if="modal.type === 'close-order'" class="modal-body confirm-copy">
-          <strong>确定关闭订单 #{{ modal.payload?.order?.ID }} 吗？</strong>
+          <strong>确定关闭订单 #{{ orderNo(modal.payload?.order) }} 吗？</strong>
           <p>未支付订单会标记为支付超时，待审核订单会标记为已拒绝。</p>
         </div>
 
         <div v-if="modal.type === 'delete-order'" class="modal-body confirm-copy">
-          <strong>确定删除订单 #{{ modal.payload?.order?.ID }} 吗？</strong>
+          <strong>确定删除订单 #{{ orderNo(modal.payload?.order) }} 吗？</strong>
           <p>删除后无法恢复，已通过订单不允许删除。</p>
         </div>
 

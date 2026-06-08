@@ -69,6 +69,7 @@ func AutoMigrate(db *gorm.DB) {
 	ensureBalanceColumns(db)
 	ensureAccessSourceColumns(db)
 	backfillOrderPaymentRefs(db)
+	backfillOrderNumbers(db)
 }
 
 func prepareAccessSourceMigration(db *gorm.DB) {
@@ -282,6 +283,27 @@ func backfillOrderPaymentRefs(db *gorm.DB) {
 		ref := "ORDERLEGACY" + strconv.FormatUint(uint64(order.ID), 10)
 		if err := db.Unscoped().Model(&model.Order{}).Where("id = ?", order.ID).Update("payment_ref", ref).Error; err != nil {
 			log.Printf("backfill order payment ref failed: %v", err)
+		}
+	}
+}
+
+func backfillOrderNumbers(db *gorm.DB) {
+	if db == nil || !db.Migrator().HasTable(&model.Order{}) || !db.Migrator().HasColumn(&model.Order{}, "order_no") {
+		return
+	}
+	var orders []model.Order
+	if err := db.Unscoped().Where("order_no IS NULL OR order_no = ''").Find(&orders).Error; err != nil {
+		log.Printf("load empty order numbers failed: %v", err)
+		return
+	}
+	for _, order := range orders {
+		createdAt := order.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = time.Now()
+		}
+		orderNo := model.GenerateOrderNo(order.UserID, createdAt) + strconv.FormatUint(uint64(order.ID%1000000), 10)
+		if err := db.Unscoped().Model(&model.Order{}).Where("id = ?", order.ID).Update("order_no", orderNo).Error; err != nil {
+			log.Printf("backfill order number failed: %v", err)
 		}
 	}
 }

@@ -2356,6 +2356,9 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
 
 .toolbar-actions .el-button.is-circle {
   width: 40px;
+  height: 40px;
+  min-width: 40px;
+  flex: 0 0 40px;
   padding: 0;
 }
 
@@ -3171,6 +3174,10 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
 }
 
 .refresh-button {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  flex: 0 0 40px;
   font-size: 20px;
   font-weight: 900;
 }
@@ -5076,6 +5083,45 @@ html[data-theme="dark"] .endpoint-admin-item .el-button.is-disabled {
 
 .admin-user-quota .quota-progress-foot {
   color: var(--muted);
+}
+
+.admin-user-channel-list {
+  display: grid;
+  gap: 8px;
+  min-width: 210px;
+}
+
+.admin-user-channel-list div {
+  display: grid;
+  gap: 2px;
+}
+
+.admin-user-channel-list strong {
+  color: var(--ink);
+}
+
+.admin-user-channel-list small {
+  color: var(--muted);
+}
+
+.admin-upstream-section {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.admin-upstream-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-upstream-section-head strong {
+  color: var(--ink);
 }
 
 .admin-table-actions {
@@ -8458,6 +8504,20 @@ html[data-theme="dark"] .payment-panel {
   background: rgba(215, 126, 88, 0.11);
 }
 
+html[data-theme="dark"] .admin-upstream-section {
+  border-color: rgba(71, 84, 110, 0.74);
+  background: rgba(9, 14, 25, 0.58);
+}
+
+html[data-theme="dark"] .admin-upstream-section-head strong,
+html[data-theme="dark"] .admin-user-channel-list strong {
+  color: #f8fafc;
+}
+
+html[data-theme="dark"] .admin-user-channel-list small {
+  color: #aeb8ca;
+}
+
 html[data-theme="dark"] .payment-method-options {
   border-color: rgba(71, 84, 110, 0.74);
   background: rgba(9, 14, 25, 0.44);
@@ -9788,6 +9848,7 @@ html[data-theme="dark"] .api-online-widget {
     flex: 0 0 44px;
     width: 44px;
     min-width: 44px;
+    height: 44px;
   }
 
   .section-head,

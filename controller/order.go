@@ -137,7 +137,9 @@ func (o *OrderController) CreateBalanceRecharge(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
 	order := model.Order{
+		OrderNo:            model.GenerateOrderNo(ctxUser.ID, now),
 		UserID:             ctxUser.ID,
 		PlanID:             0,
 		OrderType:          model.OrderTypeBalance,
@@ -145,7 +147,7 @@ func (o *OrderController) CreateBalanceRecharge(c *gin.Context) {
 		SettlementUSDCents: settlementUSDCents,
 		Status:             model.OrderStatusPendingPayment,
 		PaymentMethod:      paymentMethod,
-		PaymentRef:         fmt.Sprintf("BALANCE%d%d", ctxUser.ID, time.Now().UnixNano()),
+		PaymentRef:         fmt.Sprintf("BALANCE%d%d", ctxUser.ID, now.UnixNano()),
 	}
 	if err := o.db.Create(&order).Error; err != nil {
 		response.Error(c, 500, "failed to create order")
@@ -185,7 +187,8 @@ func (o *OrderController) Create(c *gin.Context) {
 		response.Error(c, 409, "public plan sold out")
 		return
 	}
-	orderType := orderTypeForPlan(o.db, user, plan, time.Now(), service.UsedUSDCentsSince)
+	now := time.Now()
+	orderType := orderTypeForPlan(o.db, user, plan, now, service.UsedUSDCentsSince)
 	amountCents := orderAmountCentsForPlan(user, plan, orderType)
 	paymentMethod := normalizePaymentMethod(req.PaymentMethod)
 	if plan.PriceCents > 0 {
@@ -244,6 +247,7 @@ func (o *OrderController) Create(c *gin.Context) {
 	}
 
 	order := model.Order{
+		OrderNo:            model.GenerateOrderNo(ctxUser.ID, now),
 		UserID:             ctxUser.ID,
 		PlanID:             plan.ID,
 		OrderType:          orderType,
@@ -251,7 +255,7 @@ func (o *OrderController) Create(c *gin.Context) {
 		SettlementUSDCents: plan.SettlementUSDCents,
 		Status:             model.OrderStatusPendingPayment,
 		PaymentMethod:      paymentMethod,
-		PaymentRef:         fmt.Sprintf("ORDER%d%d", ctxUser.ID, time.Now().UnixNano()),
+		PaymentRef:         fmt.Sprintf("ORDER%d%d", ctxUser.ID, now.UnixNano()),
 	}
 	if err := o.db.Create(&order).Error; err != nil {
 		response.Error(c, 500, "failed to create order")

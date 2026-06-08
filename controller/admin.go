@@ -86,6 +86,14 @@ type updateUserRequest struct {
 	APIKey              string `json:"api_key"`
 }
 
+type updateUserUpstreamRequest struct {
+	ChannelID        uint   `json:"channel_id" binding:"required"`
+	UpstreamUsername string `json:"upstream_username" binding:"required"`
+	UpstreamPassword string `json:"upstream_password" binding:"required"`
+	APIKey           string `json:"api_key" binding:"required"`
+	Status           string `json:"status"`
+}
+
 func (r *updateUserRequest) UnmarshalJSON(data []byte) error {
 	type request updateUserRequest
 	if err := json.Unmarshal(data, (*request)(r)); err != nil {
@@ -233,9 +241,15 @@ type orderResponse struct {
 type adminUserResponse struct {
 	model.User
 	Upstream         *adminUpstreamResponse `json:"Upstream,omitempty"`
+	Upstreams        adminUserUpstreams     `json:"upstreams"`
 	QuotaUsage       *service.QuotaUsage    `json:"quota_usage,omitempty"`
 	TotalQuotaUsage  *service.QuotaUsage    `json:"total_quota_usage,omitempty"`
 	SubscriptionFrom *time.Time             `json:"subscription_started_at,omitempty"`
+}
+
+type adminUserUpstreams struct {
+	Plan    *adminUpstreamResponse `json:"plan,omitempty"`
+	Balance *adminUpstreamResponse `json:"balance,omitempty"`
 }
 
 type adminUpstreamResponse struct {
@@ -352,7 +366,7 @@ func applyPagination(query *gorm.DB, page, pageSize int) *gorm.DB {
 }
 
 func (a *AdminController) Users(c *gin.Context) {
-	query := a.db.Preload("Plan.PublicChannel").Preload("PublicChannel")
+	query := a.db.Preload("Plan.PublicChannel").Preload("Plan.PollingPool").Preload("PublicChannel")
 	if keyword := strings.TrimSpace(c.Query("q")); keyword != "" {
 		like := "%" + keyword + "%"
 		query = query.Where("username LIKE ? OR email LIKE ? OR CAST(id AS CHAR) LIKE ?", like, like, like)
@@ -387,17 +401,25 @@ func (a *AdminController) Users(c *gin.Context) {
 	if len(userIDs) > 0 {
 		a.db.Where("user_id IN ?", userIDs).Find(&upstreams)
 	}
-	upstreamByUserID := map[uint]model.UpstreamAccount{}
+	upstreamsByUserID := map[uint]adminUserUpstreams{}
 	for _, upstream := range upstreams {
-		upstreamByUserID[upstream.UserID] = upstream
+		group := upstreamsByUserID[upstream.UserID]
+		mapped := mapAdminUpstream(upstream)
+		if mapped.AccessType == model.AccessSourceBalance {
+			group.Balance = mapped
+		} else {
+			group.Plan = mapped
+		}
+		upstreamsByUserID[upstream.UserID] = group
 	}
 
 	now := time.Now()
 	items := make([]adminUserResponse, 0, len(users))
 	for _, user := range users {
 		item := adminUserResponse{User: user}
-		if upstream, ok := upstreamByUserID[user.ID]; ok {
-			item.Upstream = mapAdminUpstream(upstream)
+		if upstreams, ok := upstreamsByUserID[user.ID]; ok {
+			item.Upstreams = upstreams
+			item.Upstream = upstreams.Plan
 		}
 		if service.HasCallableAccess(user, now) {
 			subscriptionStartedAt := service.SubscriptionStartAt(a.db, user, now)
@@ -421,12 +443,84 @@ func (a *AdminController) Users(c *gin.Context) {
 }
 
 func (a *AdminController) UserUpstream(c *gin.Context) {
-	var upstream model.UpstreamAccount
-	if err := a.db.Where("user_id = ?", c.Param("id")).First(&upstream).Error; err != nil {
+	var upstreams []model.UpstreamAccount
+	if err := a.db.Where("user_id = ?", c.Param("id")).Order("access_type asc, id desc").Find(&upstreams).Error; err != nil {
+		response.Error(c, 500, "failed to load upstream account")
+		return
+	}
+	if len(upstreams) == 0 {
+		response.Error(c, 404, "upstream account not found")
+		return
+	}
+	result := adminUserUpstreams{}
+	for _, upstream := range upstreams {
+		mapped := mapAdminUpstream(upstream)
+		if mapped.AccessType == model.AccessSourceBalance {
+			result.Balance = mapped
+		} else {
+			result.Plan = mapped
+		}
+	}
+	response.OK(c, result)
+}
+
+func (a *AdminController) UpdateUserUpstream(c *gin.Context) {
+	userID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || userID == 0 {
+		response.Error(c, 400, "invalid user id")
+		return
+	}
+	accessType := strings.TrimSpace(c.Param("access_type"))
+	if accessType != model.AccessSourcePlan && accessType != model.AccessSourceBalance {
+		response.Error(c, 400, "invalid access type")
+		return
+	}
+	var req updateUserUpstreamRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	status := req.Status
+	if status != model.UpstreamStatusDisabled {
+		status = model.UpstreamStatusActive
+	}
+	var user model.User
+	if err := a.db.First(&user, uint(userID)).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.Error(c, 404, "upstream account not found")
+			response.Error(c, 404, "user not found")
 			return
 		}
+		response.Error(c, 500, "failed to load user")
+		return
+	}
+	channel, err := a.loadUpstreamChannel(req.ChannelID)
+	if err != nil {
+		response.Error(c, 404, "upstream channel not found")
+		return
+	}
+	upstream := model.UpstreamAccount{
+		UserID:     uint(userID),
+		AccessType: accessType,
+		Status:     status,
+	}
+	updates := map[string]interface{}{
+		"access_type":       accessType,
+		"channel_id":        channel.ID,
+		"channel":           channel.Name,
+		"base_url":          channel.BaseURL,
+		"username":          strings.TrimSpace(req.UpstreamUsername),
+		"password":          req.UpstreamPassword,
+		"api_key":           req.APIKey,
+		"supports_gpt":      channel.SupportsGPT,
+		"supports_claude":   channel.SupportsClaude,
+		"group_multipliers": channel.GroupMultipliers,
+		"status":            status,
+	}
+	if err := a.db.Where(model.UpstreamAccount{UserID: uint(userID), AccessType: accessType}).Assign(updates).FirstOrCreate(&upstream).Error; err != nil {
+		response.Error(c, 500, "failed to update upstream account")
+		return
+	}
+	if err := a.db.Where("user_id = ? AND access_type = ?", uint(userID), accessType).First(&upstream).Error; err != nil {
 		response.Error(c, 500, "failed to load upstream account")
 		return
 	}
@@ -758,7 +852,7 @@ func (a *AdminController) Orders(c *gin.Context) {
 		like := "%" + keyword + "%"
 		query = query.Joins("LEFT JOIN users ON users.id = orders.user_id").
 			Joins("LEFT JOIN plans ON plans.id = orders.plan_id").
-			Where("CAST(orders.id AS CHAR) LIKE ? OR CAST(orders.user_id AS CHAR) LIKE ? OR users.username LIKE ? OR users.email LIKE ? OR plans.name LIKE ? OR orders.payment_ref LIKE ?", like, like, like, like, like, like)
+			Where("CAST(orders.id AS CHAR) LIKE ? OR orders.order_no LIKE ? OR CAST(orders.user_id AS CHAR) LIKE ? OR users.username LIKE ? OR users.email LIKE ? OR plans.name LIKE ? OR orders.payment_ref LIKE ?", like, like, like, like, like, like, like)
 	}
 	if status := strings.TrimSpace(c.Query("status")); status != "" {
 		query = query.Where("orders.status = ?", status)
@@ -1565,15 +1659,17 @@ func (a *AdminController) syncUserAccessState(user *model.User, updates map[stri
 				return err
 			}
 		}
-		query := tx.Model(&model.UpstreamAccount{}).
-			Where("user_id = ?", user.ID).
-			Update("status", model.UpstreamStatusDisabled)
-		if balanceActive {
-			query = tx.Model(&model.UpstreamAccount{}).
-				Where("user_id = ? AND access_type = ?", user.ID, model.AccessSourcePlan).
-				Update("status", model.UpstreamStatusDisabled)
+		if status == model.UserStatusDisabled {
+			return tx.Model(&model.UpstreamAccount{}).
+				Where("user_id = ?", user.ID).
+				Update("status", model.UpstreamStatusDisabled).Error
 		}
-		return query.Error
+		if !planActive && !publicActive {
+			return tx.Model(&model.UpstreamAccount{}).
+				Where("user_id = ? AND access_type = ?", user.ID, model.AccessSourcePlan).
+				Update("status", model.UpstreamStatusDisabled).Error
+		}
+		return nil
 	})
 }
 
@@ -1762,6 +1858,7 @@ func applyRedeemCodeSubscription(tx *gorm.DB, userID uint, plan model.Plan, now 
 		return nil, errors.New("active subscription in effect")
 	}
 	order := model.Order{
+		OrderNo:            model.GenerateOrderNo(userID, now),
 		UserID:             userID,
 		PlanID:             plan.ID,
 		OrderType:          orderTypeForPlan(tx, user, plan, now, service.UsedUSDCentsSince),

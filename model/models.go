@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -132,7 +133,8 @@ type Plan struct {
 
 type Order struct {
 	gorm.Model
-	UserID                uint `gorm:"index;not null"`
+	OrderNo               string `gorm:"size:40;index"`
+	UserID                uint   `gorm:"index;not null"`
 	User                  User
 	PlanID                uint `gorm:"index;default:0"`
 	Plan                  Plan
@@ -152,6 +154,10 @@ type Order struct {
 	AdminNote             string `gorm:"size:255"`
 	ApprovedAt            *time.Time
 	ApprovedByID          *uint
+}
+
+func GenerateOrderNo(userID uint, now time.Time) string {
+	return fmt.Sprintf("%s%06d%s%09d", now.Format("20060102"), userID%1000000, now.Format("150405"), now.Nanosecond())
 }
 
 type RedeemCode struct {

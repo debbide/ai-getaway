@@ -229,10 +229,10 @@ async function createBalanceRecharge() {
     orderForm.manualNote = accountPaymentNote()
     if (isManualPaymentOrder(order)) {
       orderForm.manualQRCode = ''
-      showModal('manual-pay-order', `余额充值订单 #${order.ID}`, '已扫码，提交审核')
+      showModal('manual-pay-order', `余额充值订单 #${orderNo(order)}`, '已扫码，提交审核')
       loadManualPaymentInfo()
     } else {
-      showModal('pay-order', `余额充值订单 #${order.ID}`, '已完成支付')
+      showModal('pay-order', `余额充值订单 #${orderNo(order)}`, '已完成支付')
       startPaymentPolling()
     }
     await loadOrders({ showLoading: false })
@@ -276,11 +276,11 @@ function openPayModal(order) {
   orderForm.manualNote = order.UserPaymentNote || accountPaymentNote()
   if (isManualPaymentOrder(order)) {
     orderForm.manualQRCode = ''
-    showModal('manual-pay-order', `人工支付订单 #${order.ID}`, '已扫码，提交审核')
+    showModal('manual-pay-order', `人工支付订单 #${orderNo(order)}`, '已扫码，提交审核')
     loadManualPaymentInfo()
     return
   }
-  showModal('pay-order', `支付订单 #${order.ID}`, '已完成支付')
+  showModal('pay-order', `支付订单 #${orderNo(order)}`, '已完成支付')
   startPaymentPolling()
 }
 
@@ -492,6 +492,10 @@ function isManualPaymentOrder(order) {
 function orderTitle(order) {
   if (order?.OrderType === 'balance_recharge') return `余额充值 ${usd(order.SettlementUSDCents || 0)}`
   return order?.Plan?.Name || '套餐订单'
+}
+
+function orderNo(order) {
+  return order?.OrderNo || order?.order_no || order?.ID || '-'
 }
 
 function accountPaymentNote() {
@@ -879,8 +883,8 @@ function statusLabel(value) {
 
             <div class="mt-6 order-table-shell">
               <el-table :data="pagedOrders" border empty-text="暂无订单">
-                <el-table-column label="订单" width="90">
-                  <template #default="{ row: order }">#{{ order.ID }}</template>
+                <el-table-column label="订单" min-width="190">
+                  <template #default="{ row: order }">#{{ orderNo(order) }}</template>
                 </el-table-column>
                 <el-table-column label="套餐" min-width="140">
                   <template #default="{ row: order }">{{ orderTitle(order) }}</template>
