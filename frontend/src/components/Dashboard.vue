@@ -18,6 +18,7 @@ const keys = ref([])
 const announcements = ref([])
 const announcementExpanded = ref(localStorage.getItem('announcementExpanded') !== 'false')
 const historyModalOpen = ref(false)
+const orderHistoryOpen = ref(false)
 const pendingPlainKey = ref('')
 const lastKeyMasked = ref('')
 const error = ref('')
@@ -510,6 +511,14 @@ function openDocs() {
   emit('navigate', '/docs')
 }
 
+function renewPlan() {
+  emit('navigate', '/plans')
+}
+
+function openOrderHistory() {
+  orderHistoryOpen.value = true
+}
+
 function toggleAnnouncement() {
   announcementExpanded.value = !announcementExpanded.value
   localStorage.setItem('announcementExpanded', String(announcementExpanded.value))
@@ -804,6 +813,8 @@ function statusLabel(value) {
               </div>
               <div class="toolbar-actions">
                 <el-button class="refresh-button" circle :icon="Refresh" :loading="loading.keys" aria-label="刷新" title="刷新" @click="refreshKeys" />
+                <button type="button" class="ghost-button small" @click="openUsageRecords">使用记录</button>
+                <button type="button" class="ghost-button small" @click="openDocs">使用教程</button>
                 <el-button v-if="!hasApiKey" type="primary" @click="openKeyModal">创建 Key</el-button>
               </div>
             </div>
@@ -871,94 +882,7 @@ function statusLabel(value) {
             </div>
           </section>
 
-          <!-- 订单 -->
-          <section class="panel-surface dashboard-card dashboard-card--orders console-mobile-contained p-5">
-            <div class="section-head">
-              <div>
-                <p class="section-kicker">Orders</p>
-                <h3>订单记录</h3>
-              </div>
-              <el-button class="refresh-button" circle :icon="Refresh" :loading="loading.orders" aria-label="刷新" title="刷新" @click="refreshOrders" />
-            </div>
-
-            <div class="mt-6 order-table-shell">
-              <el-table :data="pagedOrders" border empty-text="暂无订单">
-                <el-table-column label="订单" min-width="190">
-                  <template #default="{ row: order }">#{{ orderNo(order) }}</template>
-                </el-table-column>
-                <el-table-column label="套餐" min-width="140">
-                  <template #default="{ row: order }">{{ orderTitle(order) }}</template>
-                </el-table-column>
-                <el-table-column label="金额" width="110">
-                  <template #default="{ row: order }">{{ money(order.AmountCents) }}</template>
-                </el-table-column>
-                <el-table-column label="状态" min-width="150">
-                  <template #default="{ row: order }">
-                    <div class="order-status-cell">
-                      <el-tag>{{ statusLabel(order.Status) }}</el-tag>
-                      <el-popover
-                        v-if="order.Status === 'pending_review'"
-                        trigger="click"
-                        placement="top"
-                        width="240"
-                        content="后台审核需要 5-30 分钟，正在一对一开号中。"
-                      >
-                        <template #reference>
-                          <button type="button" class="order-review-tip" aria-label="查看审核说明">!</button>
-                        </template>
-                      </el-popover>
-                    </div>
-                      <small v-if="order.Status === 'pending_payment'" class="order-countdown">剩余 {{ orderCountdown(order) }}</small>
-                  </template>
-                </el-table-column>
-                <el-table-column label="操作" width="140">
-                  <template #default="{ row: order }">
-                      <el-button v-if="order.Status === 'pending_payment'" type="primary" size="small" @click="openPayModal(order)">
-                        {{ isManualPaymentOrder(order) ? '继续人工支付' : '继续支付' }}
-                      </el-button>
-                      <span v-else class="text-muted">-</span>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </div>
-            <div class="pagination-bar">
-              <span>共 {{ orders.length }} 个订单，第 {{ Math.min(orderPage, totalOrderPages) }} / {{ totalOrderPages }} 页</span>
-              <el-pagination
-                layout="prev, pager, next"
-                :current-page="orderPage"
-                :page-size="orderPageSize"
-                :total="orders.length"
-                @current-change="setOrderPage"
-              />
-            </div>
-          </section>
-        </div>
-
-        <aside class="console-dashboard-aside">
-          <section class="redeem-card">
-            <div class="redeem-card-head">
-              <div class="redeem-icon" aria-hidden="true"><Present /></div>
-              <div>
-                <p class="section-kicker">Redeem</p>
-                <h3>激活码兑换</h3>
-              </div>
-            </div>
-            <p>使用激活码兑换包月订阅，享受更多功能</p>
-            <form class="redeem-form" @submit.prevent="redeemCode">
-              <input
-                v-model="redeemForm.code"
-                maxlength="14"
-                autocomplete="off"
-                placeholder="请输入12位激活码"
-                @input="redeemForm.code = normalizeRedeemInput(redeemForm.code)"
-              />
-              <button type="submit" :disabled="redeeming || normalizeRedeemInput(redeemForm.code).length !== 12">
-                {{ redeeming ? '兑换中' : '兑换' }}
-              </button>
-            </form>
-          </section>
-
-          <section class="endpoint-card">
+          <section class="endpoint-card console-mobile-contained">
             <div>
               <p class="section-kicker">Endpoint</p>
               <h3>API 端点</h3>
@@ -1001,6 +925,31 @@ function statusLabel(value) {
                 </button>
               </article>
             </div>
+          </section>
+        </div>
+
+        <aside class="console-dashboard-aside">
+          <section class="redeem-card">
+            <div class="redeem-card-head">
+              <div class="redeem-icon" aria-hidden="true"><Present /></div>
+              <div>
+                <p class="section-kicker">Redeem</p>
+                <h3>激活码兑换</h3>
+              </div>
+            </div>
+            <p>使用激活码兑换包月订阅，享受更多功能</p>
+            <form class="redeem-form" @submit.prevent="redeemCode">
+              <input
+                v-model="redeemForm.code"
+                maxlength="14"
+                autocomplete="off"
+                placeholder="请输入12位激活码"
+                @input="redeemForm.code = normalizeRedeemInput(redeemForm.code)"
+              />
+              <button type="submit" :disabled="redeeming || normalizeRedeemInput(redeemForm.code).length !== 12">
+                {{ redeeming ? '兑换中' : '兑换' }}
+              </button>
+            </form>
           </section>
 
           <section class="panel-surface dashboard-card dashboard-card--balance p-4">
@@ -1163,14 +1112,72 @@ function statusLabel(value) {
             </div>
 
             <div class="plan-card-actions">
-              <button type="button" class="primary-button" @click="openUsageRecords">使用记录</button>
-              <button type="button" class="ghost-button" @click="openDocs">使用教程</button>
+              <button type="button" class="primary-button" @click="renewPlan">{{ hasActiveSubscription ? '续费' : '订购' }}</button>
+              <button type="button" class="ghost-button" @click="openOrderHistory">查看历史订单</button>
             </div>
           </section>
 
         </aside>
       </div>
     </div>
+
+    <el-dialog v-model="orderHistoryOpen" title="历史订单" width="920px" class="order-history-dialog" align-center>
+      <div class="order-history-head">
+        <p class="text-muted">展示您最近的直购套餐、激活码兑换、加油包与发票申请订单记录</p>
+        <el-button class="refresh-button" circle :icon="Refresh" :loading="loading.orders" aria-label="刷新" title="刷新" @click="refreshOrders" />
+      </div>
+
+      <div class="order-table-shell order-history-table-shell">
+        <el-table :data="pagedOrders" border empty-text="暂无订单">
+          <el-table-column label="订单" min-width="190">
+            <template #default="{ row: order }">#{{ orderNo(order) }}</template>
+          </el-table-column>
+          <el-table-column label="套餐" min-width="140">
+            <template #default="{ row: order }">{{ orderTitle(order) }}</template>
+          </el-table-column>
+          <el-table-column label="金额" width="110">
+            <template #default="{ row: order }">{{ money(order.AmountCents) }}</template>
+          </el-table-column>
+          <el-table-column label="状态" min-width="150">
+            <template #default="{ row: order }">
+              <div class="order-status-cell">
+                <el-tag>{{ statusLabel(order.Status) }}</el-tag>
+                <el-popover
+                  v-if="order.Status === 'pending_review'"
+                  trigger="click"
+                  placement="top"
+                  width="240"
+                  content="后台审核需要 5-30 分钟，正在一对一开号中。"
+                >
+                  <template #reference>
+                    <button type="button" class="order-review-tip" aria-label="查看审核说明">!</button>
+                  </template>
+                </el-popover>
+              </div>
+              <small v-if="order.Status === 'pending_payment'" class="order-countdown">剩余 {{ orderCountdown(order) }}</small>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="140">
+            <template #default="{ row: order }">
+              <el-button v-if="order.Status === 'pending_payment'" type="primary" size="small" @click="openPayModal(order)">
+                {{ isManualPaymentOrder(order) ? '继续人工支付' : '继续支付' }}
+              </el-button>
+              <span v-else class="text-muted">-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <div class="pagination-bar order-history-pagination">
+        <span>共 {{ orders.length }} 个订单，第 {{ Math.min(orderPage, totalOrderPages) }} / {{ totalOrderPages }} 页</span>
+        <el-pagination
+          layout="prev, pager, next"
+          :current-page="orderPage"
+          :page-size="orderPageSize"
+          :total="orders.length"
+          @current-change="setOrderPage"
+        />
+      </div>
+    </el-dialog>
 
     <el-dialog v-model="modal.open" :title="modal.title" width="560px" align-center @close="closeModal">
       <el-form class="modal-card" label-position="top" @submit.prevent="submitModal">

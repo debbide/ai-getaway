@@ -3757,24 +3757,12 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
   border-radius: 18px;
 }
 
-.dashboard-card--orders,
 .dashboard-card--plan {
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-.dashboard-card--orders {
-  overflow: hidden;
-}
-
-.dashboard-card--orders .order-table-shell {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.dashboard-card--orders .pagination-bar,
 .dashboard-card--plan .plan-card-actions {
   flex: 0 0 auto;
 }
@@ -4474,7 +4462,7 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
   line-height: 1.5;
 }
 
-/* 控制台：主区 + 侧栏（套餐摘要 / API Key），避免与定价页 .subscription-card 混用 */
+/* 控制台：主区 + 侧栏，避免与定价页 .subscription-card 混用 */
 .console-dashboard-grid {
   display: grid;
   gap: 20px;
@@ -4496,18 +4484,12 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
 
 @media (min-width: 1024px) {
   .console-dashboard-grid {
-    --dashboard-paired-card-height: 430px;
     grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
     align-items: start;
   }
 
   .console-dashboard-aside {
     order: unset;
-  }
-
-  .dashboard-card--orders {
-    height: var(--dashboard-paired-card-height);
-    max-height: var(--dashboard-paired-card-height);
   }
 
   .dashboard-card--plan {
@@ -4636,6 +4618,12 @@ html[data-theme="light"] .admin-app-shell .el-button--danger:not(.is-plain):not(
 .endpoint-list {
   display: grid;
   gap: 10px;
+}
+
+@media (min-width: 768px) {
+  .console-dashboard-main .endpoint-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .endpoint-item {
@@ -5255,6 +5243,33 @@ html[data-theme="dark"] .endpoint-admin-item .el-button.is-disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-top: 14px;
+}
+
+.order-history-dialog .el-dialog__body {
+  display: grid;
+  gap: 16px;
+}
+
+.order-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.order-history-head p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.order-history-table-shell {
+  max-height: min(58vh, 520px);
+  overflow: auto;
+}
+
+.order-history-pagination {
+  padding: 0;
 }
 
 .usage-records-page {
