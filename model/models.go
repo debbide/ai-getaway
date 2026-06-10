@@ -234,6 +234,13 @@ type PollingPoolAccount struct {
 	Name              string `gorm:"size:64;not null"`
 	BaseURL           string `gorm:"size:255;not null"`
 	APIKey            string `gorm:"size:512;not null" json:"-"`
+	AuthType          string `gorm:"size:32;default:api_key;index"`
+	RefreshToken      string `gorm:"type:text" json:"-"`
+	OAuthClientID     string `gorm:"size:128"`
+	TokenExpiresAt    *time.Time
+	UsageSnapshot     string `gorm:"type:text"`
+	UsageCheckedAt    *time.Time
+	UsageError        string `gorm:"type:text"`
 	GroupMultipliers  string `gorm:"type:text"`
 	TotalUSDCents     int64  `gorm:"default:0"`
 	RemainingUSDCents int64  `gorm:"default:0;index"`

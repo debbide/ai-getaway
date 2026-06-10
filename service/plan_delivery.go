@@ -94,6 +94,16 @@ func DeductPlanChannelQuota(tx *gorm.DB, plan model.Plan) error {
 		return ErrPlanChannelSoldOut
 	}
 
+	var oauthCount int64
+	if err := tx.Model(&model.PollingPoolAccount{}).
+		Where("polling_pool_id = ? AND enabled = ? AND auth_type = ?", *plan.PollingPoolID, true, OpenAIAccountAuthOAuth).
+		Count(&oauthCount).Error; err != nil {
+		return err
+	}
+	if oauthCount > 0 {
+		return nil
+	}
+
 	remaining := plan.SettlementUSDCents
 	var accounts []model.PollingPoolAccount
 	if err := tx.Where("polling_pool_id = ? AND enabled = ? AND remaining_usd_cents > 0", *plan.PollingPoolID, true).

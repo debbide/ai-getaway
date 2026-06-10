@@ -118,6 +118,7 @@ const auth = useAuthStore()
 const settingsTab = ref('basic')
 const usersTab = ref('users')
 const channelsTab = ref('upstream')
+const openaiImportDialog = ref(false)
 const stats = ref({})
 const loadBalancer = ref({ summary: { total: 0, online: 0, warning: 0, offline: 0 }, nodes: [] })
 const selectedClusterNode = ref('')
@@ -161,6 +162,7 @@ const modelForm = reactive(emptyModel())
 const channelForm = reactive(emptyChannel())
 const publicChannelForm = reactive(emptyPublicChannel())
 const pollingPoolForm = reactive(emptyPollingPool())
+const pollingPoolImport = reactive(emptyPollingPoolImport())
 const channelMonitorForm = reactive(emptyChannelMonitor())
 const userForm = reactive(emptyUser())
 const userUpstreamForm = reactive({
@@ -940,11 +942,33 @@ function emptyPollingPoolAccount() {
     name: '',
     base_url: '',
     api_key: '',
+    auth_type: 'api_key',
+    refresh_token: '',
+    oauth_client_id: '',
+    token_expires_at: null,
+    usage: null,
+    usage_snapshot: '',
+    usage_checked_at: null,
+    usage_error: '',
     group_multipliers: defaultGroupMultipliers(),
     total_usd_quota: 300,
     remaining_usd_quota: 300,
     enabled: true,
     sort_order: 0
+  }
+}
+
+function emptyPollingPoolImport() {
+  return {
+    text: '',
+    mode: 'append',
+    auth_method: 'manual',
+    session_id: '',
+    state: '',
+    auth_url: '',
+    auth_code: '',
+    loading: false,
+    default_base_url: 'https://api.openai.com'
   }
 }
 
@@ -1295,6 +1319,7 @@ function openPublicChannelModal(channel = null) {
 
 function openPollingPoolModal(pool = null) {
   Object.assign(pollingPoolForm, emptyPollingPool())
+  Object.assign(pollingPoolImport, emptyPollingPoolImport())
   if (pool) {
     Object.assign(pollingPoolForm, {
       id: pool.ID,
@@ -1307,6 +1332,14 @@ function openPollingPoolModal(pool = null) {
         name: account.Name || '',
         base_url: account.BaseURL || '',
         api_key: account.APIKey || '',
+        auth_type: account.AuthType || 'api_key',
+        refresh_token: account.RefreshToken || '',
+        oauth_client_id: account.OAuthClientID || '',
+        token_expires_at: account.TokenExpiresAt || null,
+        usage: account.Usage || parseOpenAIUsageSnapshot(account.UsageSnapshot),
+        usage_snapshot: account.UsageSnapshot || '',
+        usage_checked_at: account.UsageCheckedAt || null,
+        usage_error: account.UsageError || '',
         group_multipliers: normalizeGroupMultiplierRows(account.group_multipliers || account.GroupMultipliers),
         total_usd_quota: centsToAmount(account.TotalUSDCents),
         remaining_usd_quota: centsToAmount(account.RemainingUSDCents),
@@ -2393,6 +2426,52 @@ function formatDate(value) {
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+function parseOpenAIUsageSnapshot(value) {
+  if (!value) return null
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+function isOpenAIOAuthAccount(account) {
+  return account?.auth_type === 'openai_oauth'
+}
+
+function openAIUsage(account) {
+  return account?.usage || parseOpenAIUsageSnapshot(account?.usage_snapshot)
+}
+
+function usageWindowText(window) {
+  if (!window) return '待获取'
+  const resetText = window.resets_at ? `，${formatDate(window.resets_at)} 重置` : ''
+  return `${percent(window.utilization || 0)}${resetText}`
+}
+
+async function refreshOpenAIAccountUsage(account) {
+  if (!account?.id) {
+    ElMessage.warning('请先保存轮询号池后再刷新用量')
+    return
+  }
+  account.usage_loading = true
+  try {
+    const res = await api.post(`/admin/polling-pool-accounts/${account.id}/openai-usage`)
+    const usage = responseData(res, res.data || {})
+    account.usage = usage
+    account.usage_snapshot = JSON.stringify(usage)
+    account.usage_checked_at = usage.updated_at || usage.UpdatedAt || new Date().toISOString()
+    account.usage_error = ''
+    ElMessage.success('OpenAI 用量已刷新')
+  } catch (err) {
+    account.usage_error = err.rawMessage || err.message || '刷新用量失败'
+    ElMessage.error(account.usage_error)
+  } finally {
+    account.usage_loading = false
+  }
+}
+
 function monitorStatusLabel(status) {
   return {
     available: '正常',
@@ -2435,22 +2514,251 @@ function normalizePollingPool(pool) {
     supports_gpt: Boolean(pool.supports_gpt),
     supports_claude: Boolean(pool.supports_claude),
     enabled: Boolean(pool.enabled),
-    accounts: (pool.accounts || []).map((account, index) => ({
-      id: Number(account.id || 0),
-      name: String(account.name || '').trim() || `账号${index + 1}`,
-      base_url: String(account.base_url || '').trim(),
-      api_key: String(account.api_key || '').trim(),
-      group_multipliers: groupMultiplierPayload(account.group_multipliers),
-      total_usd_cents: amountToCents(account.total_usd_quota),
-      remaining_usd_cents: amountToCents(account.remaining_usd_quota),
-      enabled: Boolean(account.enabled),
-      sort_order: Number(account.sort_order || index)
-    }))
+    accounts: (pool.accounts || []).map((account, index) => {
+      const oauth = isOpenAIOAuthAccount(account)
+      return {
+        id: Number(account.id || 0),
+        name: String(account.name || '').trim() || `账号${index + 1}`,
+        base_url: String(account.base_url || '').trim(),
+        api_key: String(account.api_key || '').trim(),
+        auth_type: account.auth_type || 'api_key',
+        refresh_token: String(account.refresh_token || '').trim(),
+        oauth_client_id: String(account.oauth_client_id || '').trim(),
+        token_expires_at: account.token_expires_at || null,
+        usage_snapshot: account.usage_snapshot || (account.usage ? JSON.stringify(account.usage) : ''),
+        usage_checked_at: account.usage_checked_at || null,
+        usage_error: account.usage_error || '',
+        group_multipliers: groupMultiplierPayload(account.group_multipliers),
+        total_usd_cents: oauth ? 0 : amountToCents(account.total_usd_quota),
+        remaining_usd_cents: oauth ? 0 : amountToCents(account.remaining_usd_quota),
+        enabled: Boolean(account.enabled),
+        sort_order: Number(account.sort_order || index)
+      }
+    })
   }
 }
 
 function addPollingPoolAccount() {
   pollingPoolForm.accounts.push({ ...emptyPollingPoolAccount(), sort_order: pollingPoolForm.accounts.length })
+}
+
+function openOpenAIImportDialog() {
+  Object.assign(pollingPoolImport, emptyPollingPoolImport())
+  openaiImportDialog.value = true
+}
+
+function closeOpenAIImportDialog() {
+  if (pollingPoolImport.loading) return
+  openaiImportDialog.value = false
+}
+
+async function generateOpenAIOAuthUrl() {
+  pollingPoolImport.loading = true
+  try {
+    const res = await api.post('/admin/openai-oauth/auth-url', {})
+    const data = responseData(res, res.data || {})
+    pollingPoolImport.auth_url = data.auth_url || data.AuthURL || ''
+    pollingPoolImport.session_id = data.session_id || data.SessionID || ''
+    pollingPoolImport.state = data.state || data.State || ''
+    if (pollingPoolImport.auth_url) {
+      await copyText(pollingPoolImport.auth_url, '授权链接已生成并复制')
+    }
+  } catch (err) {
+    ElMessage.error(err.rawMessage || err.message || '生成授权链接失败')
+  } finally {
+    pollingPoolImport.loading = false
+  }
+}
+
+async function importOpenAIOAuthCode() {
+  if (!pollingPoolImport.session_id || !String(pollingPoolImport.auth_code || '').trim()) {
+    ElMessage.warning('请先生成授权链接，并填写授权后的回调链接或 Code')
+    return
+  }
+  pollingPoolImport.loading = true
+  try {
+    const parsed = parseOAuthCallbackInput(pollingPoolImport.auth_code)
+    const res = await api.post('/admin/openai-oauth/exchange-code', {
+      session_id: pollingPoolImport.session_id,
+      code: parsed.code,
+      state: parsed.state || pollingPoolImport.state
+    })
+    addOAuthAccountFromToken(responseData(res, res.data || {}), 'OpenAI 授权账号')
+    pollingPoolImport.auth_code = ''
+    pollingPoolImport.auth_url = ''
+    pollingPoolImport.session_id = ''
+    pollingPoolImport.state = ''
+    openaiImportDialog.value = false
+  } catch (err) {
+    ElMessage.error(err.rawMessage || err.message || '授权导入失败')
+  } finally {
+    pollingPoolImport.loading = false
+  }
+}
+
+async function importOpenAIRefreshTokens() {
+  const tokens = String(pollingPoolImport.text || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+  if (!tokens.length) {
+    ElMessage.warning('请输入 Refresh Token')
+    return
+  }
+  pollingPoolImport.loading = true
+  let success = 0
+  try {
+    for (const token of tokens) {
+      const res = await api.post('/admin/openai-oauth/refresh-token', {
+        refresh_token: token,
+        client_id: pollingPoolImport.auth_method === 'mobile_refresh_token' ? 'app_EMoamEEZ73f0CkXaXp7hrann' : ''
+      })
+      addOAuthAccountFromToken(responseData(res, res.data || {}), 'OpenAI RT 账号')
+      success += 1
+    }
+    pollingPoolImport.text = ''
+    ElMessage.success(`已导入 ${success} 个 OpenAI OAuth 账号`)
+    openaiImportDialog.value = false
+  } catch (err) {
+    ElMessage.error(err.rawMessage || err.message || `已导入 ${success} 个，后续账号验证失败`)
+  } finally {
+    pollingPoolImport.loading = false
+  }
+}
+
+function addOAuthAccountFromToken(token, fallbackName) {
+  const accessToken = token.access_token || token.AccessToken || ''
+  const refreshToken = token.refresh_token || token.RefreshToken || ''
+  if (!accessToken || !refreshToken) {
+    throw new Error('OpenAI token 响应缺少 access_token 或 refresh_token')
+  }
+  const expiresAt = token.expires_at || token.ExpiresAt || 0
+  const email = token.email || token.Email || ''
+  const usage = token.usage || token.Usage || null
+  const usageError = token.usage_error || token.UsageError || ''
+  const account = {
+    ...emptyPollingPoolAccount(),
+    name: email || fallbackName,
+    base_url: pollingPoolImport.default_base_url || 'https://api.openai.com',
+    api_key: accessToken,
+    auth_type: 'openai_oauth',
+    refresh_token: refreshToken,
+    oauth_client_id: token.client_id || token.ClientID || 'app_EMoamEEZ73f0CkXaXp7hrann',
+    token_expires_at: expiresAt ? new Date(Number(expiresAt) * 1000).toISOString() : null,
+    usage,
+    usage_snapshot: usage ? JSON.stringify(usage) : '',
+    usage_checked_at: usage?.updated_at || usage?.UpdatedAt || null,
+    usage_error: usageError,
+    total_usd_quota: 0,
+    remaining_usd_quota: 0,
+    sort_order: pollingPoolForm.accounts.length
+  }
+  const current = pollingPoolForm.accounts || []
+  const hasBlankOnly = current.length === 1 && !current[0].api_key && !current[0].refresh_token && !current[0].base_url
+  pollingPoolForm.accounts = hasBlankOnly ? [account] : [...current, account]
+}
+
+function parseOAuthCallbackInput(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return { code: '', state: '' }
+  try {
+    const url = new URL(raw)
+    return {
+      code: url.searchParams.get('code') || raw,
+      state: url.searchParams.get('state') || ''
+    }
+  } catch {
+    const code = raw.match(/[?&]code=([^&]+)/)?.[1]
+    const state = raw.match(/[?&]state=([^&]+)/)?.[1]
+    return { code: code ? decodeURIComponent(code) : raw, state: state ? decodeURIComponent(state) : '' }
+  }
+}
+
+function applyPollingPoolImport() {
+  const accounts = parsePollingPoolImport(pollingPoolImport.text)
+  if (!accounts.length) {
+    ElMessage.warning('未解析到可导入账号')
+    return
+  }
+  const nextAccounts = pollingPoolImport.mode === 'replace' ? [] : [...(pollingPoolForm.accounts || [])]
+  const existingKeys = new Set(nextAccounts.map((item) => String(item.api_key || '').trim()).filter(Boolean))
+  let skipped = 0
+  accounts.forEach((account) => {
+    const apiKey = String(account.api_key || '').trim()
+    if (apiKey && existingKeys.has(apiKey)) {
+      skipped += 1
+      return
+    }
+    existingKeys.add(apiKey)
+    nextAccounts.push({
+      ...account,
+      sort_order: nextAccounts.length
+    })
+  })
+  pollingPoolForm.accounts = nextAccounts.length ? nextAccounts : [emptyPollingPoolAccount()]
+  pollingPoolImport.text = ''
+  ElMessage.success(`已导入 ${accounts.length - skipped} 个账号${skipped ? `，跳过 ${skipped} 个重复 API Key` : ''}`)
+}
+
+function parsePollingPoolImport(text) {
+  const raw = String(text || '').trim()
+  if (!raw) return []
+  if (raw.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        return parsed.map((item, index) => normalizeImportedPollingPoolAccount(item, index)).filter(Boolean)
+      }
+    } catch {
+      return []
+    }
+  }
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .map((line, index) => normalizeImportedPollingPoolAccount(parsePollingPoolImportLine(line), index))
+    .filter(Boolean)
+}
+
+function parsePollingPoolImportLine(line) {
+  const parts = line.split(/\s*[,|\t]\s*/).filter((part) => part !== '')
+  if (parts.length <= 1) {
+    return { api_key: line }
+  }
+  const [first, second, third, fourth, fifth] = parts
+  if (looksLikeURL(first)) {
+    return { base_url: first, api_key: second, total_usd_quota: third, remaining_usd_quota: fourth }
+  }
+  if (looksLikeURL(second)) {
+    return { name: first, base_url: second, api_key: third, total_usd_quota: fourth, remaining_usd_quota: fifth }
+  }
+  if (parts.length === 2 && isNumericText(second)) {
+    return { api_key: first, total_usd_quota: second, remaining_usd_quota: second }
+  }
+  return { name: first, api_key: second, total_usd_quota: third, remaining_usd_quota: fourth }
+}
+
+function normalizeImportedPollingPoolAccount(item, index) {
+  const apiKey = String(item?.api_key || item?.APIKey || item?.key || '').trim()
+  const baseUrl = String(item?.base_url || item?.BaseURL || item?.url || pollingPoolImport.default_base_url || '').trim()
+  if (!apiKey || !baseUrl) return null
+  const total = Number(item?.total_usd_quota ?? item?.total_usd ?? item?.TotalUSD ?? pollingPoolImport.default_total_usd_quota ?? 0)
+  const remaining = Number(item?.remaining_usd_quota ?? item?.remaining_usd ?? item?.RemainingUSD ?? pollingPoolImport.default_remaining_usd_quota ?? total)
+  return {
+    ...emptyPollingPoolAccount(),
+    name: String(item?.name || item?.Name || `导入账号${index + 1}`).trim(),
+    base_url: baseUrl,
+    api_key: apiKey,
+    total_usd_quota: Number.isFinite(total) ? Math.max(0, total) : 0,
+    remaining_usd_quota: Number.isFinite(remaining) ? Math.max(0, remaining) : 0,
+    enabled: item?.enabled === undefined ? true : Boolean(item.enabled)
+  }
+}
+
+function looksLikeURL(value) {
+  return /^https?:\/\//i.test(String(value || '').trim())
+}
+
+function isNumericText(value) {
+  return value !== '' && Number.isFinite(Number(value))
 }
 
 function removePollingPoolAccount(index) {
@@ -2654,9 +2962,28 @@ function totalUsd(plan) {
 }
 
 function channelQuotaText(channel) {
+  if (poolHasOAuthAccount(channel)) return 'OpenAI OAuth 用量'
   const remaining = channel?.RemainingUSDCents || 0
   const total = channel?.TotalUSDCents || 0
   return `${usd(remaining)} / ${usd(total)}`
+}
+
+function poolHasOAuthAccount(pool) {
+  return Boolean((pool?.Accounts || []).some((account) => account.Enabled !== false && (account.AuthType || account.auth_type) === 'openai_oauth'))
+}
+
+function poolStatusType(pool) {
+  return pool?.Enabled && (poolHasOAuthAccount(pool) || Number(pool?.RemainingUSDCents || 0) > 0) ? 'success' : 'info'
+}
+
+function poolStatusLabel(pool) {
+  if (!pool?.Enabled) return '已停用'
+  if (poolHasOAuthAccount(pool)) return '已启用'
+  return Number(pool?.RemainingUSDCents || 0) <= 0 ? '售罄' : '已启用'
+}
+
+function pollingPoolOptionLabel(pool) {
+  return poolHasOAuthAccount(pool) ? `${pool.Name}（OpenAI OAuth）` : `${pool.Name}（剩余 ${usd(pool.RemainingUSDCents)}）`
 }
 
 function publicChannelName(plan) {
@@ -3585,7 +3912,7 @@ function submitModal() {
                 <el-table-column label="支持协议" min-width="150"><template #default="{ row: pool }"><div class="table-actions"><el-tag v-for="tag in protocolTags(pool)" :key="tag" size="small">{{ tag }}</el-tag></div></template></el-table-column>
                 <el-table-column label="账号数量" width="110"><template #default="{ row: pool }">{{ pool.Accounts?.length || 0 }}</template></el-table-column>
                 <el-table-column label="剩余额度 / 总额度" min-width="160"><template #default="{ row: pool }">{{ channelQuotaText(pool) }}</template></el-table-column>
-                <el-table-column label="状态" width="110"><template #default="{ row: pool }"><el-tag :type="pool.Enabled && pool.RemainingUSDCents > 0 ? 'success' : 'info'">{{ pool.RemainingUSDCents <= 0 ? '售罄' : (pool.Enabled ? '已启用' : '已停用') }}</el-tag></template></el-table-column>
+                <el-table-column label="状态" width="110"><template #default="{ row: pool }"><el-tag :type="poolStatusType(pool)">{{ poolStatusLabel(pool) }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="112" :fixed="isMobileLayout ? false : 'right'"><template #default="{ row: pool }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑轮询号池" title="编辑轮询号池" @click="openPollingPoolModal(pool)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除轮询号池" title="删除轮询号池" @click="confirmDeletePollingPool(pool)" /></div></template></el-table-column>
               </el-table>
             </div>
@@ -4435,7 +4762,7 @@ function submitModal() {
           <el-form-item v-if="planForm.quota_period === 'public' && planForm.delivery_source === 'pool'" label="绑定轮询号池" required>
             <el-select v-model="planForm.polling_pool_id" placeholder="请选择轮询号池">
               <el-option label="请选择轮询号池" value="" />
-              <el-option v-for="pool in pollingPools.filter((item) => item.Enabled)" :key="pool.ID" :label="`${pool.Name}（剩余 ${usd(pool.RemainingUSDCents)}）`" :value="pool.ID" />
+              <el-option v-for="pool in pollingPools.filter((item) => item.Enabled)" :key="pool.ID" :label="pollingPoolOptionLabel(pool)" :value="pool.ID" />
             </el-select>
           </el-form-item>
           <el-form-item v-if="planForm.is_lottery" class="md:col-span-2" label="参与抽奖按钮跳转地址" required><el-input v-model="planForm.lottery_url" placeholder="https://example.com/lottery" /></el-form-item>
@@ -4560,11 +4887,14 @@ function submitModal() {
                 <h3>号池账号</h3>
                 <span>按排序从小到大扣减额度，第一个账号额度用完后自动使用下一个账号。</span>
               </div>
-              <el-button size="small" type="primary" @click="addPollingPoolAccount">新增账号</el-button>
+              <div class="toolbar-actions">
+                <el-button size="small" @click="openOpenAIImportDialog">导入 OpenAI 账号</el-button>
+                <el-button size="small" type="primary" @click="addPollingPoolAccount">新增账号</el-button>
+              </div>
             </div>
             <div v-for="(account, index) in pollingPoolForm.accounts" :key="index" class="pool-account-row">
               <div class="pool-account-field pool-account-name">
-                <span>账号名称</span>
+                <span>账号名称 <el-tag v-if="isOpenAIOAuthAccount(account)" size="small">OpenAI OAuth</el-tag></span>
                 <el-input v-model="account.name" placeholder="例如：OpenAI 主账号" />
               </div>
               <div class="pool-account-field pool-account-base">
@@ -4572,8 +4902,8 @@ function submitModal() {
                 <el-input v-model="account.base_url" placeholder="https://api.openai.com" />
               </div>
               <div class="pool-account-field pool-account-key">
-                <span>API Key</span>
-                <el-input v-model="account.api_key" placeholder="请输入上游 API Key" />
+                <span>{{ isOpenAIOAuthAccount(account) ? 'Access Token' : 'API Key' }}</span>
+                <el-input v-model="account.api_key" :placeholder="isOpenAIOAuthAccount(account) ? '导入后自动填充' : '请输入上游 API Key'" />
               </div>
               <div class="pool-account-field pool-account-multipliers">
                 <span>分组倍率</span>
@@ -4584,13 +4914,23 @@ function submitModal() {
                   </label>
                 </div>
               </div>
-              <div class="pool-account-field pool-account-quota">
+              <div v-if="!isOpenAIOAuthAccount(account)" class="pool-account-field pool-account-quota">
                 <span>总额度（美元）</span>
                 <el-input v-model.number="account.total_usd_quota" type="number" min="0" step="0.01" placeholder="总额度" />
               </div>
-              <div class="pool-account-field pool-account-remaining">
+              <div v-if="!isOpenAIOAuthAccount(account)" class="pool-account-field pool-account-remaining">
                 <span>剩余额度（美元）</span>
                 <el-input v-model.number="account.remaining_usd_quota" type="number" min="0" step="0.01" placeholder="剩余额度" />
+              </div>
+              <div v-else class="pool-account-field pool-account-oauth-usage">
+                <span>OpenAI 用量</span>
+                <div class="oauth-usage-lines">
+                  <small>5小时：{{ usageWindowText(openAIUsage(account)?.five_hour) }}</small>
+                  <small>7天：{{ usageWindowText(openAIUsage(account)?.seven_day) }}</small>
+                  <small v-if="account.usage_error" class="text-danger">{{ account.usage_error }}</small>
+                  <small v-else-if="account.usage_checked_at">更新：{{ formatDate(account.usage_checked_at) }}</small>
+                </div>
+                <el-button v-if="account.id" size="small" :loading="account.usage_loading" @click="refreshOpenAIAccountUsage(account)">刷新用量</el-button>
               </div>
               <div class="pool-account-field pool-account-sort">
                 <span>排序</span>
@@ -4978,6 +5318,96 @@ function submitModal() {
         <div class="modal-actions">
           <el-button @click="closeModal">取消</el-button>
           <el-button :type="modal.danger ? 'danger' : 'primary'" @click="submitModal">{{ modal.actionLabel }}</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="openaiImportDialog"
+      class="admin-modal-dialog"
+      :width="isMobileLayout ? 'calc(100vw - 24px)' : '760px'"
+      :show-close="false"
+      align-center
+      @close="closeOpenAIImportDialog"
+    >
+      <template #header="{ close, titleId, titleClass }">
+        <div class="admin-modal-titlebar">
+          <h2 :id="titleId" :class="titleClass">导入 OpenAI 账号</h2>
+          <div class="admin-modal-titlebar-actions">
+            <el-button circle aria-label="关闭" title="关闭" :disabled="pollingPoolImport.loading" @click="close">
+              <span aria-hidden="true">×</span>
+            </el-button>
+          </div>
+        </div>
+      </template>
+
+      <div class="modal-body form-grid">
+        <div class="md:col-span-2 order-flow-note">
+          <strong>OpenAI 账户授权</strong>
+          <span>导入成功后会追加到当前轮询号池账号列表，最后仍需保存轮询号池才会写入数据库。</span>
+        </div>
+
+        <el-form-item class="md:col-span-2" label="授权方式">
+          <el-segmented
+            v-model="pollingPoolImport.auth_method"
+            :options="[
+              { label: '手动授权', value: 'manual' },
+              { label: '手动输入 RT', value: 'refresh_token' },
+              { label: '手动输入 Mobile RT', value: 'mobile_refresh_token' }
+            ]"
+          />
+        </el-form-item>
+
+        <el-form-item label="默认 API 地址">
+          <el-input v-model="pollingPoolImport.default_base_url" placeholder="https://api.openai.com" />
+        </el-form-item>
+        <div class="order-flow-note">
+          <strong>用量自动获取</strong>
+          <span>导入后系统会尝试读取 OpenAI Codex 5小时和7天窗口用量；普通美元额度不适用于 OAuth 账号。</span>
+        </div>
+
+        <template v-if="pollingPoolImport.auth_method === 'manual'">
+          <div class="md:col-span-2 order-flow-note">
+            <strong>1. 生成授权链接</strong>
+            <span>在新标签页登录 OpenAI 并授权；地址栏变为 localhost 回调后复制完整 URL。</span>
+          </div>
+          <div class="md:col-span-2 toolbar-actions">
+            <el-button type="primary" :loading="pollingPoolImport.loading" @click="generateOpenAIOAuthUrl">生成授权链接</el-button>
+            <el-button v-if="pollingPoolImport.auth_url" @click="copyText(pollingPoolImport.auth_url, '授权链接已复制')">复制链接</el-button>
+          </div>
+          <el-form-item v-if="pollingPoolImport.auth_url" class="md:col-span-2" label="授权链接">
+            <el-input :model-value="pollingPoolImport.auth_url" readonly />
+          </el-form-item>
+          <div class="md:col-span-2 order-flow-note">
+            <strong>2. 输入授权链接或 Code</strong>
+            <span>可粘贴完整 localhost 回调 URL，也可只粘贴 code 参数。</span>
+          </div>
+          <el-form-item class="md:col-span-2" label="回调 URL / Code">
+            <el-input v-model="pollingPoolImport.auth_code" type="textarea" :rows="3" placeholder="http://localhost:1455/auth/callback?code=...&state=..." />
+          </el-form-item>
+        </template>
+
+        <template v-else>
+          <div class="md:col-span-2 order-flow-note">
+            <strong>{{ pollingPoolImport.auth_method === 'mobile_refresh_token' ? 'Mobile RT 导入' : 'Refresh Token 导入' }}</strong>
+            <span>每行一个 Refresh Token。系统会先向 OpenAI 刷新 access_token，成功后追加为 OAuth 号池账号。</span>
+          </div>
+          <el-form-item class="md:col-span-2" label="Refresh Token">
+            <el-input v-model="pollingPoolImport.text" type="textarea" :rows="6" placeholder="rt-xxx&#10;rt-yyy" />
+          </el-form-item>
+        </template>
+      </div>
+
+      <template #footer>
+        <div class="modal-actions">
+          <el-button :disabled="pollingPoolImport.loading" @click="closeOpenAIImportDialog">取消</el-button>
+          <el-button
+            type="primary"
+            :loading="pollingPoolImport.loading"
+            @click="pollingPoolImport.auth_method === 'manual' ? importOpenAIOAuthCode() : importOpenAIRefreshTokens()"
+          >
+            验证并导入账号
+          </el-button>
         </div>
       </template>
     </el-dialog>

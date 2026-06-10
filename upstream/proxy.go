@@ -199,10 +199,13 @@ func selectProxyUpstream(db *gorm.DB, apiKey model.APIKey, accessSource string, 
 			if apiKey.User.Plan.PollingPoolID != nil {
 				var poolAccount model.PollingPoolAccount
 				if db.Joins("JOIN polling_pools ON polling_pools.id = polling_pool_accounts.polling_pool_id").
-					Where("polling_pool_accounts.polling_pool_id = ? AND polling_pool_accounts.enabled = ? AND polling_pool_accounts.remaining_usd_cents > 0 AND polling_pools.enabled = ?", *apiKey.User.Plan.PollingPoolID, true, true).
+					Where("polling_pool_accounts.polling_pool_id = ? AND polling_pool_accounts.enabled = ? AND (polling_pool_accounts.auth_type = ? OR polling_pool_accounts.remaining_usd_cents > 0) AND polling_pools.enabled = ?", *apiKey.User.Plan.PollingPoolID, true, service.OpenAIAccountAuthOAuth, true).
 					Order("polling_pool_accounts.sort_order asc, polling_pool_accounts.id asc").
 					First(&poolAccount).Error != nil {
 					return "", "", "", errNoUpstreamForAccess
+				}
+				if err := service.RefreshPollingPoolAccountOAuth(db, &poolAccount, now); err != nil {
+					return "", "", "", errors.New("openai oauth token refresh failed")
 				}
 				db.Model(&poolAccount).Updates(map[string]interface{}{"last_used_at": &now})
 				return poolAccount.BaseURL, poolAccount.APIKey, poolAccount.GroupMultipliers, nil

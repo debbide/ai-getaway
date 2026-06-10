@@ -203,11 +203,29 @@ type pollingPoolAccountRequest struct {
 	Name              string             `json:"name"`
 	BaseURL           string             `json:"base_url"`
 	APIKey            string             `json:"api_key"`
+	AuthType          string             `json:"auth_type"`
+	RefreshToken      string             `json:"refresh_token"`
+	OAuthClientID     string             `json:"oauth_client_id"`
+	TokenExpiresAt    *time.Time         `json:"token_expires_at"`
+	UsageSnapshot     string             `json:"usage_snapshot"`
+	UsageCheckedAt    *time.Time         `json:"usage_checked_at"`
+	UsageError        string             `json:"usage_error"`
 	GroupMultipliers  map[string]float64 `json:"group_multipliers"`
 	TotalUSDCents     int64              `json:"total_usd_cents"`
 	RemainingUSDCents int64              `json:"remaining_usd_cents"`
 	Enabled           bool               `json:"enabled"`
 	SortOrder         int                `json:"sort_order"`
+}
+
+type openAIOAuthExchangeRequest struct {
+	SessionID string `json:"session_id"`
+	Code      string `json:"code"`
+	State     string `json:"state"`
+}
+
+type openAIRefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token"`
+	ClientID     string `json:"client_id"`
 }
 
 type channelMonitorRequest struct {
@@ -303,19 +321,27 @@ type adminPollingPoolResponse struct {
 }
 
 type adminPollingPoolAccountResponse struct {
-	ID                 uint               `json:"ID"`
-	Name               string             `json:"Name"`
-	BaseURL            string             `json:"BaseURL"`
-	APIKey             string             `json:"APIKey"`
-	GroupMultipliers   string             `json:"GroupMultipliers"`
-	GroupMultiplierMap map[string]float64 `json:"group_multipliers"`
-	TotalUSDCents      int64              `json:"TotalUSDCents"`
-	RemainingUSDCents  int64              `json:"RemainingUSDCents"`
-	Enabled            bool               `json:"Enabled"`
-	SortOrder          int                `json:"SortOrder"`
-	LastUsedAt         *time.Time         `json:"LastUsedAt"`
-	CreatedAt          time.Time          `json:"CreatedAt"`
-	UpdatedAt          time.Time          `json:"UpdatedAt"`
+	ID                 uint                     `json:"ID"`
+	Name               string                   `json:"Name"`
+	BaseURL            string                   `json:"BaseURL"`
+	APIKey             string                   `json:"APIKey"`
+	AuthType           string                   `json:"AuthType"`
+	RefreshToken       string                   `json:"RefreshToken"`
+	OAuthClientID      string                   `json:"OAuthClientID"`
+	TokenExpiresAt     *time.Time               `json:"TokenExpiresAt"`
+	Usage              *service.OpenAIUsageInfo `json:"Usage,omitempty"`
+	UsageSnapshot      string                   `json:"UsageSnapshot"`
+	UsageCheckedAt     *time.Time               `json:"UsageCheckedAt"`
+	UsageError         string                   `json:"UsageError"`
+	GroupMultipliers   string                   `json:"GroupMultipliers"`
+	GroupMultiplierMap map[string]float64       `json:"group_multipliers"`
+	TotalUSDCents      int64                    `json:"TotalUSDCents"`
+	RemainingUSDCents  int64                    `json:"RemainingUSDCents"`
+	Enabled            bool                     `json:"Enabled"`
+	SortOrder          int                      `json:"SortOrder"`
+	LastUsedAt         *time.Time               `json:"LastUsedAt"`
+	CreatedAt          time.Time                `json:"CreatedAt"`
+	UpdatedAt          time.Time                `json:"UpdatedAt"`
 }
 
 type adminChannelMonitorResponse struct {
@@ -2026,6 +2052,14 @@ func mapAdminPollingPool(pool model.PollingPool) adminPollingPoolResponse {
 			Name:               account.Name,
 			BaseURL:            account.BaseURL,
 			APIKey:             account.APIKey,
+			AuthType:           account.AuthType,
+			RefreshToken:       account.RefreshToken,
+			OAuthClientID:      account.OAuthClientID,
+			TokenExpiresAt:     account.TokenExpiresAt,
+			Usage:              service.OpenAIUsageFromSnapshot(account.UsageSnapshot),
+			UsageSnapshot:      account.UsageSnapshot,
+			UsageCheckedAt:     account.UsageCheckedAt,
+			UsageError:         account.UsageError,
 			GroupMultipliers:   account.GroupMultipliers,
 			GroupMultiplierMap: service.ParseGroupMultipliers(account.GroupMultipliers),
 			TotalUSDCents:      account.TotalUSDCents,
@@ -2568,6 +2602,57 @@ func (a *AdminController) DeletePollingPool(c *gin.Context) {
 	response.OK(c, nil)
 }
 
+func (a *AdminController) GenerateOpenAIOAuthURL(c *gin.Context) {
+	result, err := service.GenerateOpenAIOAuthURL()
+	if err != nil {
+		response.Error(c, 500, "failed to generate openai oauth url")
+		return
+	}
+	response.OK(c, result)
+}
+
+func (a *AdminController) ExchangeOpenAIOAuthCode(c *gin.Context) {
+	var req openAIOAuthExchangeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	token, err := service.ExchangeOpenAIOAuthCode(c.Request.Context(), req.SessionID, req.Code, req.State)
+	if err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	response.OK(c, token)
+}
+
+func (a *AdminController) RefreshOpenAIToken(c *gin.Context) {
+	var req openAIRefreshTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	token, err := service.RefreshOpenAIToken(c.Request.Context(), req.RefreshToken, req.ClientID)
+	if err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	response.OK(c, token)
+}
+
+func (a *AdminController) RefreshOpenAIAccountUsage(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		response.Error(c, 400, "invalid polling pool account")
+		return
+	}
+	usage, err := service.RefreshOpenAIUsageForPollingPoolAccount(c.Request.Context(), a.db, uint(id))
+	if err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	response.OK(c, usage)
+}
+
 func normalizePollingPoolAccounts(input []pollingPoolAccountRequest, _ bool) ([]model.PollingPoolAccount, error) {
 	if len(input) == 0 {
 		return nil, errors.New("polling pool account required")
@@ -2577,28 +2662,47 @@ func normalizePollingPoolAccounts(input []pollingPoolAccountRequest, _ bool) ([]
 		name := strings.TrimSpace(item.Name)
 		baseURL := strings.TrimSpace(item.BaseURL)
 		apiKey := strings.TrimSpace(item.APIKey)
+		authType := strings.TrimSpace(item.AuthType)
+		if authType == "" {
+			authType = service.OpenAIAccountAuthAPIKey
+		}
 		if name == "" {
 			name = "账号" + strconv.Itoa(i+1)
 		}
 		if baseURL == "" {
 			return nil, errors.New("account base url required")
 		}
-		if apiKey == "" {
+		if apiKey == "" && authType != service.OpenAIAccountAuthOAuth {
 			return nil, errors.New("account api key required")
+		}
+		if authType == service.OpenAIAccountAuthOAuth && strings.TrimSpace(item.RefreshToken) == "" {
+			return nil, errors.New("openai oauth refresh token required")
 		}
 		if item.TotalUSDCents < 0 || item.RemainingUSDCents < 0 {
 			return nil, errors.New("account quota invalid")
 		}
-		if item.RemainingUSDCents <= 0 {
-			item.RemainingUSDCents = item.TotalUSDCents
-		}
-		if item.RemainingUSDCents > item.TotalUSDCents {
-			return nil, errors.New("account remaining quota cannot exceed total quota")
+		if authType == service.OpenAIAccountAuthOAuth {
+			item.TotalUSDCents = 0
+			item.RemainingUSDCents = 0
+		} else {
+			if item.RemainingUSDCents <= 0 {
+				item.RemainingUSDCents = item.TotalUSDCents
+			}
+			if item.RemainingUSDCents > item.TotalUSDCents {
+				return nil, errors.New("account remaining quota cannot exceed total quota")
+			}
 		}
 		accounts = append(accounts, model.PollingPoolAccount{
 			Name:              name,
 			BaseURL:           baseURL,
 			APIKey:            apiKey,
+			AuthType:          authType,
+			RefreshToken:      strings.TrimSpace(item.RefreshToken),
+			OAuthClientID:     strings.TrimSpace(item.OAuthClientID),
+			TokenExpiresAt:    item.TokenExpiresAt,
+			UsageSnapshot:     strings.TrimSpace(item.UsageSnapshot),
+			UsageCheckedAt:    item.UsageCheckedAt,
+			UsageError:        strings.TrimSpace(item.UsageError),
 			GroupMultipliers:  service.EncodeGroupMultipliers(item.GroupMultipliers),
 			TotalUSDCents:     item.TotalUSDCents,
 			RemainingUSDCents: item.RemainingUSDCents,
