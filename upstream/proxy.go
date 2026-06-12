@@ -64,7 +64,7 @@ func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.Handl
 		if value, ok := c.Get("protocol"); ok {
 			protocol = service.NormalizeProtocol(value.(string))
 		}
-		upstreamBaseURL, upstreamAPIKey, groupMultipliers, err := selectProxyUpstream(db, apiKey, accessSource, protocol, start)
+		upstreamBaseURL, upstreamAPIKey, billingCtx, err := selectProxyUpstream(db, apiKey, accessSource, protocol, start)
 		if err != nil {
 			service.CancelQuotaReservation(db, quotaReservationID, time.Now())
 			status := http.StatusForbidden
@@ -81,7 +81,7 @@ func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.Handl
 			return
 		}
 		if quotaReservation != nil {
-			if cappedInfo, ok, err := applyDynamicOutputLimit(db, c.Request, requestInfo, quotaReservation.ReservedUSDCents, groupMultipliers, cfg.MaxProxyBodyBytes); errors.Is(err, errBodyTooLarge) {
+			if cappedInfo, ok, err := applyDynamicOutputLimit(db, c.Request, requestInfo, quotaReservation.ReservedUSDCents, billingCtx, cfg.MaxProxyBodyBytes); errors.Is(err, errBodyTooLarge) {
 				service.CancelQuotaReservation(db, quotaReservationID, time.Now())
 				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "请求体过大"})
 				return
@@ -137,7 +137,7 @@ func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.Handl
 					log:            &log,
 					db:             db,
 					hub:            hub,
-					multipliers:    groupMultipliers,
+					multipliers:    billingCtx,
 					reservationID:  quotaReservationID,
 					maxBufferBytes: cfg.MaxSSEUsageBufferBytes,
 					maxLineBytes:   defaultMaxSSELineBytes,
@@ -145,12 +145,12 @@ func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.Handl
 			} else {
 				body, err := readAllLimited(resp.Body, cfg.MaxProxyBodyBytes)
 				if err == nil {
-					fillUsage(db, &log, body, groupMultipliers)
-					finalizeUsageLog(db, hub, &log, start, quotaReservationID, groupMultipliers)
+					fillUsage(db, &log, body, billingCtx)
+					finalizeUsageLog(db, hub, &log, start, quotaReservationID, billingCtx)
 					resp.Body = io.NopCloser(bytes.NewReader(body))
 					return nil
 				}
-				finalizeUsageLog(db, hub, &log, start, quotaReservationID, groupMultipliers)
+				finalizeUsageLog(db, hub, &log, start, quotaReservationID, billingCtx)
 			}
 			return nil
 		}
@@ -165,36 +165,36 @@ func ProxyHandler(cfg config.Config, db *gorm.DB, hub *service.LogHub) gin.Handl
 	}
 }
 
-func selectProxyUpstream(db *gorm.DB, apiKey model.APIKey, accessSource string, protocol string, now time.Time) (string, string, string, error) {
+func selectProxyUpstream(db *gorm.DB, apiKey model.APIKey, accessSource string, protocol string, now time.Time) (string, string, service.BillingContext, error) {
 	if accessSource == model.AccessSourcePlan {
 		if service.HasDirectPublicChannelAccess(apiKey.User, now) && apiKey.User.PlanID == nil {
 			if apiKey.User.PublicChannelID == nil {
-				return "", "", "", errNoUpstreamForAccess
+				return "", "", service.BillingContext{}, errNoUpstreamForAccess
 			}
 			var publicChannel model.PublicChannel
 			if db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *apiKey.User.PublicChannelID, true).First(&publicChannel).Error != nil {
-				return "", "", "", errNoUpstreamForAccess
+				return "", "", service.BillingContext{}, errNoUpstreamForAccess
 			}
 			if !service.SupportsProtocol(publicChannel.SupportsGPT, publicChannel.SupportsClaude, protocol) {
-				return "", "", "", errors.New("protocol not supported by plan")
+				return "", "", service.BillingContext{}, errors.New("protocol not supported by plan")
 			}
 			db.Model(&publicChannel).Updates(map[string]interface{}{"last_used_at": &now})
-			return publicChannel.BaseURL, publicChannel.APIKey, publicChannel.GroupMultipliers, nil
+			return publicChannel.BaseURL, publicChannel.APIKey, service.BillingContext{GroupID: publicChannel.BillingGroupID, LegacyMultipliers: publicChannel.GroupMultipliers}, nil
 		}
 		if service.HasActiveSubscription(apiKey.User, now) && apiKey.User.Plan != nil && apiKey.User.Plan.PlanType == model.PlanTypePublic {
 			if !service.PlanChannelSupportsProtocol(apiKey.User.Plan, protocol) {
-				return "", "", "", errors.New("protocol not supported by plan")
+				return "", "", service.BillingContext{}, errors.New("protocol not supported by plan")
 			}
 			if apiKey.User.Plan.PublicChannelID != nil {
 				var publicChannel model.PublicChannel
 				if db.Where("id = ? AND enabled = ? AND remaining_usd_cents > 0", *apiKey.User.Plan.PublicChannelID, true).First(&publicChannel).Error != nil {
-					return "", "", "", errNoUpstreamForAccess
+					return "", "", service.BillingContext{}, errNoUpstreamForAccess
 				}
 				if !service.SupportsProtocol(publicChannel.SupportsGPT, publicChannel.SupportsClaude, protocol) {
-					return "", "", "", errors.New("protocol not supported by plan")
+					return "", "", service.BillingContext{}, errors.New("protocol not supported by plan")
 				}
 				db.Model(&publicChannel).Updates(map[string]interface{}{"last_used_at": &now})
-				return publicChannel.BaseURL, publicChannel.APIKey, publicChannel.GroupMultipliers, nil
+				return publicChannel.BaseURL, publicChannel.APIKey, service.BillingContext{GroupID: publicChannel.BillingGroupID, LegacyMultipliers: publicChannel.GroupMultipliers}, nil
 			}
 			if apiKey.User.Plan.PollingPoolID != nil {
 				var poolAccount model.PollingPoolAccount
@@ -202,15 +202,15 @@ func selectProxyUpstream(db *gorm.DB, apiKey model.APIKey, accessSource string, 
 					Where("polling_pool_accounts.polling_pool_id = ? AND polling_pool_accounts.enabled = ? AND (polling_pool_accounts.auth_type = ? OR polling_pool_accounts.remaining_usd_cents > 0) AND polling_pools.enabled = ?", *apiKey.User.Plan.PollingPoolID, true, service.OpenAIAccountAuthOAuth, true).
 					Order("polling_pool_accounts.sort_order asc, polling_pool_accounts.id asc").
 					First(&poolAccount).Error != nil {
-					return "", "", "", errNoUpstreamForAccess
+					return "", "", service.BillingContext{}, errNoUpstreamForAccess
 				}
 				if err := service.RefreshPollingPoolAccountOAuth(db, &poolAccount, now); err != nil {
-					return "", "", "", errors.New("openai oauth token refresh failed")
+					return "", "", service.BillingContext{}, errors.New("openai oauth token refresh failed")
 				}
 				db.Model(&poolAccount).Updates(map[string]interface{}{"last_used_at": &now})
-				return poolAccount.BaseURL, poolAccount.APIKey, poolAccount.GroupMultipliers, nil
+				return poolAccount.BaseURL, poolAccount.APIKey, service.BillingContext{GroupID: poolAccount.BillingGroupID, LegacyMultipliers: poolAccount.GroupMultipliers}, nil
 			}
-			return "", "", "", errNoUpstreamForAccess
+			return "", "", service.BillingContext{}, errNoUpstreamForAccess
 		}
 	}
 
@@ -219,16 +219,16 @@ func selectProxyUpstream(db *gorm.DB, apiKey model.APIKey, accessSource string, 
 		upstream, err = loadUserUpstreamForAccess(db, apiKey.UserID, model.AccessSourceBalance)
 	}
 	if err != nil {
-		return "", "", "", errors.New("no active upstream account bound")
+		return "", "", service.BillingContext{}, errors.New("no active upstream account bound")
 	}
 	if !service.SupportsProtocol(upstream.SupportsGPT, upstream.SupportsClaude, protocol) {
-		return "", "", "", errors.New("protocol not supported by upstream")
+		return "", "", service.BillingContext{}, errors.New("protocol not supported by upstream")
 	}
 	if upstream.GroupMultipliers == "" {
 		upstream.GroupMultipliers = loadUpstreamGroupMultipliers(db, upstream)
 	}
 	db.Model(&upstream).Updates(map[string]interface{}{"last_used_at": &now})
-	return upstream.BaseURL, upstream.APIKey, upstream.GroupMultipliers, nil
+	return upstream.BaseURL, upstream.APIKey, service.BillingContext{GroupID: upstream.BillingGroupID, LegacyMultipliers: upstream.GroupMultipliers}, nil
 }
 
 func loadUserUpstreamForAccess(db *gorm.DB, userID uint, accessType string) (model.UpstreamAccount, error) {
@@ -333,7 +333,7 @@ func readAllLimited(reader io.Reader, maxBytes int64) ([]byte, error) {
 	return body, nil
 }
 
-func applyDynamicOutputLimit(db *gorm.DB, req *http.Request, info requestInfo, reservedUSDCents int64, groupMultipliers any, maxBodyBytes int64) (requestInfo, bool, error) {
+func applyDynamicOutputLimit(db *gorm.DB, req *http.Request, info requestInfo, reservedUSDCents int64, billingCtx service.BillingContext, maxBodyBytes int64) (requestInfo, bool, error) {
 	if req == nil || req.Body == nil || req.Method == http.MethodGet || reservedUSDCents <= 0 || info.BodyBytes <= 0 || info.Model == "" {
 		return info, true, nil
 	}
@@ -351,7 +351,7 @@ func applyDynamicOutputLimit(db *gorm.DB, req *http.Request, info requestInfo, r
 		return info, true, err
 	}
 
-	maxOutputTokens := dynamicMaxOutputTokens(db, info.Model, int64(len(body)), reservedUSDCents, groupMultipliers)
+	maxOutputTokens := dynamicMaxOutputTokens(db, info.Model, int64(len(body)), reservedUSDCents, billingCtx)
 	if maxOutputTokens <= 0 {
 		return info, false, nil
 	}
@@ -375,13 +375,13 @@ func applyDynamicOutputLimit(db *gorm.DB, req *http.Request, info requestInfo, r
 	return info, true, nil
 }
 
-func dynamicMaxOutputTokens(db *gorm.DB, modelName string, bodyBytes int64, reservedUSDCents int64, groupMultipliers any) int64 {
+func dynamicMaxOutputTokens(db *gorm.DB, modelName string, bodyBytes int64, reservedUSDCents int64, billingCtx service.BillingContext) int64 {
 	pricing, _ := service.FindModelPricing(db, modelName)
 	multiplier := pricing.BillingMultiplier
 	if multiplier <= 0 {
 		multiplier = 1
 	}
-	effectiveMultiplier := multiplier * service.ResolveGroupMultiplier(pricing, groupMultipliers)
+	effectiveMultiplier := multiplier * service.ResolveBillingGroupMultiplier(db, pricing, billingCtx)
 	if pricing.BillingMode == model.ModelBillingModeRequest {
 		requestMicros := int64(math.Round(pricing.RequestUSD * effectiveMultiplier * 1_000_000))
 		if requestMicros > reservedUSDCents*10_000 {
@@ -494,7 +494,7 @@ type tokenDetails struct {
 	CachedTokens int64 `json:"cached_tokens"`
 }
 
-func applyUsage(db *gorm.DB, log *model.APILog, modelName string, usage responseUsage, groupMultipliers any) {
+func applyUsage(db *gorm.DB, log *model.APILog, modelName string, usage responseUsage, billingCtx any) {
 	if modelName != "" {
 		log.ModelName = modelName
 	}
@@ -526,10 +526,10 @@ func applyUsage(db *gorm.DB, log *model.APILog, modelName string, usage response
 	if totalTokens > 0 {
 		log.TotalTokens = totalTokens
 	}
-	if !usesRequestBilling(db, log.ModelName) && applyUpstreamCost(log, usage, groupMultipliers) {
+	if !usesRequestBilling(db, log.ModelName) && applyUpstreamCost(db, log, usage, billingCtx) {
 		return
 	}
-	applyBillingResult(log, service.BillUsageWithGroupMultipliers(db, log.ModelName, promptTokens, cachedInputTokens, completionTokens, totalTokens, groupMultipliers))
+	applyBillingResult(log, service.BillUsageWithContext(db, log.ModelName, promptTokens, cachedInputTokens, completionTokens, totalTokens, toBillingContext(billingCtx)))
 }
 
 func usesRequestBilling(db *gorm.DB, modelName string) bool {
@@ -645,7 +645,7 @@ func finalizeUsageLog(db *gorm.DB, hub *service.LogHub, log *model.APILog, start
 		log.CompletionTokens = log.TotalTokens - log.PromptTokens
 	}
 	if log.EstimatedUSDMicros <= 0 {
-		applyBillingResult(log, service.BillUsageWithGroupMultipliers(db, log.ModelName, log.PromptTokens, log.CachedInputTokens, log.CompletionTokens, log.TotalTokens, firstGroupMultipliers(groupMultipliers)))
+		applyBillingResult(log, service.BillUsageWithContext(db, log.ModelName, log.PromptTokens, log.CachedInputTokens, log.CompletionTokens, log.TotalTokens, toBillingContext(firstGroupMultipliers(groupMultipliers))))
 	}
 	log.LatencyMs = time.Since(start).Milliseconds()
 	service.CompleteQuotaReservationWithAPILog(db, reservationID, log, now)
@@ -721,13 +721,14 @@ func applyBillingResult(log *model.APILog, result service.BillingResult) {
 	log.BillingSource = result.BillingSource
 }
 
-func applyUpstreamCost(log *model.APILog, usage responseUsage, groupMultipliers any) bool {
+func applyUpstreamCost(db *gorm.DB, log *model.APILog, usage responseUsage, billingCtx any) bool {
 	costUSD := upstreamCostUSD(usage)
 	if costUSD <= 0 {
 		return false
 	}
 
-	multiplier := service.ResolveGroupMultiplier(model.ModelPricing{ModelName: log.ModelName, GroupMultiplier: 1}, groupMultipliers)
+	ctx := toBillingContext(billingCtx)
+	multiplier := service.ResolveBillingGroupMultiplier(db, model.ModelPricing{ModelName: log.ModelName, GroupMultiplier: 1}, ctx)
 	micros := int64(costUSD*multiplier*1_000_000 + 0.5)
 	log.InputUSDMicros = 0
 	log.CachedInputUSDMicros = 0
@@ -740,6 +741,13 @@ func applyUpstreamCost(log *model.APILog, usage responseUsage, groupMultipliers 
 	log.GroupMultiplier = multiplier
 	log.BillingSource = "upstream_cost"
 	return true
+}
+
+func toBillingContext(value any) service.BillingContext {
+	if ctx, ok := value.(service.BillingContext); ok {
+		return ctx
+	}
+	return service.BillingContext{LegacyMultipliers: value}
 }
 
 func firstGroupMultipliers(values []any) any {

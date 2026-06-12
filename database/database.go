@@ -57,6 +57,7 @@ func AutoMigrate(db *gorm.DB) {
 		&model.Announcement{},
 		&model.APIKey{},
 		&model.ModelPricing{},
+		&model.BillingGroup{},
 		&model.APILog{},
 		&model.QuotaReservation{},
 		&model.SystemSetting{},

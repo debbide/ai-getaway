@@ -37,7 +37,8 @@ const menu = [
   { key: 'plans', label: '套餐管理', hint: '价格与额度', icon: CreditCard },
   { key: 'redeemCodes', label: '兑换码管理', hint: '套餐兑换', icon: Finished },
   { key: 'orders', label: '审核管理', hint: '订单开通', icon: ShoppingCart },
-  { key: 'models', label: '模型管理', hint: '计费倍率', icon: Cpu },
+  { key: 'models', label: '模型管理', hint: '基础计费', icon: Cpu },
+  { key: 'billingGroups', label: '分组倍率', hint: '渠道计费分组', icon: Connection },
   { key: 'channels', label: '渠道管理', hint: '上游接口', icon: Connection },
   { key: 'users', label: '用户管理', hint: '账号与权限', icon: User },
   { key: 'usageRecords', label: '使用记录', hint: '调用日志', icon: Tickets },
@@ -133,6 +134,7 @@ const plans = ref([])
 const redeemCodes = ref([])
 const generatedRedeemCodes = ref([])
 const models = ref([])
+const billingGroups = ref([])
 const modelSource = ref('')
 const channels = ref([])
 const publicChannels = ref([])
@@ -159,6 +161,7 @@ const planForm = reactive(emptyPlan())
 const lotteryDrawForm = reactive({ planId: '', winnerEmail: '' })
 const redeemCodeForm = reactive(emptyRedeemCode())
 const modelForm = reactive(emptyModel())
+const billingGroupForm = reactive(emptyBillingGroup())
 const channelForm = reactive(emptyChannel())
 const publicChannelForm = reactive(emptyPublicChannel())
 const pollingPoolForm = reactive(emptyPollingPool())
@@ -492,7 +495,7 @@ function emptyChannel() {
     base_url: '',
     supports_gpt: true,
     supports_claude: false,
-    group_multipliers: defaultGroupMultipliers(),
+    billing_group_id: '',
     enabled: true
   }
 }
@@ -505,7 +508,7 @@ function emptyPublicChannel() {
     api_key: '',
     supports_gpt: true,
     supports_claude: false,
-    group_multipliers: defaultGroupMultipliers(),
+    billing_group_id: '',
     total_usd_quota: 400,
     remaining_usd_quota: 400,
     enabled: true
@@ -591,6 +594,7 @@ async function loadAll() {
       api.get('/admin/plans', planFilterParams()),
       api.get('/admin/redeem-codes', redeemCodeFilterParams()),
       api.get('/admin/models'),
+      api.get('/admin/billing-groups'),
       api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
       api.get('/admin/public-channels', publicChannelFilterParams()),
       api.get('/admin/polling-pools', pollingPoolFilterParams()),
@@ -602,7 +606,7 @@ async function loadAll() {
       api.get('/admin/email-templates'),
       api.get('/admin/settings')
     ])
-    const [statsRes, ordersRes, usersRes, plansRes, redeemCodesRes, modelsRes, channelsRes, publicChannelsRes, pollingPoolsRes, channelMonitorsRes, keysRes, usageRecordsRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = results
+    const [statsRes, ordersRes, usersRes, plansRes, redeemCodesRes, modelsRes, billingGroupsRes, channelsRes, publicChannelsRes, pollingPoolsRes, channelMonitorsRes, keysRes, usageRecordsRes, docsRes, announcementsRes, emailTemplatesRes, settingsRes] = results
     const modelData = responseData(modelsRes, { items: [], official_source: '' })
     const templateData = responseData(emailTemplatesRes, { items: [], variables: [] })
     stats.value = responseData(statsRes, {})
@@ -612,6 +616,7 @@ async function loadAll() {
     applyListData('redeemCodes', redeemCodes, responseData(redeemCodesRes, { items: [] }))
     models.value = modelData?.items || []
     modelSource.value = modelData?.official_source || ''
+    billingGroups.value = unwrapListData(responseData(billingGroupsRes, { items: [] }))
     applyListData('upstreamChannels', channels, responseData(channelsRes, { items: [] }))
     applyListData('publicChannels', publicChannels, responseData(publicChannelsRes, { items: [] }))
     applyListData('pollingPools', pollingPools, responseData(pollingPoolsRes, { items: [] }))
@@ -678,6 +683,9 @@ async function loadAdminSection(section) {
       break
     case 'models':
       await loadModelsData()
+      break
+    case 'billingGroups':
+      await loadBillingGroupsData()
       break
     case 'channels':
       await loadChannelsData()
@@ -767,22 +775,33 @@ async function loadOrdersData() {
 }
 
 async function loadModelsData() {
-  const res = await api.get('/admin/models')
-  models.value = res.data?.items || []
-  modelSource.value = res.data?.official_source || ''
+  const [modelsRes, groupsRes] = await Promise.all([
+    api.get('/admin/models'),
+    api.get('/admin/billing-groups')
+  ])
+  models.value = modelsRes.data?.items || []
+  modelSource.value = modelsRes.data?.official_source || ''
+  billingGroups.value = groupsRes.data?.items || []
+}
+
+async function loadBillingGroupsData() {
+  const res = await api.get('/admin/billing-groups')
+  billingGroups.value = res.data?.items || []
 }
 
 async function loadChannelsData() {
-  const [channelsRes, publicChannelsRes, pollingPoolsRes, channelMonitorsRes] = await Promise.all([
+  const [channelsRes, publicChannelsRes, pollingPoolsRes, channelMonitorsRes, groupsRes] = await Promise.all([
     api.get('/admin/upstream-channels', upstreamChannelFilterParams()),
     api.get('/admin/public-channels', publicChannelFilterParams()),
     api.get('/admin/polling-pools', pollingPoolFilterParams()),
-    api.get('/admin/channel-monitors', channelMonitorFilterParams())
+    api.get('/admin/channel-monitors', channelMonitorFilterParams()),
+    api.get('/admin/billing-groups')
   ])
   applyListData('upstreamChannels', channels, channelsRes.data || { items: [] })
   applyListData('publicChannels', publicChannels, publicChannelsRes.data || { items: [] })
   applyListData('pollingPools', pollingPools, pollingPoolsRes.data || { items: [] })
   applyListData('channelMonitors', channelMonitors, channelMonitorsRes.data || { items: [] })
+  billingGroups.value = groupsRes.data?.items || []
 }
 
 async function loadUsersData() {
@@ -952,11 +971,20 @@ function emptyPollingPoolAccount() {
     usage_snapshot: '',
     usage_checked_at: null,
     usage_error: '',
-    group_multipliers: defaultGroupMultipliers(),
+    billing_group_id: '',
     total_usd_quota: 300,
     remaining_usd_quota: 300,
     enabled: true,
     sort_order: 0
+  }
+}
+
+function emptyBillingGroup() {
+  return {
+    id: null,
+    name: '',
+    multiplier: 1,
+    enabled: true
   }
 }
 
@@ -1253,6 +1281,47 @@ function openModelModal(model = null) {
   showModal(model ? 'edit-model' : 'create-model', model ? '编辑模型计费' : '新增模型计费', model ? '保存修改' : '创建模型')
 }
 
+function openBillingGroupModal(group = null) {
+  Object.assign(billingGroupForm, emptyBillingGroup())
+  if (group) {
+    Object.assign(billingGroupForm, {
+      id: group.ID,
+      name: group.Name || '',
+      multiplier: Number(group.Multiplier || 1),
+      enabled: group.Enabled !== false
+    })
+  }
+  showModal(group ? 'edit-billing-group' : 'create-billing-group', group ? '编辑分组倍率' : '新增分组倍率', group ? '保存修改' : '创建分组')
+}
+
+async function submitBillingGroup() {
+  const payload = {
+    name: billingGroupForm.name.trim(),
+    multiplier: Number(billingGroupForm.multiplier || 1),
+    enabled: Boolean(billingGroupForm.enabled)
+  }
+  await runAction(async () => {
+    if (billingGroupForm.id) {
+      await api.put(`/admin/billing-groups/${billingGroupForm.id}`, payload)
+      notice.value = '分组倍率已更新'
+    } else {
+      await api.post('/admin/billing-groups', payload)
+      notice.value = '分组倍率已创建'
+    }
+  })
+}
+
+function confirmDeleteBillingGroup(group) {
+  showModal('delete-billing-group', '删除分组倍率', '确认删除', { group }, true)
+}
+
+async function deleteBillingGroup() {
+  await runAction(async () => {
+    await api.delete(`/admin/billing-groups/${modal.payload.group.ID}`)
+    notice.value = '分组倍率已删除'
+  })
+}
+
 async function submitModel() {
   const payload = normalizeModel(modelForm)
   await runAction(async () => {
@@ -1293,7 +1362,7 @@ function openChannelModal(channel = null) {
       base_url: channel.BaseURL,
       supports_gpt: channel.SupportsGPT !== false,
       supports_claude: Boolean(channel.SupportsClaude),
-      group_multipliers: normalizeGroupMultiplierRows(channel.group_multipliers || channel.GroupMultipliers),
+      billing_group_id: channel.BillingGroupID || '',
       enabled: channel.Enabled
     })
   }
@@ -1310,7 +1379,7 @@ function openPublicChannelModal(channel = null) {
       api_key: channel.APIKey || '',
       supports_gpt: channel.SupportsGPT !== false,
       supports_claude: Boolean(channel.SupportsClaude),
-      group_multipliers: normalizeGroupMultiplierRows(channel.group_multipliers || channel.GroupMultipliers),
+      billing_group_id: channel.BillingGroupID || '',
       total_usd_quota: centsToAmount(channel.TotalUSDCents),
       remaining_usd_quota: centsToAmount(channel.RemainingUSDCents),
       enabled: channel.Enabled
@@ -1342,7 +1411,7 @@ function openPollingPoolModal(pool = null) {
         usage_snapshot: account.UsageSnapshot || '',
         usage_checked_at: account.UsageCheckedAt || null,
         usage_error: account.UsageError || '',
-        group_multipliers: normalizeGroupMultiplierRows(account.group_multipliers || account.GroupMultipliers),
+        billing_group_id: account.BillingGroupID || '',
         total_usd_quota: centsToAmount(account.TotalUSDCents),
         remaining_usd_quota: centsToAmount(account.RemainingUSDCents),
         enabled: account.Enabled,
@@ -2338,7 +2407,7 @@ function normalizePublicChannel(channel) {
     api_key: channel.api_key.trim(),
     supports_gpt: Boolean(channel.supports_gpt),
     supports_claude: Boolean(channel.supports_claude),
-    group_multipliers: groupMultiplierPayload(channel.group_multipliers),
+    billing_group_id: channel.billing_group_id ? Number(channel.billing_group_id) : null,
     total_usd_cents: amountToCents(channel.total_usd_quota),
     remaining_usd_cents: amountToCents(channel.remaining_usd_quota),
     enabled: Boolean(channel.enabled)
@@ -2448,6 +2517,17 @@ function groupMultiplierText(value) {
   return entries.map(([modelName, multiplier]) => `${modelName} ${Number(multiplier || 1).toFixed(2)}x`).join('，')
 }
 
+function billingGroupNameById(id) {
+  const group = billingGroups.value.find((item) => String(item.ID) === String(id || ''))
+  return group?.Name || '未关联'
+}
+
+function billingGroupLabelById(id) {
+  const group = billingGroups.value.find((item) => String(item.ID) === String(id || ''))
+  if (!group) return '未关联'
+  return `${group.Name} · ${Number(group.Multiplier || 1).toFixed(2)}x`
+}
+
 function formatSyncTime(value) {
   if (!value) return '未同步'
   return formatDate(value)
@@ -2528,7 +2608,7 @@ function normalizeChannel(channel) {
     base_url: channel.base_url.trim(),
     supports_gpt: Boolean(channel.supports_gpt),
     supports_claude: Boolean(channel.supports_claude),
-    group_multipliers: groupMultiplierPayload(channel.group_multipliers),
+    billing_group_id: channel.billing_group_id ? Number(channel.billing_group_id) : null,
     enabled: Boolean(channel.enabled)
   }
 }
@@ -2562,7 +2642,7 @@ function normalizePollingPool(pool) {
         usage_snapshot: account.usage_snapshot || (account.usage ? JSON.stringify(account.usage) : ''),
         usage_checked_at: account.usage_checked_at || null,
         usage_error: account.usage_error || '',
-        group_multipliers: groupMultiplierPayload(account.group_multipliers),
+        billing_group_id: account.billing_group_id ? Number(account.billing_group_id) : null,
         total_usd_cents: oauth ? 0 : amountToCents(account.total_usd_quota),
         remaining_usd_cents: oauth ? 0 : amountToCents(account.remaining_usd_quota),
         enabled: Boolean(account.enabled),
@@ -3217,6 +3297,9 @@ function submitModal() {
     'create-model': submitModel,
     'edit-model': submitModel,
     'delete-model': deleteModel,
+    'create-billing-group': submitBillingGroup,
+    'edit-billing-group': submitBillingGroup,
+    'delete-billing-group': deleteBillingGroup,
     'create-channel': submitChannel,
     'edit-channel': submitChannel,
     'delete-channel': deleteChannel,
@@ -3788,7 +3871,6 @@ function submitModal() {
                 <el-table-column label="缓存读取" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'CachedInputUSDPerMillion') }}</strong><small>原价 {{ modelOriginalUnit(item, 'CachedInputUSDPerMillion') }}</small></div></template></el-table-column>
                 <el-table-column label="输出单价" min-width="150"><template #default="{ row: item }"><div class="price-cell"><strong>{{ modelActualUnit(item, 'OutputUSDPerMillion') }}</strong><small>原价 {{ modelOriginalUnit(item, 'OutputUSDPerMillion') }}</small></div></template></el-table-column>
                 <el-table-column label="扣费倍率" width="100"><template #default="{ row: item }">{{ Number(item.BillingMultiplier || 1).toFixed(2) }}x</template></el-table-column>
-                <el-table-column label="默认分组倍率" width="120"><template #default="{ row: item }">{{ Number(item.GroupMultiplier || 1).toFixed(2) }}x</template></el-table-column>
                 <el-table-column label="展示卡片" width="110"><template #default="{ row: item }"><el-tag :type="item.Featured ? 'success' : 'info'">{{ item.Featured ? '展示' : '不展示' }}</el-tag></template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: item }"><el-tag :type="item.Status === 'active' ? 'success' : 'info'">{{ modelStatusLabel(item.Status) }}</el-tag></template></el-table-column>
                 <el-table-column label="同步时间" min-width="150"><template #default="{ row: item }">{{ formatSyncTime(item.OfficialSyncedAt) }}</template></el-table-column>
@@ -3817,6 +3899,31 @@ function submitModal() {
                 <span>同步会更新官方模型的输入、缓存读取和输出单价，但会保留你已设置的倍率。</span>
               </div>
               <a v-if="modelSource" class="ghost-button" :href="modelSource" target="_blank" rel="noreferrer">查看官方价格</a>
+            </div>
+          </section>
+        </div>
+
+        <div v-if="active === 'billingGroups'" class="space-y-5">
+          <div class="page-toolbar">
+            <div>
+              <p class="section-kicker">Billing Groups</p>
+              <h2>分组倍率</h2>
+              <span>{{ billingGroups.filter((item) => item.Enabled).length }} 个启用分组，{{ billingGroups.length }} 个总分组</span>
+            </div>
+            <div class="toolbar-actions">
+              <el-button circle :icon="Refresh" :loading="loading" aria-label="刷新" title="刷新" @click="refreshAdminData" />
+              <el-button type="primary" @click="openBillingGroupModal()">新增分组</el-button>
+            </div>
+          </div>
+
+          <section class="panel-surface overflow-hidden">
+            <div class="table-wrap">
+              <el-table :data="billingGroups" border>
+                <el-table-column label="分组名称" min-width="220" prop="Name" />
+                <el-table-column label="倍率" width="140"><template #default="{ row }">{{ Number(row.Multiplier || 1).toFixed(2) }}x</template></el-table-column>
+                <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.Enabled ? 'success' : 'info'">{{ row.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="112" :fixed="isMobileLayout ? false : 'right'"><template #default="{ row }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" @click="openBillingGroupModal(row)" /><el-button type="danger" size="small" :icon="Delete" @click="confirmDeleteBillingGroup(row)" /></div></template></el-table-column>
+              </el-table>
             </div>
           </section>
         </div>
@@ -3868,7 +3975,7 @@ function submitModal() {
                 <el-table-column label="渠道名称" min-width="160" prop="Name" />
                 <el-table-column label="API 地址" min-width="260" prop="BaseURL" />
                 <el-table-column label="支持协议" min-width="150"><template #default="{ row: channel }"><div class="table-actions"><el-tag v-for="tag in protocolTags(channel)" :key="tag" size="small">{{ tag }}</el-tag></div></template></el-table-column>
-                <el-table-column label="分组倍率" min-width="220"><template #default="{ row: channel }">{{ groupMultiplierText(channel.group_multipliers || channel.GroupMultipliers) }}</template></el-table-column>
+                <el-table-column label="关联分组" min-width="220"><template #default="{ row: channel }">{{ billingGroupLabelById(channel.BillingGroupID) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled ? 'success' : 'info'">{{ channel.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="112" :fixed="isMobileLayout ? false : 'right'"><template #default="{ row: channel }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑上游渠道" title="编辑上游渠道" @click="openChannelModal(channel)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除上游渠道" title="删除上游渠道" @click="confirmDeleteChannel(channel)" /></div></template></el-table-column>
               </el-table>
@@ -3907,7 +4014,7 @@ function submitModal() {
                 <el-table-column label="渠道名称" min-width="160" prop="Name" />
                 <el-table-column label="API 地址" min-width="260" prop="BaseURL" />
                 <el-table-column label="支持协议" min-width="150"><template #default="{ row: channel }"><div class="table-actions"><el-tag v-for="tag in protocolTags(channel)" :key="tag" size="small">{{ tag }}</el-tag></div></template></el-table-column>
-                <el-table-column label="分组倍率" min-width="220"><template #default="{ row: channel }">{{ groupMultiplierText(channel.group_multipliers || channel.GroupMultipliers) }}</template></el-table-column>
+                <el-table-column label="关联分组" min-width="220"><template #default="{ row: channel }">{{ billingGroupLabelById(channel.BillingGroupID) }}</template></el-table-column>
                 <el-table-column label="剩余额度 / 总额度" min-width="160"><template #default="{ row: channel }">{{ channelQuotaText(channel) }}</template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row: channel }"><el-tag :type="channel.Enabled && channel.RemainingUSDCents > 0 ? 'success' : 'info'">{{ channel.RemainingUSDCents <= 0 ? '售罄' : (channel.Enabled ? '已启用' : '已停用') }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="112" :fixed="isMobileLayout ? false : 'right'"><template #default="{ row: channel }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" aria-label="编辑公共渠道" title="编辑公共渠道" @click="openPublicChannelModal(channel)" /><el-button type="danger" size="small" :icon="Delete" aria-label="删除公共渠道" title="删除公共渠道" @click="confirmDeletePublicChannel(channel)" /></div></template></el-table-column>
@@ -4862,19 +4969,19 @@ function submitModal() {
           <el-form-item class="md:col-span-2" label="API 地址" required><el-input v-model="channelForm.base_url" placeholder="https://api.openai.com" /></el-form-item>
           <el-form-item label="GPT 协议"><el-switch v-model="channelForm.supports_gpt" active-text="支持" /></el-form-item>
           <el-form-item label="Claude 协议"><el-switch v-model="channelForm.supports_claude" active-text="支持" /></el-form-item>
-          <div class="md:col-span-2 group-multiplier-editor">
-            <div class="section-head">
-              <div>
-                <h3>分组倍率</h3>
-                <span>留用模型默认值即可，按渠道覆盖单个模型时修改对应倍率。</span>
-              </div>
-            </div>
-            <div v-for="row in channelForm.group_multipliers" :key="row.model" class="group-multiplier-row">
-              <span>{{ row.model }}</span>
-              <el-input v-model.number="row.multiplier" type="number" min="0.0001" step="0.01" />
-            </div>
-          </div>
+          <el-form-item class="md:col-span-2" label="关联分组倍率">
+            <el-select v-model="channelForm.billing_group_id" clearable placeholder="不关联则按模型基础倍率">
+              <el-option value="" label="不关联" />
+              <el-option v-for="group in billingGroups.filter((item) => item.Enabled)" :key="group.ID" :label="`${group.Name} · ${Number(group.Multiplier || 1).toFixed(2)}x`" :value="group.ID" />
+            </el-select>
+          </el-form-item>
           <el-form-item class="md:col-span-2" label="启用渠道"><el-switch v-model="channelForm.enabled" /></el-form-item>
+        </div>
+
+        <div v-if="modal.type === 'create-billing-group' || modal.type === 'edit-billing-group'" class="modal-body form-grid">
+          <el-form-item label="分组名称" required><el-input v-model="billingGroupForm.name" placeholder="例如：官方渠道 / 代理渠道 / 专属渠道" /></el-form-item>
+          <el-form-item label="倍率" required><el-input v-model.number="billingGroupForm.multiplier" type="number" min="0.0001" step="0.01" /></el-form-item>
+          <el-form-item class="md:col-span-2" label="启用分组"><el-switch v-model="billingGroupForm.enabled" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'create-channel-monitor' || modal.type === 'edit-channel-monitor'" class="modal-body form-grid">
@@ -4900,18 +5007,12 @@ function submitModal() {
           </el-form-item>
           <el-form-item label="GPT 协议"><el-switch v-model="publicChannelForm.supports_gpt" active-text="支持" /></el-form-item>
           <el-form-item label="Claude 协议"><el-switch v-model="publicChannelForm.supports_claude" active-text="支持" /></el-form-item>
-          <div class="md:col-span-2 group-multiplier-editor">
-            <div class="section-head">
-              <div>
-                <h3>分组倍率</h3>
-                <span>公共渠道会按这里的倍率扣减用户套餐额度。</span>
-              </div>
-            </div>
-            <div v-for="row in publicChannelForm.group_multipliers" :key="row.model" class="group-multiplier-row">
-              <span>{{ row.model }}</span>
-              <el-input v-model.number="row.multiplier" type="number" min="0.0001" step="0.01" />
-            </div>
-          </div>
+          <el-form-item class="md:col-span-2" label="关联分组倍率">
+            <el-select v-model="publicChannelForm.billing_group_id" clearable placeholder="不关联则按模型基础倍率">
+              <el-option value="" label="不关联" />
+              <el-option v-for="group in billingGroups.filter((item) => item.Enabled)" :key="group.ID" :label="`${group.Name} · ${Number(group.Multiplier || 1).toFixed(2)}x`" :value="group.ID" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="渠道总额度（美元）"><el-input v-model.number="publicChannelForm.total_usd_quota" type="number" min="0" step="0.01" required /></el-form-item>
           <el-form-item label="剩余美元额度"><el-input v-model.number="publicChannelForm.remaining_usd_quota" type="number" min="0" step="0.01" required /></el-form-item>
           <el-form-item class="md:col-span-2" label="启用公共渠道"><el-switch v-model="publicChannelForm.enabled" /></el-form-item>
@@ -4947,13 +5048,11 @@ function submitModal() {
                 <el-input v-model="account.api_key" :placeholder="isOpenAIOAuthAccount(account) ? '导入后自动填充' : '请输入上游 API Key'" />
               </div>
               <div class="pool-account-field pool-account-multipliers">
-                <span>分组倍率</span>
-                <div class="pool-account-multiplier-grid">
-                  <label v-for="row in account.group_multipliers" :key="row.model">
-                    <span>{{ row.model }}</span>
-                    <el-input v-model.number="row.multiplier" type="number" min="0.0001" step="0.01" />
-                  </label>
-                </div>
+                <span>关联分组</span>
+                <el-select v-model="account.billing_group_id" clearable placeholder="不关联">
+                  <el-option value="" label="不关联" />
+                  <el-option v-for="group in billingGroups.filter((item) => item.Enabled)" :key="group.ID" :label="`${group.Name} · ${Number(group.Multiplier || 1).toFixed(2)}x`" :value="group.ID" />
+                </el-select>
               </div>
               <div v-if="!isOpenAIOAuthAccount(account)" class="pool-account-field pool-account-quota">
                 <span>总额度（美元）</span>
@@ -5312,6 +5411,11 @@ function submitModal() {
         <div v-if="modal.type === 'delete-channel'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.channel?.Name }}」吗？</strong>
           <p>删除后审核弹窗不再提供该渠道，请确认没有新的开通流程依赖它。</p>
+        </div>
+
+        <div v-if="modal.type === 'delete-billing-group'" class="modal-body confirm-copy">
+          <strong>确定删除「{{ modal.payload?.group?.Name }}」吗？</strong>
+          <p>删除后已关联渠道将失去该分组倍率，请先确认是否需要改绑到其他分组。</p>
         </div>
 
         <div v-if="modal.type === 'delete-public-channel'" class="modal-body confirm-copy">

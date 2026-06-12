@@ -45,6 +45,12 @@ type BillingResult struct {
 	BillingSource            string
 }
 
+type BillingContext struct {
+	GroupID          *uint
+	GroupMultiplier  float64
+	LegacyMultipliers any
+}
+
 func OfficialOpenAIModelPrices() []OfficialModelPrice {
 	return []OfficialModelPrice{
 		{ModelName: "gpt-5.5", DisplayName: "GPT-5.5", InputUSDPerMillion: 5.00, CachedInputUSDPerMillion: 1.353, OutputUSDPerMillion: 30.00},
@@ -145,10 +151,14 @@ func modelPricingSyncUpdates(existing model.ModelPricing, pricing model.ModelPri
 }
 
 func BillUsage(db *gorm.DB, modelName string, inputTokens, cachedInputTokens, outputTokens, totalTokens int64) BillingResult {
-	return BillUsageWithGroupMultipliers(db, modelName, inputTokens, cachedInputTokens, outputTokens, totalTokens, nil)
+	return BillUsageWithContext(db, modelName, inputTokens, cachedInputTokens, outputTokens, totalTokens, BillingContext{})
 }
 
 func BillUsageWithGroupMultipliers(db *gorm.DB, modelName string, inputTokens, cachedInputTokens, outputTokens, totalTokens int64, groupMultipliers any) BillingResult {
+	return BillUsageWithContext(db, modelName, inputTokens, cachedInputTokens, outputTokens, totalTokens, BillingContext{LegacyMultipliers: groupMultipliers})
+}
+
+func BillUsageWithContext(db *gorm.DB, modelName string, inputTokens, cachedInputTokens, outputTokens, totalTokens int64, ctx BillingContext) BillingResult {
 	if outputTokens <= 0 && totalTokens > inputTokens {
 		outputTokens = totalTokens - inputTokens
 	}
@@ -164,7 +174,7 @@ func BillUsageWithGroupMultipliers(db *gorm.DB, modelName string, inputTokens, c
 	if multiplier <= 0 {
 		multiplier = 1
 	}
-	groupMultiplier := ResolveGroupMultiplier(pricing, groupMultipliers)
+	groupMultiplier := ResolveBillingGroupMultiplier(db, pricing, ctx)
 	effectiveMultiplier := multiplier * groupMultiplier
 	billingMode := fallbackBillingMode(pricing.BillingMode)
 
@@ -222,6 +232,19 @@ func BillUsageWithGroupMultipliers(db *gorm.DB, modelName string, inputTokens, c
 		GroupMultiplier:          groupMultiplier,
 		BillingSource:            source,
 	}
+}
+
+func ResolveBillingGroupMultiplier(db *gorm.DB, pricing model.ModelPricing, ctx BillingContext) float64 {
+	if ctx.GroupMultiplier > 0 {
+		return ctx.GroupMultiplier
+	}
+	if ctx.GroupID != nil && db != nil {
+		var group model.BillingGroup
+		if err := db.Select("multiplier").Where("id = ? AND enabled = ?", *ctx.GroupID, true).First(&group).Error; err == nil && group.Multiplier > 0 {
+			return group.Multiplier
+		}
+	}
+	return ResolveGroupMultiplier(pricing, ctx.LegacyMultipliers)
 }
 
 func normalizeGroupMultipliers(values any) map[string]float64 {

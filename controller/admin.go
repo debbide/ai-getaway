@@ -174,24 +174,26 @@ type updateOrderRequest struct {
 }
 
 type upstreamChannelRequest struct {
-	Name             string             `json:"name" binding:"required,min=2,max=64"`
-	BaseURL          string             `json:"base_url" binding:"required,url"`
-	SupportsGPT      bool               `json:"supports_gpt"`
-	SupportsClaude   bool               `json:"supports_claude"`
+	Name           string `json:"name" binding:"required,min=2,max=64"`
+	BaseURL        string `json:"base_url" binding:"required,url"`
+	SupportsGPT    bool   `json:"supports_gpt"`
+	SupportsClaude bool   `json:"supports_claude"`
+	BillingGroupID *uint  `json:"billing_group_id"`
 	GroupMultipliers map[string]float64 `json:"group_multipliers"`
-	Enabled          bool               `json:"enabled"`
+	Enabled        bool   `json:"enabled"`
 }
 
 type publicChannelRequest struct {
-	Name              string             `json:"name" binding:"required,min=2,max=64"`
-	BaseURL           string             `json:"base_url" binding:"required,url"`
-	APIKey            string             `json:"api_key"`
-	SupportsGPT       bool               `json:"supports_gpt"`
-	SupportsClaude    bool               `json:"supports_claude"`
+	Name              string `json:"name" binding:"required,min=2,max=64"`
+	BaseURL           string `json:"base_url" binding:"required,url"`
+	APIKey            string `json:"api_key"`
+	SupportsGPT       bool   `json:"supports_gpt"`
+	SupportsClaude    bool   `json:"supports_claude"`
+	BillingGroupID    *uint  `json:"billing_group_id"`
 	GroupMultipliers  map[string]float64 `json:"group_multipliers"`
-	TotalUSDCents     int64              `json:"total_usd_cents" binding:"min=0"`
-	RemainingUSDCents int64              `json:"remaining_usd_cents" binding:"min=0"`
-	Enabled           bool               `json:"enabled"`
+	TotalUSDCents     int64  `json:"total_usd_cents" binding:"min=0"`
+	RemainingUSDCents int64  `json:"remaining_usd_cents" binding:"min=0"`
+	Enabled           bool   `json:"enabled"`
 }
 
 type pollingPoolRequest struct {
@@ -214,11 +216,18 @@ type pollingPoolAccountRequest struct {
 	UsageSnapshot     string             `json:"usage_snapshot"`
 	UsageCheckedAt    *time.Time         `json:"usage_checked_at"`
 	UsageError        string             `json:"usage_error"`
+	BillingGroupID    *uint              `json:"billing_group_id"`
 	GroupMultipliers  map[string]float64 `json:"group_multipliers"`
 	TotalUSDCents     int64              `json:"total_usd_cents"`
 	RemainingUSDCents int64              `json:"remaining_usd_cents"`
 	Enabled           bool               `json:"enabled"`
 	SortOrder         int                `json:"sort_order"`
+}
+
+type billingGroupRequest struct {
+	Name       string  `json:"name" binding:"required,min=2,max=64"`
+	Multiplier float64 `json:"multiplier" binding:"required,min=0.0001"`
+	Enabled    bool    `json:"enabled"`
 }
 
 type openAIOAuthExchangeRequest struct {
@@ -286,6 +295,7 @@ type adminUpstreamResponse struct {
 	APIKey             string             `json:"APIKey"`
 	SupportsGPT        bool               `json:"SupportsGPT"`
 	SupportsClaude     bool               `json:"SupportsClaude"`
+	BillingGroupID     *uint              `json:"BillingGroupID"`
 	GroupMultipliers   string             `json:"GroupMultipliers"`
 	GroupMultiplierMap map[string]float64 `json:"group_multipliers"`
 	Status             string             `json:"Status"`
@@ -301,6 +311,7 @@ type adminPublicChannelResponse struct {
 	APIKey             string             `json:"APIKey"`
 	SupportsGPT        bool               `json:"SupportsGPT"`
 	SupportsClaude     bool               `json:"SupportsClaude"`
+	BillingGroupID     *uint              `json:"BillingGroupID"`
 	GroupMultipliers   string             `json:"GroupMultipliers"`
 	GroupMultiplierMap map[string]float64 `json:"group_multipliers"`
 	TotalUSDCents      int64              `json:"TotalUSDCents"`
@@ -337,6 +348,7 @@ type adminPollingPoolAccountResponse struct {
 	UsageSnapshot      string                   `json:"UsageSnapshot"`
 	UsageCheckedAt     *time.Time               `json:"UsageCheckedAt"`
 	UsageError         string                   `json:"UsageError"`
+	BillingGroupID     *uint                    `json:"BillingGroupID"`
 	GroupMultipliers   string                   `json:"GroupMultipliers"`
 	GroupMultiplierMap map[string]float64       `json:"group_multipliers"`
 	TotalUSDCents      int64                    `json:"TotalUSDCents"`
@@ -346,6 +358,15 @@ type adminPollingPoolAccountResponse struct {
 	LastUsedAt         *time.Time               `json:"LastUsedAt"`
 	CreatedAt          time.Time                `json:"CreatedAt"`
 	UpdatedAt          time.Time                `json:"UpdatedAt"`
+}
+
+type adminBillingGroupResponse struct {
+	ID         uint      `json:"ID"`
+	Name       string    `json:"Name"`
+	Multiplier float64   `json:"Multiplier"`
+	Enabled    bool      `json:"Enabled"`
+	CreatedAt  time.Time `json:"CreatedAt"`
+	UpdatedAt  time.Time `json:"UpdatedAt"`
 }
 
 type adminChannelMonitorResponse struct {
@@ -543,6 +564,7 @@ func (a *AdminController) UpdateUserUpstream(c *gin.Context) {
 		"api_key":           req.APIKey,
 		"supports_gpt":      channel.SupportsGPT,
 		"supports_claude":   channel.SupportsClaude,
+		"billing_group_id":  channel.BillingGroupID,
 		"group_multipliers": channel.GroupMultipliers,
 		"status":            status,
 	}
@@ -780,6 +802,7 @@ func (a *AdminController) UpdateUser(c *gin.Context) {
 				"api_key":           req.APIKey,
 				"supports_gpt":      selectedChannel.SupportsGPT,
 				"supports_claude":   selectedChannel.SupportsClaude,
+				"billing_group_id":  selectedChannel.BillingGroupID,
 				"group_multipliers": selectedChannel.GroupMultipliers,
 				"status":            model.UpstreamStatusActive,
 			}).
@@ -1348,6 +1371,7 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 				upstream.ChannelID = &channel.ID
 				upstream.SupportsGPT = channel.SupportsGPT
 				upstream.SupportsClaude = channel.SupportsClaude
+				upstream.BillingGroupID = channel.BillingGroupID
 				upstream.GroupMultipliers = channel.GroupMultipliers
 			}
 		}
@@ -1606,6 +1630,7 @@ func (a *AdminController) UpdateOrder(c *gin.Context) {
 		upstreamUpdates["channel_id"] = channel.ID
 		upstreamUpdates["supports_gpt"] = channel.SupportsGPT
 		upstreamUpdates["supports_claude"] = channel.SupportsClaude
+		upstreamUpdates["billing_group_id"] = channel.BillingGroupID
 		upstreamUpdates["group_multipliers"] = channel.GroupMultipliers
 	}
 
@@ -2074,6 +2099,7 @@ func mapAdminUpstream(upstream model.UpstreamAccount) *adminUpstreamResponse {
 		APIKey:             upstream.APIKey,
 		SupportsGPT:        upstream.SupportsGPT,
 		SupportsClaude:     upstream.SupportsClaude,
+		BillingGroupID:     upstream.BillingGroupID,
 		GroupMultipliers:   upstream.GroupMultipliers,
 		GroupMultiplierMap: service.ParseGroupMultipliers(upstream.GroupMultipliers),
 		Status:             upstream.Status,
@@ -2105,6 +2131,7 @@ func mapAdminPublicChannel(channel model.PublicChannel) adminPublicChannelRespon
 		APIKey:             channel.APIKey,
 		SupportsGPT:        channel.SupportsGPT,
 		SupportsClaude:     channel.SupportsClaude,
+		BillingGroupID:     channel.BillingGroupID,
 		GroupMultipliers:   channel.GroupMultipliers,
 		GroupMultiplierMap: service.ParseGroupMultipliers(channel.GroupMultipliers),
 		TotalUSDCents:      channel.TotalUSDCents,
@@ -2138,6 +2165,7 @@ func mapAdminPollingPool(pool model.PollingPool) adminPollingPoolResponse {
 			UsageSnapshot:      account.UsageSnapshot,
 			UsageCheckedAt:     account.UsageCheckedAt,
 			UsageError:         account.UsageError,
+			BillingGroupID:     account.BillingGroupID,
 			GroupMultipliers:   account.GroupMultipliers,
 			GroupMultiplierMap: service.ParseGroupMultipliers(account.GroupMultipliers),
 			TotalUSDCents:      account.TotalUSDCents,
@@ -2382,6 +2410,74 @@ func (a *AdminController) ModelPricings(c *gin.Context) {
 	})
 }
 
+func (a *AdminController) BillingGroups(c *gin.Context) {
+	var groups []model.BillingGroup
+	a.db.Order("enabled desc, name asc").Find(&groups)
+	items := make([]adminBillingGroupResponse, 0, len(groups))
+	for _, group := range groups {
+		items = append(items, adminBillingGroupResponse{
+			ID:         group.ID,
+			Name:       group.Name,
+			Multiplier: group.Multiplier,
+			Enabled:    group.Enabled,
+			CreatedAt:  group.CreatedAt,
+			UpdatedAt:  group.UpdatedAt,
+		})
+	}
+	response.OK(c, gin.H{"items": items})
+}
+
+func (a *AdminController) CreateBillingGroup(c *gin.Context) {
+	var req billingGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	group := model.BillingGroup{
+		Name:       strings.TrimSpace(req.Name),
+		Multiplier: fallbackMultiplier(req.Multiplier),
+		Enabled:    req.Enabled,
+	}
+	if err := a.db.Create(&group).Error; err != nil {
+		response.Error(c, 500, "failed to create billing group")
+		return
+	}
+	response.Created(c, adminBillingGroupResponse{
+		ID:         group.ID,
+		Name:       group.Name,
+		Multiplier: group.Multiplier,
+		Enabled:    group.Enabled,
+		CreatedAt:  group.CreatedAt,
+		UpdatedAt:  group.UpdatedAt,
+	})
+}
+
+func (a *AdminController) UpdateBillingGroup(c *gin.Context) {
+	var req billingGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	updates := map[string]interface{}{
+		"name":       strings.TrimSpace(req.Name),
+		"multiplier": fallbackMultiplier(req.Multiplier),
+		"enabled":    req.Enabled,
+	}
+	if err := a.db.Model(&model.BillingGroup{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
+		response.Error(c, 500, "failed to update billing group")
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) DeleteBillingGroup(c *gin.Context) {
+	if err := a.db.Delete(&model.BillingGroup{}, c.Param("id")).Error; err != nil {
+		response.Error(c, 500, "failed to delete billing group")
+		return
+	}
+	response.OK(c, nil)
+}
+
 func (a *AdminController) CreateModelPricing(c *gin.Context) {
 	var req modelPricingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2470,10 +2566,11 @@ func (a *AdminController) CreateUpstreamChannel(c *gin.Context) {
 		BaseURL:          req.BaseURL,
 		SupportsGPT:      req.SupportsGPT,
 		SupportsClaude:   req.SupportsClaude,
+		BillingGroupID:   req.BillingGroupID,
 		GroupMultipliers: service.EncodeGroupMultipliers(req.GroupMultipliers),
 		Enabled:          req.Enabled,
 	}
-	if err := a.db.Select("Name", "BaseURL", "SupportsGPT", "SupportsClaude", "GroupMultipliers", "Enabled").Create(&channel).Error; err != nil {
+	if err := a.db.Select("Name", "BaseURL", "SupportsGPT", "SupportsClaude", "BillingGroupID", "GroupMultipliers", "Enabled").Create(&channel).Error; err != nil {
 		response.Error(c, 500, "failed to create upstream channel")
 		return
 	}
@@ -2492,6 +2589,7 @@ func (a *AdminController) UpdateUpstreamChannel(c *gin.Context) {
 		"base_url":          req.BaseURL,
 		"supports_gpt":      req.SupportsGPT,
 		"supports_claude":   req.SupportsClaude,
+		"billing_group_id":  req.BillingGroupID,
 		"group_multipliers": service.EncodeGroupMultipliers(req.GroupMultipliers),
 		"enabled":           req.Enabled,
 	}
@@ -2534,12 +2632,13 @@ func (a *AdminController) CreatePublicChannel(c *gin.Context) {
 		APIKey:            req.APIKey,
 		SupportsGPT:       req.SupportsGPT,
 		SupportsClaude:    req.SupportsClaude,
+		BillingGroupID:    req.BillingGroupID,
 		GroupMultipliers:  service.EncodeGroupMultipliers(req.GroupMultipliers),
 		TotalUSDCents:     req.TotalUSDCents,
 		RemainingUSDCents: req.RemainingUSDCents,
 		Enabled:           req.Enabled,
 	}
-	if err := a.db.Select("Name", "BaseURL", "APIKey", "SupportsGPT", "SupportsClaude", "GroupMultipliers", "TotalUSDCents", "RemainingUSDCents", "Enabled").Create(&channel).Error; err != nil {
+	if err := a.db.Select("Name", "BaseURL", "APIKey", "SupportsGPT", "SupportsClaude", "BillingGroupID", "GroupMultipliers", "TotalUSDCents", "RemainingUSDCents", "Enabled").Create(&channel).Error; err != nil {
 		response.Error(c, 500, "failed to create public channel")
 		return
 	}
@@ -2562,6 +2661,7 @@ func (a *AdminController) UpdatePublicChannel(c *gin.Context) {
 		"base_url":            req.BaseURL,
 		"supports_gpt":        req.SupportsGPT,
 		"supports_claude":     req.SupportsClaude,
+		"billing_group_id":    req.BillingGroupID,
 		"group_multipliers":   service.EncodeGroupMultipliers(req.GroupMultipliers),
 		"total_usd_cents":     req.TotalUSDCents,
 		"remaining_usd_cents": req.RemainingUSDCents,
@@ -2781,6 +2881,7 @@ func normalizePollingPoolAccounts(input []pollingPoolAccountRequest, _ bool) ([]
 			UsageSnapshot:     strings.TrimSpace(item.UsageSnapshot),
 			UsageCheckedAt:    item.UsageCheckedAt,
 			UsageError:        strings.TrimSpace(item.UsageError),
+			BillingGroupID:    item.BillingGroupID,
 			GroupMultipliers:  service.EncodeGroupMultipliers(item.GroupMultipliers),
 			TotalUSDCents:     item.TotalUSDCents,
 			RemainingUSDCents: item.RemainingUSDCents,

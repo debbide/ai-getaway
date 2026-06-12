@@ -190,9 +190,17 @@ type UpstreamAccount struct {
 	APIKey           string `gorm:"size:512;not null" json:"-"`
 	SupportsGPT      bool   `gorm:"default:true"`
 	SupportsClaude   bool   `gorm:"default:false"`
+	BillingGroupID   *uint  `gorm:"index"`
 	GroupMultipliers string `gorm:"type:text"`
 	Status           string `gorm:"size:32;default:active;index"`
 	LastUsedAt       *time.Time
+}
+
+type BillingGroup struct {
+	gorm.Model
+	Name       string  `gorm:"size:64;uniqueIndex;not null"`
+	Multiplier float64 `gorm:"default:1"`
+	Enabled    bool    `gorm:"default:true;index"`
 }
 
 type UpstreamChannel struct {
@@ -201,6 +209,7 @@ type UpstreamChannel struct {
 	BaseURL          string `gorm:"size:255;not null"`
 	SupportsGPT      bool   `gorm:"default:true"`
 	SupportsClaude   bool   `gorm:"default:false"`
+	BillingGroupID   *uint  `gorm:"index"`
 	GroupMultipliers string `gorm:"type:text"`
 	Enabled          bool   `gorm:"default:true;index"`
 }
@@ -212,6 +221,7 @@ type PublicChannel struct {
 	APIKey            string `gorm:"size:512;not null" json:"-"`
 	SupportsGPT       bool   `gorm:"default:true"`
 	SupportsClaude    bool   `gorm:"default:false"`
+	BillingGroupID    *uint  `gorm:"index"`
 	GroupMultipliers  string `gorm:"type:text"`
 	TotalUSDCents     int64  `gorm:"default:0"`
 	RemainingUSDCents int64  `gorm:"default:0;index"`
@@ -242,6 +252,7 @@ type PollingPoolAccount struct {
 	UsageSnapshot     string `gorm:"type:text"`
 	UsageCheckedAt    *time.Time
 	UsageError        string `gorm:"type:text"`
+	BillingGroupID    *uint  `gorm:"index"`
 	GroupMultipliers  string `gorm:"type:text"`
 	TotalUSDCents     int64  `gorm:"default:0"`
 	RemainingUSDCents int64  `gorm:"default:0;index"`

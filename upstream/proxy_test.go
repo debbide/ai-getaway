@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"ai-gateway/model"
+	"ai-gateway/service"
 )
 
 func TestFillUsageResponsesShape(t *testing.T) {
@@ -297,7 +298,7 @@ func TestApplyDynamicOutputLimitCapsResponsesRequest(t *testing.T) {
 	}
 	info := requestInfo{Model: "gpt-5.5", BodyBytes: int64(len(body))}
 
-	nextInfo, ok, err := applyDynamicOutputLimit(nil, req, info, 100, nil, 1024*1024)
+	nextInfo, ok, err := applyDynamicOutputLimit(nil, req, info, 100, service.BillingContext{}, 1024*1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +329,7 @@ func TestApplyDynamicOutputLimitKeepsLowerClientLimit(t *testing.T) {
 	}
 	info := requestInfo{Model: "gpt-5.5", BodyBytes: int64(len(body))}
 
-	if _, ok, err := applyDynamicOutputLimit(nil, req, info, 100, nil, 1024*1024); err != nil || !ok {
+	if _, ok, err := applyDynamicOutputLimit(nil, req, info, 100, service.BillingContext{}, 1024*1024); err != nil || !ok {
 		t.Fatalf("applyDynamicOutputLimit() ok=%v err=%v, want allowed without error", ok, err)
 	}
 	updated, err := io.ReadAll(req.Body)
@@ -362,13 +363,13 @@ func TestApplyDynamicOutputLimitRejectsBodyOverLimit(t *testing.T) {
 	}
 	info := requestInfo{Model: "gpt-5.5", BodyBytes: int64(len(body))}
 
-	if _, _, err := applyDynamicOutputLimit(nil, req, info, 100, nil, 5); err != errBodyTooLarge {
+	if _, _, err := applyDynamicOutputLimit(nil, req, info, 100, service.BillingContext{}, 5); err != errBodyTooLarge {
 		t.Fatalf("applyDynamicOutputLimit() err = %v, want errBodyTooLarge", err)
 	}
 }
 
 func TestDynamicMaxOutputTokensDeniesWhenInputEstimateExceedsBudget(t *testing.T) {
-	if got := dynamicMaxOutputTokens(nil, "gpt-5.5", 1_000_000, 1, nil); got != 0 {
+	if got := dynamicMaxOutputTokens(nil, "gpt-5.5", 1_000_000, 1, service.BillingContext{}); got != 0 {
 		t.Fatalf("dynamicMaxOutputTokens() = %d, want 0 when input estimate exceeds budget", got)
 	}
 }
