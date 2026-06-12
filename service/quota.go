@@ -32,7 +32,7 @@ func UserPlanQuotaUsage(db *gorm.DB, user model.User, now time.Time) (QuotaUsage
 	if !HasActiveSubscription(user, now) || user.Plan == nil {
 		return QuotaUsage{}, false
 	}
-	startedAt := SubscriptionStartAt(db, user, now)
+	startedAt := PlanQuotaStartAt(db, user, now)
 	return PlanQuotaUsageFrom(db, user.ID, user.Plan, startedAt, now), true
 }
 
@@ -292,7 +292,7 @@ func CreateAPILogWithinPlanQuota(db *gorm.DB, log *model.APILog, now time.Time) 
 			return err
 		}
 		if HasActiveSubscription(user, now) && user.Plan != nil {
-			startedAt := SubscriptionStartAt(tx, user, now)
+			startedAt := PlanQuotaStartAt(tx, user, now)
 			usage := PlanQuotaUsageFrom(tx, user.ID, user.Plan, startedAt, now)
 			if usage.LimitUSDCents > 0 {
 				capAPILogCost(log, usage.RemainingCents)
@@ -355,7 +355,7 @@ func BeginQuotaReservation(db *gorm.DB, user model.User, apiKeyID uint, now time
 			return err
 		}
 		if HasActiveSubscription(lockedUser, now) && lockedUser.Plan != nil {
-			startedAt := SubscriptionStartAt(tx, lockedUser, now)
+			startedAt := PlanQuotaStartAt(tx, lockedUser, now)
 			usage := PlanQuotaUsageFrom(tx, lockedUser.ID, lockedUser.Plan, startedAt, now)
 			if QuotaAllowsRequest(usage) {
 				reserved := usage.RemainingCents - MinQuotaRemainingUSDCents
@@ -431,7 +431,7 @@ func CompleteQuotaReservationWithAPILog(db *gorm.DB, reservationID uint, log *mo
 		source := normalizeAccessSource(reservation.AccessSource)
 		log.AccessSource = source
 		if source == model.AccessSourcePlan && HasActiveSubscription(user, now) && user.Plan != nil {
-			startedAt := SubscriptionStartAt(tx, user, now)
+			startedAt := PlanQuotaStartAt(tx, user, now)
 			start, _ := QuotaUsageWindow(user.Plan.QuotaPeriod, startedAt, now)
 			limit := user.Plan.SettlementUSDCents
 			usedLogs := capUsedUSDCents(usedAPILogUSDCentsSinceSource(tx, user.ID, start, model.AccessSourcePlan, true), limit)

@@ -91,6 +91,7 @@ type User struct {
 	BalanceUSDCents       int64  `gorm:"default:0;index"`
 	ExpiresAt             *time.Time
 	SubscriptionStartedAt *time.Time
+	QuotaResetAt          *time.Time
 }
 
 type OAuthAccount struct {

@@ -174,6 +174,7 @@ const docForm = reactive(emptyDoc())
 const announcementForm = reactive(emptyAnnouncement())
 const emailTemplateForm = reactive(emptyEmailTemplate())
 const userSearch = reactive({ keyword: '', role: '', status: '', plan: '' })
+const batchQuotaResetForm = reactive({ plan_id: '' })
 const planSearch = reactive({ keyword: '', status: '', category: 'daily' })
 const redeemCodeSearch = reactive({ keyword: '', status: '', planId: '' })
 const orderSearch = reactive({ keyword: '', status: '', planId: '', paymentMethod: '' })
@@ -283,6 +284,7 @@ const enabledChannelMonitors = computed(() => channelMonitors.value.filter((moni
 const enabledDocs = computed(() => docs.value.filter((doc) => doc.Enabled).length)
 const enabledAnnouncements = computed(() => announcements.value.filter((item) => item.Enabled).length)
 const enabledEmailTemplates = computed(() => emailTemplates.value.filter((item) => item.Enabled).length)
+const quotaResettablePlans = computed(() => plans.value.filter((plan) => ['daily', 'weekly'].includes(plan.QuotaPeriod)))
 const pendingReviewOrders = computed(() => orders.value.filter((order) => reviewableOrderStatuses.includes(order.Status)))
 const overviewPlans = computed(() => plans.value.slice(0, 4))
 const hasMorePlans = computed(() => plans.value.length > 4)
@@ -1677,6 +1679,38 @@ function upstreamToForm(accessType, upstream) {
 
 function confirmDeleteUser(user) {
   showModal('delete-user', '删除用户', '确认删除', { user }, true)
+}
+
+function canResetUserQuota(user) {
+  return ['daily', 'weekly'].includes(user?.Plan?.QuotaPeriod)
+}
+
+function confirmResetUserQuota(user) {
+  showModal('reset-user-quota', '重置用户额度', '确认重置', { user }, true)
+}
+
+async function resetUserQuota() {
+  await runAction(async () => {
+    await api.post(`/admin/users/${modal.payload.user.ID}/reset-quota`)
+    notice.value = '用户本周期额度已重置'
+  })
+}
+
+function openBatchResetQuotaModal() {
+  batchQuotaResetForm.plan_id = ''
+  showModal('batch-reset-user-quota', '批量重置套餐额度', '确认重置', null, true)
+}
+
+async function batchResetUserQuota() {
+  const planId = Number(batchQuotaResetForm.plan_id || 0)
+  if (!planId) {
+    error.value = '请选择需要重置的套餐'
+    return
+  }
+  await runAction(async () => {
+    const res = await api.post('/admin/users/reset-quota-batch', { plan_id: planId })
+    notice.value = `已重置 ${res.data?.reset_count || 0} 个用户的本周期额度`
+  })
 }
 
 async function deleteUser() {
@@ -3204,6 +3238,8 @@ function submitModal() {
     'edit-email-template': submitEmailTemplate,
     'create-user': submitUser,
     'edit-user': submitUser,
+    'reset-user-quota': resetUserQuota,
+    'batch-reset-user-quota': batchResetUserQuota,
     'edit-api-key': submitApiKey,
     'user-upstream': submitUserUpstreams,
     'delete-user': deleteUser,
@@ -4034,6 +4070,10 @@ function submitModal() {
             </el-form>
           </section>
 
+          <div v-if="usersTab === 'users'" class="flex justify-end">
+            <el-button type="warning" plain :disabled="!quotaResettablePlans.length" @click="openBatchResetQuotaModal">批量重置套餐额度</el-button>
+          </div>
+
           <section v-if="usersTab === 'users'" class="panel-surface overflow-hidden">
             <div class="table-wrap">
               <el-table :data="pagedUsers" border>
@@ -4079,6 +4119,7 @@ function submitModal() {
                     <div class="table-actions admin-table-actions">
                       <el-button size="small" :icon="Edit" aria-label="编辑用户" title="编辑用户" @click="openUserModal(user)" />
                       <el-button size="small" :icon="Connection" aria-label="渠道配置" title="渠道配置" @click="openUserUpstreamModal(user)" />
+                      <el-button v-if="canResetUserQuota(user)" size="small" type="warning" :icon="Refresh" aria-label="重置额度" title="重置本日/本周额度" @click="confirmResetUserQuota(user)" />
                       <el-button type="danger" size="small" :icon="Delete" aria-label="删除用户" title="删除用户" @click="confirmDeleteUser(user)" />
                     </div>
                   </template>
@@ -5306,6 +5347,23 @@ function submitModal() {
         <div v-if="modal.type === 'delete-user'" class="modal-body confirm-copy">
           <strong>确定删除「{{ modal.payload?.user?.Email }}」吗？</strong>
           <p>删除用户会移除账号本身，相关订单和密钥关系请在操作前确认。</p>
+        </div>
+
+        <div v-if="modal.type === 'reset-user-quota'" class="modal-body confirm-copy">
+          <strong>确定重置「{{ modal.payload?.user?.Email }}」的本{{ modal.payload?.user?.Plan?.QuotaPeriod === 'daily' ? '日' : '周' }}额度吗？</strong>
+          <p>该操作仅重置当前周期额度，不会延长套餐有效期，也不会修改总额度统计。</p>
+        </div>
+
+        <div v-if="modal.type === 'batch-reset-user-quota'" class="modal-body form-grid">
+          <div class="confirm-copy md:col-span-2">
+            <strong>按套餐批量重置当前周期额度</strong>
+            <p>仅支持日/周套餐用户，重置后不会延长套餐有效期。</p>
+          </div>
+          <el-form-item class="md:col-span-2" label="选择套餐">
+            <el-select v-model="batchQuotaResetForm.plan_id" clearable filterable placeholder="请选择日/周套餐">
+              <el-option v-for="plan in quotaResettablePlans" :key="plan.ID" :label="plan.Name" :value="plan.ID" />
+            </el-select>
+          </el-form-item>
         </div>
 
         <div v-if="modal.type === 'delete-api-key'" class="modal-body confirm-copy">

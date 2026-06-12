@@ -49,6 +49,21 @@ func TestQuotaUsageWindowKeepsNaturalWindowAfterSubscriptionStart(t *testing.T) 
 	}
 }
 
+func TestPlanQuotaStartAtPrefersLaterResetAnchor(t *testing.T) {
+	now := time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)
+	subscriptionStartedAt := now.Add(-48 * time.Hour)
+	quotaResetAt := now.Add(-2 * time.Hour)
+	user := model.User{
+		SubscriptionStartedAt: &subscriptionStartedAt,
+		QuotaResetAt:          &quotaResetAt,
+	}
+
+	start := PlanQuotaStartAt(nil, user, now)
+	if start == nil || !start.Equal(quotaResetAt) {
+		t.Fatalf("start = %v, want %v", start, quotaResetAt)
+	}
+}
+
 func TestQuotaUsagePercentCapsAtPlanLimit(t *testing.T) {
 	if got := capUsedUSDCents(2800, 2000); got != 2000 {
 		t.Fatalf("capUsedUSDCents() = %d, want 2000", got)

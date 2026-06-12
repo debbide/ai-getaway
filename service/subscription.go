@@ -67,6 +67,14 @@ func SubscriptionStartAt(db *gorm.DB, user model.User, now time.Time) *time.Time
 	return nil
 }
 
+func PlanQuotaStartAt(db *gorm.DB, user model.User, now time.Time) *time.Time {
+	startedAt := SubscriptionStartAt(db, user, now)
+	if user.QuotaResetAt != nil && (startedAt == nil || user.QuotaResetAt.After(*startedAt)) {
+		return user.QuotaResetAt
+	}
+	return startedAt
+}
+
 func DirectPublicChannelPeriod(value string) string {
 	return normalizedDirectPublicPeriod(value)
 }

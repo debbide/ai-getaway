@@ -94,6 +94,10 @@ type updateUserUpstreamRequest struct {
 	Status           string `json:"status"`
 }
 
+type batchResetUserQuotaRequest struct {
+	PlanID uint `json:"plan_id" binding:"required"`
+}
+
 func (r *updateUserRequest) UnmarshalJSON(data []byte) error {
 	type request updateUserRequest
 	if err := json.Unmarshal(data, (*request)(r)); err != nil {
@@ -802,6 +806,60 @@ func (a *AdminController) DeleteUser(c *gin.Context) {
 		return
 	}
 	response.OK(c, nil)
+}
+
+func (a *AdminController) ResetUserQuota(c *gin.Context) {
+	userID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || userID == 0 {
+		response.Error(c, 400, "invalid user id")
+		return
+	}
+	if err := a.resetUserPlanQuota(uint(userID), time.Now()); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Error(c, 404, "user not found")
+			return
+		}
+		response.Error(c, 400, err.Error())
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (a *AdminController) BatchResetUserQuota(c *gin.Context) {
+	var req batchResetUserQuotaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+
+	var plan model.Plan
+	if err := a.db.First(&plan, req.PlanID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Error(c, 404, "plan not found")
+			return
+		}
+		response.Error(c, 500, "failed to load plan")
+		return
+	}
+	if plan.QuotaPeriod != model.QuotaPeriodDaily && plan.QuotaPeriod != model.QuotaPeriodWeekly {
+		response.Error(c, 400, "only daily or weekly plans can reset quota")
+		return
+	}
+
+	var userIDs []uint
+	if err := a.db.Model(&model.User{}).Where("plan_id = ?", req.PlanID).Pluck("id", &userIDs).Error; err != nil {
+		response.Error(c, 500, "failed to load users")
+		return
+	}
+
+	now := time.Now()
+	resetCount := 0
+	for _, userID := range userIDs {
+		if err := a.resetUserPlanQuota(userID, now); err == nil {
+			resetCount++
+		}
+	}
+	response.OK(c, gin.H{"reset_count": resetCount})
 }
 
 func (a *AdminController) deleteUserWithRelatedData(userID uint) error {
@@ -1696,6 +1754,26 @@ func (a *AdminController) syncUserAccessState(user *model.User, updates map[stri
 				Update("status", model.UpstreamStatusDisabled).Error
 		}
 		return nil
+	})
+}
+
+func (a *AdminController) resetUserPlanQuota(userID uint, now time.Time) error {
+	return a.db.Transaction(func(tx *gorm.DB) error {
+		var user model.User
+		if err := tx.Preload("Plan").First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.PlanID == nil || user.Plan == nil {
+			return errors.New("user has no assigned plan")
+		}
+		if user.Plan.QuotaPeriod != model.QuotaPeriodDaily && user.Plan.QuotaPeriod != model.QuotaPeriodWeekly {
+			return errors.New("only daily or weekly plan users can reset quota")
+		}
+		if err := tx.Model(&model.User{}).Where("id = ?", user.ID).Update("quota_reset_at", now).Error; err != nil {
+			return err
+		}
+		return tx.Where("user_id = ? AND status = ? AND access_source = ?", user.ID, model.QuotaReservationStatusActive, model.AccessSourcePlan).
+			Delete(&model.QuotaReservation{}).Error
 	})
 }
 
