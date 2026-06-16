@@ -30,6 +30,7 @@ const defaultSettings = {
   pricing_title: '简单透明的定价',
   pricing_subtitle: '保质保量无降智不掺假',
   pricing_notice: '本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；',
+  pricing_visible_tabs: '["daily","weekly","public","free","lottery"]',
   allow_registration: true,
   email_whitelist: '[]',
   online_payment_enabled: true,
@@ -104,6 +105,17 @@ const weeklyPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(p
 const publicPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && !isFreePlan(plan) && (plan.QuotaPeriod === 'public' || plan.PlanType === 'public')))
 const freePlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && Number(plan.PriceCents || 0) === 0))
 const lotteryPlans = computed(() => plans.value.filter((plan) => isLotteryPlan(plan)))
+const pricingTabOptions = [
+  { value: 'daily', label: '日套餐', plans: dailyPlans },
+  { value: 'weekly', label: '周套餐', plans: weeklyPlans },
+  { value: 'public', label: '活动套餐', plans: publicPlans },
+  { value: 'free', label: '免费套餐', plans: freePlans },
+  { value: 'lottery', label: '抽奖套餐', plans: lotteryPlans }
+]
+const visiblePricingTabs = computed(() => {
+  const visible = parsePricingVisibleTabs(publicSettings.value.pricing_visible_tabs)
+  return pricingTabOptions.filter((option) => visible.includes(option.value))
+})
 const onlinePaymentEnabled = computed(() => publicSettings.value.online_payment_enabled !== false)
 const manualPaymentEnabled = computed(() => publicSettings.value.manual_payment_enabled !== false)
 const mockAPIOnlineEnabled = computed(() => publicSettings.value.mock_api_online_enabled === true)
@@ -111,12 +123,8 @@ const mockAPIOnlineBase = computed(() => Math.max(0, Number(publicSettings.value
 const oauthProviders = computed(() => Array.isArray(publicSettings.value.oauth_providers) ? publicSettings.value.oauth_providers : [])
 const hasEnabledPaymentMethod = computed(() => onlinePaymentEnabled.value || manualPaymentEnabled.value)
 const visiblePricingPlans = computed(() => {
-  if (pricingTab.value === 'daily') return dailyPlans.value
-  if (pricingTab.value === 'weekly') return weeklyPlans.value
-  if (pricingTab.value === 'public') return publicPlans.value
-  if (pricingTab.value === 'free') return freePlans.value
-  if (pricingTab.value === 'lottery') return lotteryPlans.value
-  return dailyPlans.value
+  const tab = visiblePricingTabs.value.find((option) => option.value === pricingTab.value) || visiblePricingTabs.value[0]
+  return tab?.plans.value || []
 })
 const avatarText = computed(() => {
   const source = accountEmail.value || accountName.value || 'U'
@@ -150,6 +158,12 @@ watch(
   }
 )
 
+watch(visiblePricingTabs, (tabs) => {
+  if (!tabs.some((tab) => tab.value === pricingTab.value)) {
+    pricingTab.value = tabs[0]?.value || 'daily'
+  }
+}, { immediate: true })
+
 onBeforeUnmount(() => {
   window.removeEventListener('popstate', syncPath)
   window.removeEventListener('app-data-updated', refreshAppData)
@@ -174,6 +188,18 @@ async function loadPublicSettings() {
     if (publicSettings.value.site_title) document.title = publicSettings.value.site_title
   } catch {
     publicSettings.value = { ...defaultSettings }
+  }
+}
+
+function parsePricingVisibleTabs(value) {
+  const defaultTabs = ['daily', 'weekly', 'public', 'free', 'lottery']
+  try {
+    const parsed = Array.isArray(value) ? value : JSON.parse(value || '[]')
+    const allowed = new Set(defaultTabs)
+    const tabs = parsed.filter((item) => allowed.has(item))
+    return tabs.length ? tabs : defaultTabs
+  } catch {
+    return defaultTabs
   }
 }
 
@@ -1106,11 +1132,7 @@ function planSubtitle(index) {
 
         <p v-if="error" class="alert alert-danger mt-5">{{ error }}</p>
         <div class="pricing-tabs">
-          <button :class="{ active: pricingTab === 'daily' }" @click="pricingTab = 'daily'">日套餐</button>
-          <button :class="{ active: pricingTab === 'weekly' }" @click="pricingTab = 'weekly'">周套餐</button>
-          <button :class="{ active: pricingTab === 'public' }" @click="pricingTab = 'public'">活动套餐</button>
-          <button :class="{ active: pricingTab === 'free' }" @click="pricingTab = 'free'">免费套餐</button>
-          <button :class="{ active: pricingTab === 'lottery' }" @click="pricingTab = 'lottery'">抽奖套餐</button>
+          <button v-for="tab in visiblePricingTabs" :key="tab.value" :class="{ active: pricingTab === tab.value }" @click="pricingTab = tab.value">{{ tab.label }}</button>
         </div>
         <div class="subscription-grid">
           <article

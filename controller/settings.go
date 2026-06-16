@@ -29,6 +29,7 @@ type updateSettingsRequest struct {
 	PricingTitle                   string  `json:"pricing_title"`
 	PricingSubtitle                string  `json:"pricing_subtitle"`
 	PricingNotice                  string  `json:"pricing_notice"`
+	PricingVisibleTabs             string  `json:"pricing_visible_tabs"`
 	AllowRegistration              bool    `json:"allow_registration"`
 	EmailWhitelist                 string  `json:"email_whitelist"`
 	SMTPHost                       string  `json:"smtp_host"`
@@ -86,6 +87,7 @@ func (s *SettingsController) Public(c *gin.Context) {
 		"pricing_title":                     setting.PricingTitle,
 		"pricing_subtitle":                  setting.PricingSubtitle,
 		"pricing_notice":                    setting.PricingNotice,
+		"pricing_visible_tabs":              setting.PricingVisibleTabs,
 		"allow_registration":                setting.AllowRegistration,
 		"email_whitelist":                   setting.EmailWhitelist,
 		"online_payment_enabled":            setting.OnlinePaymentEnabled,
@@ -128,6 +130,7 @@ func (s *SettingsController) Get(c *gin.Context) {
 		"pricing_title":                         setting.PricingTitle,
 		"pricing_subtitle":                      setting.PricingSubtitle,
 		"pricing_notice":                        setting.PricingNotice,
+		"pricing_visible_tabs":                  setting.PricingVisibleTabs,
 		"allow_registration":                    setting.AllowRegistration,
 		"email_whitelist":                       setting.EmailWhitelist,
 		"smtp_host":                             setting.SMTPHost,
@@ -181,6 +184,7 @@ func (s *SettingsController) Update(c *gin.Context) {
 		"pricing_title":                     req.PricingTitle,
 		"pricing_subtitle":                  req.PricingSubtitle,
 		"pricing_notice":                    req.PricingNotice,
+		"pricing_visible_tabs":              normalizePricingVisibleTabsJSON(req.PricingVisibleTabs),
 		"allow_registration":                req.AllowRegistration,
 		"email_whitelist":                   normalizeEmailWhitelistJSON(req.EmailWhitelist),
 		"smtp_host":                         req.SMTPHost,
@@ -275,6 +279,7 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 		"pricing_title":                     "VARCHAR(128)",
 		"pricing_subtitle":                  "VARCHAR(255)",
 		"pricing_notice":                    "VARCHAR(512)",
+		"pricing_visible_tabs":              "TEXT",
 		"allow_registration":                "BOOLEAN DEFAULT TRUE",
 		"email_whitelist":                   "TEXT",
 		"epay_pid":                          "VARCHAR(128)",
@@ -403,6 +408,7 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 	if setting.PricingNotice == "" {
 		setting.PricingNotice = "本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；如需使用 Claude 模型，请前往顶部菜单更多中转 → Claude Code 中转"
 	}
+	setting.PricingVisibleTabs = normalizePricingVisibleTabsJSON(setting.PricingVisibleTabs)
 	if setting.SMTPPort == 0 {
 		setting.SMTPPort = 587
 	}
@@ -413,6 +419,39 @@ func loadSettings(db *gorm.DB) model.SystemSetting {
 	setting.BalanceRechargeRateRMBPerUSD = normalizeBalanceRechargeRate(setting.BalanceRechargeRateRMBPerUSD)
 	setting.MockAPIOnlineBase = normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase)
 	return setting
+}
+
+func normalizePricingVisibleTabsJSON(value string) string {
+	valid := map[string]bool{
+		"daily":   true,
+		"weekly":  true,
+		"public":  true,
+		"free":    true,
+		"lottery": true,
+	}
+	defaultTabs := []string{"daily", "weekly", "public", "free", "lottery"}
+	var raw []string
+	if err := json.Unmarshal([]byte(value), &raw); err != nil {
+		raw = defaultTabs
+	}
+	seen := map[string]bool{}
+	tabs := make([]string, 0, len(defaultTabs))
+	for _, item := range raw {
+		tab := strings.TrimSpace(item)
+		if !valid[tab] || seen[tab] {
+			continue
+		}
+		seen[tab] = true
+		tabs = append(tabs, tab)
+	}
+	if len(tabs) == 0 {
+		tabs = defaultTabs
+	}
+	encoded, err := json.Marshal(tabs)
+	if err != nil {
+		return `["daily","weekly","public","free","lottery"]`
+	}
+	return string(encoded)
 }
 
 func publicOAuthProviders(setting model.SystemSetting) []gin.H {

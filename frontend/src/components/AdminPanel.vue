@@ -65,6 +65,13 @@ const publicChannelAccessPeriodOptions = [
   { value: 'weekly', label: '按周到期' },
   { value: 'public', label: '额度用完即止' }
 ]
+const pricingTabOptions = [
+  { value: 'daily', label: '日套餐' },
+  { value: 'weekly', label: '周套餐' },
+  { value: 'public', label: '活动套餐' },
+  { value: 'free', label: '免费套餐' },
+  { value: 'lottery', label: '抽奖套餐' }
+]
 
 const emailWhitelistOptions = [
   'qq.com',
@@ -225,6 +232,7 @@ const settings = reactive({
   pricing_title: '',
   pricing_subtitle: '',
   pricing_notice: '',
+  pricing_visible_tabs: JSON.stringify(pricingTabOptions.map((item) => item.value)),
   allow_registration: true,
   email_whitelist: '[]',
   smtp_host: '',
@@ -295,6 +303,12 @@ const selectedEmailWhitelist = computed({
   get: () => parseEmailWhitelistSetting(settings.email_whitelist),
   set: (value) => {
     settings.email_whitelist = JSON.stringify(normalizeEmailWhitelist(value))
+  }
+})
+const selectedPricingTabs = computed({
+  get: () => parsePricingVisibleTabs(settings.pricing_visible_tabs),
+  set: (value) => {
+    settings.pricing_visible_tabs = JSON.stringify(normalizePricingTabs(value))
   }
 })
 const filteredApiKeys = computed(() => {
@@ -628,6 +642,7 @@ async function loadAll() {
     emailTemplates.value = templateData?.items || []
     emailTemplateVariables.value = templateData?.variables || []
     Object.assign(settings, responseData(settingsRes, {}), { smtp_password: '', epay_key: '', github_oauth_client_secret: '', google_oauth_client_secret: '' })
+    settings.pricing_visible_tabs = JSON.stringify(parsePricingVisibleTabs(settings.pricing_visible_tabs))
     setNavigationDraft(settings.navigation_items)
     setAPIEndpointDraft(settings.api_endpoints)
     const loadErrors = collectLoadErrors(results)
@@ -2040,6 +2055,7 @@ async function deleteOrder() {
 async function saveSettings() {
   syncAPIEndpointSetting()
   settings.email_whitelist = JSON.stringify(normalizeEmailWhitelist(selectedEmailWhitelist.value))
+  settings.pricing_visible_tabs = JSON.stringify(normalizePricingTabs(selectedPricingTabs.value))
   await runAction(async () => {
     await api.put('/admin/settings', {
       ...settings,
@@ -2072,6 +2088,25 @@ function normalizeEmailWhitelist(value) {
       seen.add(item)
       return true
     })
+}
+
+function parsePricingVisibleTabs(value) {
+  if (Array.isArray(value)) return normalizePricingTabs(value)
+  try {
+    return normalizePricingTabs(JSON.parse(value || '[]'))
+  } catch {
+    return defaultPricingTabs()
+  }
+}
+
+function normalizePricingTabs(value) {
+  const allowed = new Set(defaultPricingTabs())
+  const tabs = (Array.isArray(value) ? value : []).filter((item) => allowed.has(item))
+  return tabs.length ? tabs : defaultPricingTabs()
+}
+
+function defaultPricingTabs() {
+  return pricingTabOptions.map((item) => item.value)
 }
 
 function handleManualPaymentQRUpload(event) {
@@ -4643,6 +4678,11 @@ function submitModal() {
               </el-form-item>
               <el-form-item class="md:col-span-2" label="定价页提示内容">
                 <el-input v-model="settings.pricing_notice" type="textarea" :rows="3" placeholder="展示在定价页顶部提示框中的说明文字" />
+              </el-form-item>
+              <el-form-item class="md:col-span-2" label="定价页显示分类">
+                <el-checkbox-group v-model="selectedPricingTabs">
+                  <el-checkbox v-for="tab in pricingTabOptions" :key="tab.value" :label="tab.value">{{ tab.label }}</el-checkbox>
+                </el-checkbox-group>
               </el-form-item>
               <el-form-item class="md:col-span-2" label="允许新用户注册">
                 <el-switch v-model="settings.allow_registration" />
