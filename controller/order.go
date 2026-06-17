@@ -141,7 +141,6 @@ func (o *OrderController) CreateBalanceRecharge(c *gin.Context) {
 	order := model.Order{
 		OrderNo:            model.GenerateOrderNo(ctxUser.ID, now),
 		UserID:             ctxUser.ID,
-		PlanID:             0,
 		OrderType:          model.OrderTypeBalance,
 		AmountCents:        amountCents,
 		SettlementUSDCents: settlementUSDCents,
@@ -249,7 +248,7 @@ func (o *OrderController) Create(c *gin.Context) {
 	order := model.Order{
 		OrderNo:            model.GenerateOrderNo(ctxUser.ID, now),
 		UserID:             ctxUser.ID,
-		PlanID:             plan.ID,
+		PlanID:             &plan.ID,
 		OrderType:          orderType,
 		AmountCents:        amountCents,
 		SettlementUSDCents: plan.SettlementUSDCents,
@@ -351,13 +350,17 @@ func completeFreeOrder(db *gorm.DB, order *model.Order) error {
 			return err
 		}
 	}
+	planID, err := orderPlanID(order)
+	if err != nil {
+		return err
+	}
 	now := time.Now()
 	updates := paymentOrderUpdates(model.OrderStatusPendingReview, nil, now)
 	updates["payment_channel"] = "free"
 	updates["paid_amount_cents"] = 0
 	if order.Plan.PlanType != model.PlanTypePublic {
 		if err := db.Transaction(func(tx *gorm.DB) error {
-			if err := claimFreePlan(tx, order.UserID, order.PlanID); err != nil {
+			if err := claimFreePlan(tx, order.UserID, planID); err != nil {
 				return err
 			}
 			result := tx.Model(&model.Order{}).
@@ -381,13 +384,17 @@ func completeFreeOrder(db *gorm.DB, order *model.Order) error {
 }
 
 func completeFreePublicOrder(db *gorm.DB, order *model.Order) error {
+	planID, err := orderPlanID(order)
+	if err != nil {
+		return err
+	}
 	now := time.Now()
-	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := claimFreePlan(tx, order.UserID, order.PlanID); err != nil {
+	err = db.Transaction(func(tx *gorm.DB) error {
+		if err := claimFreePlan(tx, order.UserID, planID); err != nil {
 			return err
 		}
 		var plan model.Plan
-		if err := tx.Preload("PublicChannel").Preload("PollingPool.Accounts").First(&plan, order.PlanID).Error; err != nil {
+		if err := tx.Preload("PublicChannel").Preload("PollingPool.Accounts").First(&plan, planID).Error; err != nil {
 			return err
 		}
 		orderUpdates := paymentOrderUpdates(model.OrderStatusApproved, nil, now)
@@ -793,7 +800,11 @@ func completePaidOrder(db *gorm.DB, order *model.Order, payment *epayPaymentResu
 	now := time.Now()
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var plan model.Plan
-		if err := tx.Preload("PublicChannel").Preload("PollingPool.Accounts").First(&plan, order.PlanID).Error; err != nil {
+		planID, err := orderPlanID(order)
+		if err != nil {
+			return err
+		}
+		if err := tx.Preload("PublicChannel").Preload("PollingPool.Accounts").First(&plan, planID).Error; err != nil {
 			return err
 		}
 		orderUpdates := paymentOrderUpdates(model.OrderStatusApproved, payment, now)
@@ -903,6 +914,13 @@ func subscriptionStartedAtBeforeOrder(db *gorm.DB, user model.User, order *model
 		return &fallbackStartedAt
 	}
 	return nil
+}
+
+func orderPlanID(order *model.Order) (uint, error) {
+	if order == nil || order.PlanID == nil || *order.PlanID == 0 {
+		return 0, gorm.ErrRecordNotFound
+	}
+	return *order.PlanID, nil
 }
 
 func subscriptionExpiresAtForOrder(user model.User, plan model.Plan, orderType string, now time.Time) *time.Time {

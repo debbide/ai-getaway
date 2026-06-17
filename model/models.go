@@ -137,7 +137,7 @@ type Order struct {
 	OrderNo               string `gorm:"size:40;index"`
 	UserID                uint   `gorm:"index;not null"`
 	User                  User
-	PlanID                uint `gorm:"index;default:0"`
+	PlanID                *uint `gorm:"index"`
 	Plan                  Plan
 	OrderType             string `gorm:"size:32;default:purchase;index"`
 	AmountCents           int64

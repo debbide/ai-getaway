@@ -72,6 +72,7 @@ func AutoMigrate(db *gorm.DB) {
 	if err := db.AutoMigrate(migrateModels...); err != nil {
 		log.Fatalf("auto migrate failed: %v", err)
 	}
+	ensureOrderPlanIDNullable(db)
 	dropLegacyQuotaColumns(db)
 	ensureBalanceColumns(db)
 	ensureAccessSourceColumns(db)
@@ -98,6 +99,19 @@ func ensureBalanceColumns(db *gorm.DB) {
 		if err := db.Exec("ALTER TABLE `users` ADD COLUMN `balance_usd_cents` BIGINT DEFAULT 0").Error; err != nil {
 			log.Printf("add balance_usd_cents column failed: %v", err)
 		}
+	}
+}
+
+func ensureOrderPlanIDNullable(db *gorm.DB) {
+	if db == nil || !db.Migrator().HasTable(&model.Order{}) || !db.Migrator().HasColumn(&model.Order{}, "plan_id") {
+		return
+	}
+	if err := db.Exec("ALTER TABLE `orders` MODIFY COLUMN `plan_id` BIGINT UNSIGNED NULL").Error; err != nil {
+		log.Printf("make orders.plan_id nullable failed: %v", err)
+		return
+	}
+	if err := db.Exec("UPDATE `orders` SET `plan_id` = NULL WHERE `order_type` = ? AND `plan_id` = 0", model.OrderTypeBalance).Error; err != nil {
+		log.Printf("backfill balance recharge order plan_id failed: %v", err)
 	}
 }
 

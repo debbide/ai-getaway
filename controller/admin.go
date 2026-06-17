@@ -174,26 +174,26 @@ type updateOrderRequest struct {
 }
 
 type upstreamChannelRequest struct {
-	Name           string `json:"name" binding:"required,min=2,max=64"`
-	BaseURL        string `json:"base_url" binding:"required,url"`
-	SupportsGPT    bool   `json:"supports_gpt"`
-	SupportsClaude bool   `json:"supports_claude"`
-	BillingGroupID *uint  `json:"billing_group_id"`
+	Name             string             `json:"name" binding:"required,min=2,max=64"`
+	BaseURL          string             `json:"base_url" binding:"required,url"`
+	SupportsGPT      bool               `json:"supports_gpt"`
+	SupportsClaude   bool               `json:"supports_claude"`
+	BillingGroupID   *uint              `json:"billing_group_id"`
 	GroupMultipliers map[string]float64 `json:"group_multipliers"`
-	Enabled        bool   `json:"enabled"`
+	Enabled          bool               `json:"enabled"`
 }
 
 type publicChannelRequest struct {
-	Name              string `json:"name" binding:"required,min=2,max=64"`
-	BaseURL           string `json:"base_url" binding:"required,url"`
-	APIKey            string `json:"api_key"`
-	SupportsGPT       bool   `json:"supports_gpt"`
-	SupportsClaude    bool   `json:"supports_claude"`
-	BillingGroupID    *uint  `json:"billing_group_id"`
+	Name              string             `json:"name" binding:"required,min=2,max=64"`
+	BaseURL           string             `json:"base_url" binding:"required,url"`
+	APIKey            string             `json:"api_key"`
+	SupportsGPT       bool               `json:"supports_gpt"`
+	SupportsClaude    bool               `json:"supports_claude"`
+	BillingGroupID    *uint              `json:"billing_group_id"`
 	GroupMultipliers  map[string]float64 `json:"group_multipliers"`
-	TotalUSDCents     int64  `json:"total_usd_cents" binding:"min=0"`
-	RemainingUSDCents int64  `json:"remaining_usd_cents" binding:"min=0"`
-	Enabled           bool   `json:"enabled"`
+	TotalUSDCents     int64              `json:"total_usd_cents" binding:"min=0"`
+	RemainingUSDCents int64              `json:"remaining_usd_cents" binding:"min=0"`
+	Enabled           bool               `json:"enabled"`
 }
 
 type pollingPoolRequest struct {
@@ -1444,7 +1444,11 @@ func approvePublicPaidOrder(db *gorm.DB, order *model.Order, approvedByID *uint)
 	now := time.Now()
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var plan model.Plan
-		if err := tx.Preload("PublicChannel").Preload("PollingPool.Accounts").First(&plan, order.PlanID).Error; err != nil {
+		planID, err := orderPlanID(order)
+		if err != nil {
+			return err
+		}
+		if err := tx.Preload("PublicChannel").Preload("PollingPool.Accounts").First(&plan, planID).Error; err != nil {
 			return err
 		}
 		updates := map[string]interface{}{
@@ -1502,8 +1506,8 @@ func (a *AdminController) RejectOrder(c *gin.Context) {
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		if order.PaymentMethod == "free" {
-			return refreshFreePlanClaimedCount(tx, order.PlanID)
+		if order.PaymentMethod == "free" && order.PlanID != nil {
+			return refreshFreePlanClaimedCount(tx, *order.PlanID)
 		}
 		return nil
 	})
@@ -1549,8 +1553,8 @@ func (a *AdminController) CloseOrder(c *gin.Context) {
 		if err := tx.Model(&model.Order{}).Where("id = ?", order.ID).Updates(updates).Error; err != nil {
 			return err
 		}
-		if order.PaymentMethod == "free" {
-			return refreshFreePlanClaimedCount(tx, order.PlanID)
+		if order.PaymentMethod == "free" && order.PlanID != nil {
+			return refreshFreePlanClaimedCount(tx, *order.PlanID)
 		}
 		return nil
 	})
@@ -1575,8 +1579,8 @@ func (a *AdminController) DeleteOrder(c *gin.Context) {
 		if err := tx.Delete(&model.Order{}, order.ID).Error; err != nil {
 			return err
 		}
-		if order.PaymentMethod == "free" {
-			return refreshFreePlanClaimedCount(tx, order.PlanID)
+		if order.PaymentMethod == "free" && order.PlanID != nil {
+			return refreshFreePlanClaimedCount(tx, *order.PlanID)
 		}
 		return nil
 	})
@@ -1989,7 +1993,7 @@ func applyRedeemCodeSubscription(tx *gorm.DB, userID uint, plan model.Plan, now 
 	order := model.Order{
 		OrderNo:            model.GenerateOrderNo(userID, now),
 		UserID:             userID,
-		PlanID:             plan.ID,
+		PlanID:             &plan.ID,
 		OrderType:          orderTypeForPlan(tx, user, plan, now, service.UsedUSDCentsSince),
 		AmountCents:        0,
 		SettlementUSDCents: plan.SettlementUSDCents,

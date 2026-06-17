@@ -245,9 +245,9 @@ func (a *AuthController) claimedFreePlanIDs(userID uint) []uint {
 	seen := map[uint]bool{}
 	ids := make([]uint, 0, len(orders))
 	for _, order := range orders {
-		if !seen[order.PlanID] {
-			seen[order.PlanID] = true
-			ids = append(ids, order.PlanID)
+		if order.PlanID != nil && !seen[*order.PlanID] {
+			seen[*order.PlanID] = true
+			ids = append(ids, *order.PlanID)
 		}
 	}
 	return ids
