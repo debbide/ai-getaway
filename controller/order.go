@@ -178,7 +178,8 @@ func (o *OrderController) Create(c *gin.Context) {
 		response.Error(c, 400, "lottery plan cannot be purchased")
 		return
 	}
-	if activeSubscriptionBlocksPlanOrder(o.db, user, plan) {
+	isBalancePlan := plan.PlanType == model.PlanTypeBalance
+	if !isBalancePlan && activeSubscriptionBlocksPlanOrder(o.db, user, plan) {
 		response.Error(c, 409, "active subscription in effect")
 		return
 	}
@@ -188,6 +189,9 @@ func (o *OrderController) Create(c *gin.Context) {
 	}
 	now := time.Now()
 	orderType := orderTypeForPlan(o.db, user, plan, now, service.UsedUSDCentsSince)
+	if isBalancePlan {
+		orderType = model.OrderTypeBalance
+	}
 	amountCents := orderAmountCentsForPlan(user, plan, orderType)
 	paymentMethod := normalizePaymentMethod(req.PaymentMethod)
 	if plan.PriceCents > 0 {
@@ -274,6 +278,9 @@ func (o *OrderController) Create(c *gin.Context) {
 func orderTypeForPlan(db *gorm.DB, user model.User, targetPlan model.Plan, now time.Time, usedSince func(*gorm.DB, uint, time.Time) int64) string {
 	if !service.HasActiveSubscription(user, now) || user.Plan == nil || targetPlan.PriceCents == 0 {
 		return model.OrderTypePurchase
+	}
+	if targetPlan.PlanType == model.PlanTypeBalance {
+		return model.OrderTypeBalance
 	}
 	if user.Plan.PriceCents == 0 {
 		return model.OrderTypePurchase
@@ -483,6 +490,9 @@ func activeSubscriptionBlocksPlanOrder(db *gorm.DB, user model.User, targetPlan 
 
 func activeSubscriptionBlocksPlanOrderAt(db *gorm.DB, user model.User, targetPlan model.Plan, now time.Time, usedSince func(*gorm.DB, uint, time.Time) int64) bool {
 	if !service.HasActiveSubscription(user, now) {
+		return false
+	}
+	if targetPlan.PlanType == model.PlanTypeBalance {
 		return false
 	}
 	if targetPlan.PriceCents == 0 && !targetPlan.IsLottery {
@@ -1027,6 +1037,9 @@ func orderPaymentName(order model.Order) string {
 }
 
 func balanceRechargeOrderName(order model.Order) string {
+	if order.Plan.Name != "" {
+		return order.Plan.Name
+	}
 	return fmt.Sprintf("余额充值 $%.2f", float64(order.SettlementUSDCents)/100)
 }
 

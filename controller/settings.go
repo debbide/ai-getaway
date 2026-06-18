@@ -52,6 +52,7 @@ type updateSettingsRequest struct {
 	ManualPaymentEnabled           bool    `json:"manual_payment_enabled"`
 	ManualPaymentQRCode            string  `json:"manual_payment_qr_code"`
 	BalanceRechargeRateRMBPerUSD   float64 `json:"balance_recharge_rate_rmb_per_usd"`
+	BalanceRechargePackageOnly     bool    `json:"balance_recharge_package_only"`
 	MockAPIOnlineEnabled           bool    `json:"mock_api_online_enabled"`
 	MockAPIOnlineBase              int     `json:"mock_api_online_base"`
 	GitHubOAuthEnabled             bool    `json:"github_oauth_enabled"`
@@ -93,6 +94,7 @@ func (s *SettingsController) Public(c *gin.Context) {
 		"online_payment_enabled":            setting.OnlinePaymentEnabled,
 		"manual_payment_enabled":            setting.ManualPaymentEnabled,
 		"balance_recharge_rate_rmb_per_usd": normalizeBalanceRechargeRate(setting.BalanceRechargeRateRMBPerUSD),
+		"balance_recharge_package_only":     setting.BalanceRechargePackageOnly,
 		"mock_api_online_enabled":           setting.MockAPIOnlineEnabled,
 		"mock_api_online_base":              normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase),
 		"oauth_providers":                   publicOAuthProviders(setting),
@@ -153,6 +155,7 @@ func (s *SettingsController) Get(c *gin.Context) {
 		"epay_key_configured":                   setting.EpayKey != "",
 		"manual_payment_qr_code":                setting.ManualPaymentQRCode,
 		"balance_recharge_rate_rmb_per_usd":     normalizeBalanceRechargeRate(setting.BalanceRechargeRateRMBPerUSD),
+		"balance_recharge_package_only":         setting.BalanceRechargePackageOnly,
 		"mock_api_online_enabled":               setting.MockAPIOnlineEnabled,
 		"mock_api_online_base":                  normalizeMockAPIOnlineBase(setting.MockAPIOnlineBase),
 		"github_oauth_enabled":                  setting.GitHubOAuthEnabled,
@@ -205,6 +208,7 @@ func (s *SettingsController) Update(c *gin.Context) {
 		"manual_payment_enabled":            req.ManualPaymentEnabled,
 		"manual_payment_qr_code":            req.ManualPaymentQRCode,
 		"balance_recharge_rate_rmb_per_usd": normalizeBalanceRechargeRate(req.BalanceRechargeRateRMBPerUSD),
+		"balance_recharge_package_only":     req.BalanceRechargePackageOnly,
 		"mock_api_online_enabled":           req.MockAPIOnlineEnabled,
 		"mock_api_online_base":              normalizeMockAPIOnlineBase(req.MockAPIOnlineBase),
 		"github_oauth_enabled":              req.GitHubOAuthEnabled,
@@ -291,6 +295,7 @@ func ensureSystemSettingColumns(db *gorm.DB) error {
 		"manual_payment_enabled":            "BOOLEAN DEFAULT TRUE",
 		"manual_payment_qr_code":            "LONGTEXT",
 		"balance_recharge_rate_rmb_per_usd": "DOUBLE DEFAULT 0.7",
+		"balance_recharge_package_only":     "BOOLEAN DEFAULT FALSE",
 		"mock_api_online_enabled":           "BOOLEAN DEFAULT FALSE",
 		"mock_api_online_base":              "INT DEFAULT 0",
 		"github_oauth_enabled":              "BOOLEAN DEFAULT FALSE",
@@ -426,10 +431,11 @@ func normalizePricingVisibleTabsJSON(value string) string {
 		"daily":   true,
 		"weekly":  true,
 		"public":  true,
+		"balance": true,
 		"free":    true,
 		"lottery": true,
 	}
-	defaultTabs := []string{"daily", "weekly", "public", "free", "lottery"}
+	defaultTabs := []string{"daily", "weekly", "public", "balance", "free", "lottery"}
 	var raw []string
 	if err := json.Unmarshal([]byte(value), &raw); err != nil {
 		raw = defaultTabs
@@ -449,7 +455,7 @@ func normalizePricingVisibleTabsJSON(value string) string {
 	}
 	encoded, err := json.Marshal(tabs)
 	if err != nil {
-		return `["daily","weekly","public","free","lottery"]`
+		return `["daily","weekly","public","balance","free","lottery"]`
 	}
 	return string(encoded)
 }

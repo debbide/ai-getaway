@@ -31,9 +31,9 @@ type approveOrderRequest struct {
 	ChannelID uint   `json:"channel_id"`
 	Channel   string `json:"channel"`
 	BaseURL   string `json:"base_url"`
-	Username  string `json:"username" binding:"required"`
-	Password  string `json:"password" binding:"required"`
-	APIKey    string `json:"api_key" binding:"required"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	APIKey    string `json:"api_key"`
 	AdminNote string `json:"admin_note"`
 }
 
@@ -987,15 +987,15 @@ func (a *AdminController) Orders(c *gin.Context) {
 	if len(userIDs) > 0 {
 		a.db.Where("user_id IN ?", userIDs).Find(&upstreams)
 	}
-	upstreamByUserID := map[uint]model.UpstreamAccount{}
+	upstreamByUserAndAccess := map[string]model.UpstreamAccount{}
 	for _, upstream := range upstreams {
-		upstreamByUserID[upstream.UserID] = upstream
+		upstreamByUserAndAccess[fmt.Sprintf("%d:%s", upstream.UserID, upstream.AccessType)] = upstream
 	}
 
 	items := make([]orderResponse, 0, len(orders))
 	for _, order := range orders {
 		item := orderResponse{Order: order}
-		if upstream, ok := upstreamByUserID[order.UserID]; ok {
+		if upstream, ok := upstreamByUserAndAccess[fmt.Sprintf("%d:%s", order.UserID, orderAccessType(order))]; ok {
 			item.Upstream = &upstream
 		}
 		items = append(items, item)
@@ -1022,11 +1022,13 @@ func (a *AdminController) Plans(c *gin.Context) {
 	}
 	switch strings.TrimSpace(c.Query("category")) {
 	case "daily":
-		query = query.Where("is_lottery = ? AND price_cents > ? AND quota_period = ? AND plan_type <> ?", false, 0, model.QuotaPeriodDaily, model.PlanTypePublic)
+		query = query.Where("is_lottery = ? AND price_cents > ? AND quota_period = ? AND plan_type NOT IN ?", false, 0, model.QuotaPeriodDaily, []string{model.PlanTypePublic, model.PlanTypeBalance})
 	case "weekly":
-		query = query.Where("is_lottery = ? AND price_cents > ? AND quota_period <> ? AND quota_period <> ? AND plan_type <> ?", false, 0, model.QuotaPeriodDaily, model.QuotaPeriodPublic, model.PlanTypePublic)
+		query = query.Where("is_lottery = ? AND price_cents > ? AND quota_period <> ? AND quota_period <> ? AND plan_type NOT IN ?", false, 0, model.QuotaPeriodDaily, model.QuotaPeriodPublic, []string{model.PlanTypePublic, model.PlanTypeBalance})
 	case "public":
 		query = query.Where("is_lottery = ? AND price_cents > ? AND (quota_period = ? OR plan_type = ?)", false, 0, model.QuotaPeriodPublic, model.PlanTypePublic)
+	case "balance":
+		query = query.Where("is_lottery = ? AND price_cents > ? AND plan_type = ?", false, 0, model.PlanTypeBalance)
 	case "lottery":
 		query = query.Where("is_lottery = ?", true)
 	case "free":
@@ -1314,6 +1316,14 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 	}
 	if order.Status != model.OrderStatusPendingReview && order.Status != model.OrderStatusManualReview && order.Status != model.OrderStatusPaidLate {
 		response.Error(c, 409, "order already reviewed")
+		return
+	}
+	if strings.TrimSpace(req.APIKey) == "" {
+		response.Error(c, 400, "upstream api key is required")
+		return
+	}
+	if order.OrderType != model.OrderTypeBalance && (strings.TrimSpace(req.Username) == "" || strings.TrimSpace(req.Password) == "") {
+		response.Error(c, 400, "upstream account is required")
 		return
 	}
 
@@ -1827,8 +1837,11 @@ func directPublicChannelExpiresAt(period string, now time.Time) *time.Time {
 }
 
 func fallbackPlanType(value string) string {
-	if value == model.PlanTypePublic {
+	switch value {
+	case model.PlanTypePublic:
 		return model.PlanTypePublic
+	case model.PlanTypeBalance:
+		return model.PlanTypeBalance
 	}
 	return model.PlanTypeSubscription
 }
@@ -1839,17 +1852,22 @@ func fallbackQuotaPeriod(value string) string {
 		return model.QuotaPeriodDaily
 	case model.QuotaPeriodPublic:
 		return model.QuotaPeriodPublic
+	case model.QuotaPeriodBalance:
+		return model.QuotaPeriodBalance
 	default:
 		return model.QuotaPeriodWeekly
 	}
 }
 
 func fallbackDurationDays(req planRequest) int {
-	if fallbackPlanType(req.PlanType) == model.PlanTypePublic {
+	switch fallbackPlanType(req.PlanType) {
+	case model.PlanTypePublic:
 		if req.DurationDays < 1 {
 			return 0
 		}
 		return req.DurationDays
+	case model.PlanTypeBalance:
+		return 0
 	}
 	if req.DurationDays < 1 {
 		return 1
@@ -1953,8 +1971,23 @@ func (a *AdminController) validatePlanRequest(req planRequest) error {
 		}
 		return nil
 	}
+	if planType == model.PlanTypeBalance {
+		if req.IsLottery {
+			return errors.New("balance plan does not support lottery")
+		}
+		if req.PriceCents <= 0 {
+			return errors.New("balance plan price required")
+		}
+		if fallbackQuotaPeriod(req.QuotaPeriod) != model.QuotaPeriodBalance {
+			return errors.New("balance plan quota period required")
+		}
+		return nil
+	}
 	if fallbackQuotaPeriod(req.QuotaPeriod) == model.QuotaPeriodPublic {
 		return errors.New("public quota period only supports public plan")
+	}
+	if fallbackQuotaPeriod(req.QuotaPeriod) == model.QuotaPeriodBalance {
+		return errors.New("balance quota period only supports balance plan")
 	}
 	if req.DurationDays < 1 {
 		return errors.New("duration days required")

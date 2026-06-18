@@ -48,10 +48,12 @@ const (
 
 	PlanTypeSubscription = "subscription"
 	PlanTypePublic       = "public"
+	PlanTypeBalance      = "balance"
 
-	QuotaPeriodDaily  = "daily"
-	QuotaPeriodWeekly = "weekly"
-	QuotaPeriodPublic = "public"
+	QuotaPeriodDaily   = "daily"
+	QuotaPeriodWeekly  = "weekly"
+	QuotaPeriodPublic  = "public"
+	QuotaPeriodBalance = "balance"
 
 	ProtocolGPT    = "gpt"
 	ProtocolClaude = "claude"
@@ -413,6 +415,7 @@ type SystemSetting struct {
 	ManualPaymentEnabled           bool    `gorm:"default:true"`
 	ManualPaymentQRCode            string  `gorm:"type:longtext"`
 	BalanceRechargeRateRMBPerUSD   float64 `gorm:"default:0.7"`
+	BalanceRechargePackageOnly     bool    `gorm:"default:false"`
 	MockAPIOnlineEnabled           bool    `gorm:"default:false"`
 	MockAPIOnlineBase              int     `gorm:"default:0"`
 	GitHubOAuthEnabled             bool    `gorm:"column:github_oauth_enabled;default:false"`

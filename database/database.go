@@ -125,6 +125,16 @@ func ensureAccessSourceColumns(db *gorm.DB) {
 				log.Printf("add upstream access_type column failed: %v", err)
 			}
 		}
+		if !db.Migrator().HasColumn(&model.UpstreamAccount{}, "billing_group_id") {
+			if err := db.Exec("ALTER TABLE `upstream_accounts` ADD COLUMN `billing_group_id` BIGINT UNSIGNED DEFAULT NULL").Error; err != nil {
+				log.Printf("add upstream billing_group_id column failed: %v", err)
+			}
+		}
+		if !db.Migrator().HasColumn(&model.UpstreamAccount{}, "group_multipliers") {
+			if err := db.Exec("ALTER TABLE `upstream_accounts` ADD COLUMN `group_multipliers` TEXT").Error; err != nil {
+				log.Printf("add upstream group_multipliers column failed: %v", err)
+			}
+		}
 		if err := db.Exec("UPDATE `upstream_accounts` SET `access_type` = 'plan' WHERE `access_type` IS NULL OR `access_type` = ''").Error; err != nil {
 			log.Printf("backfill upstream access_type failed: %v", err)
 		}

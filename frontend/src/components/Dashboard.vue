@@ -62,6 +62,7 @@ const hasActiveSubscription = computed(() => {
 const currentBalanceUSDCents = computed(() => Number(auth.user?.balance_usd_cents || 0))
 const balanceRechargeUSDCents = computed(() => Math.max(0, Math.round(Number(balanceForm.amountUsd || 0) * 100)))
 const balanceRechargeRMBCents = computed(() => Math.max(0, Math.round(balanceRechargeUSDCents.value * Number(balanceForm.rateRmbPerUsd || 0.7))))
+const balanceRechargePackageOnly = ref(false)
 
 const planPeriodStartIso = computed(() => {
   const u = auth.user
@@ -141,6 +142,7 @@ async function loadAll() {
     keys.value = keyRes.data || []
     announcements.value = announcementRes.data || []
     balanceForm.rateRmbPerUsd = Number(settingsRes.data?.balance_recharge_rate_rmb_per_usd || 0.7)
+    balanceRechargePackageOnly.value = settingsRes.data?.balance_recharge_package_only === true
     if (orderPage.value > totalOrderPages.value) orderPage.value = totalOrderPages.value
     await auth.loadMe()
     if (auth.meError) showNotice(auth.meError, 'warning')
@@ -491,7 +493,7 @@ function isManualPaymentOrder(order) {
 }
 
 function orderTitle(order) {
-  if (order?.OrderType === 'balance_recharge') return `余额充值 ${usd(order.SettlementUSDCents || 0)}`
+  if (order?.OrderType === 'balance_recharge') return order?.Plan?.Name || `余额充值 ${usd(order.SettlementUSDCents || 0)}`
   return order?.Plan?.Name || '套餐订单'
 }
 
@@ -512,6 +514,11 @@ function openDocs() {
 }
 
 function renewPlan() {
+  emit('navigate', '/plans')
+}
+
+function openBalancePackages() {
+  sessionStorage.setItem('preferredPricingTab', 'balance')
   emit('navigate', '/plans')
 }
 
@@ -965,7 +972,11 @@ function statusLabel(value) {
                 <span>当前余额</span>
                 <strong>{{ usd(currentBalanceUSDCents) }}</strong>
               </div>
-              <el-form class="balance-recharge-form" label-position="top" @submit.prevent="createBalanceRecharge">
+              <div v-if="balanceRechargePackageOnly" class="balance-package-only">
+                <p class="text-muted">当前仅开放余额套餐充值，购买后等待审核通过即可到账。</p>
+                <button type="button" class="primary-button" @click="openBalancePackages">购买余额套餐</button>
+              </div>
+              <el-form v-else class="balance-recharge-form" label-position="top" @submit.prevent="createBalanceRecharge">
                 <el-form-item label="充值金额（USD）">
                   <el-input-number v-model="balanceForm.amountUsd" class="w-full" :min="1" :step="1" :precision="2" />
                 </el-form-item>

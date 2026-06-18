@@ -69,6 +69,7 @@ const pricingTabOptions = [
   { value: 'daily', label: '日套餐' },
   { value: 'weekly', label: '周套餐' },
   { value: 'public', label: '活动套餐' },
+  { value: 'balance', label: '余额套餐' },
   { value: 'free', label: '免费套餐' },
   { value: 'lottery', label: '抽奖套餐' }
 ]
@@ -254,6 +255,7 @@ const settings = reactive({
   online_payment_enabled: true,
   manual_payment_enabled: true,
   balance_recharge_rate_rmb_per_usd: 0.7,
+  balance_recharge_package_only: false,
   mock_api_online_enabled: false,
   mock_api_online_base: 0,
   github_oauth_enabled: false,
@@ -421,6 +423,19 @@ watch(error, (message) => {
 
 watch(notice, (message) => {
   if (message) ElMessage.success(message)
+})
+
+watch(() => planForm.quota_period, (period) => {
+  if (period === 'balance') {
+    planForm.plan_type = 'balance'
+    planForm.duration_days = 0
+    planForm.is_lottery = false
+    planForm.is_free = false
+    return
+  }
+  if (planForm.plan_type === 'balance') {
+    planForm.plan_type = period === 'public' ? 'public' : 'subscription'
+  }
 })
 
 function emptyPlan() {
@@ -1136,6 +1151,17 @@ function clusterLogText(entry) {
 
 function openPlanModal(plan = null) {
   Object.assign(planForm, emptyPlan())
+  if (!plan && planSearch.category === 'balance') {
+    Object.assign(planForm, {
+      plan_type: 'balance',
+      quota_period: 'balance',
+      duration_days: 0,
+      period_usd_quota: 10,
+      settlement_usd_cents: 1000,
+      price_rmb: 2,
+      price_cents: 200
+    })
+  }
   if (plan) {
     Object.assign(planForm, {
       id: plan.ID,
@@ -2338,19 +2364,20 @@ function toggleModalFullscreen() {
 }
 
 function normalizePlan(plan) {
-  const isPublic = plan.quota_period === 'public'
+  const isBalance = plan.plan_type === 'balance' || plan.quota_period === 'balance'
+  const isPublic = !isBalance && plan.quota_period === 'public'
   const usePool = isPublic && plan.delivery_source === 'pool'
   return {
     name: plan.name.trim(),
     code: plan.code.trim(),
     badge_text: plan.badge_text.trim(),
-    plan_type: isPublic ? 'public' : 'subscription',
-    quota_period: isPublic ? 'public' : plan.quota_period,
+    plan_type: isBalance ? 'balance' : (isPublic ? 'public' : 'subscription'),
+    quota_period: isBalance ? 'balance' : (isPublic ? 'public' : plan.quota_period),
     public_channel_id: isPublic && !usePool ? Number(plan.public_channel_id || 0) : null,
     polling_pool_id: usePool ? Number(plan.polling_pool_id || 0) : null,
     price_cents: plan.is_lottery || plan.is_free ? 0 : amountToCents(plan.price_rmb),
     settlement_usd_cents: amountToCents(plan.period_usd_quota),
-    duration_days: isPublic ? (plan.public_expires_enabled ? Number(plan.duration_days || 1) : 0) : Number(plan.duration_days || 1),
+    duration_days: isBalance ? 0 : (isPublic ? (plan.public_expires_enabled ? Number(plan.duration_days || 1) : 0) : Number(plan.duration_days || 1)),
     description: plan.description.trim(),
     model_names: normalizePlanModelNames(plan.model_names),
     is_lottery: Boolean(plan.is_lottery),
@@ -3072,11 +3099,16 @@ function latency(value) {
 
 function quotaPeriodLabel(period) {
   if (period === 'public') return '公共'
+  if (period === 'balance') return '余额'
   return period === 'daily' ? '每日' : '每周'
 }
 
 function isPublicPlan(plan) {
   return plan?.PlanType === 'public' || plan?.QuotaPeriod === 'public'
+}
+
+function isBalancePlan(plan) {
+  return plan?.PlanType === 'balance' || plan?.QuotaPeriod === 'balance'
 }
 
 function isPublicOrder(order) {
@@ -3088,7 +3120,7 @@ function isBalanceOrder(order) {
 }
 
 function orderDisplayName(order) {
-  if (isBalanceOrder(order)) return `余额充值 ${usd(order.SettlementUSDCents || 0)}`
+  if (isBalanceOrder(order)) return order?.Plan?.Name || `余额充值 ${usd(order.SettlementUSDCents || 0)}`
   return order?.Plan?.Name || '-'
 }
 
@@ -3105,6 +3137,7 @@ function planWeeks(plan) {
 }
 
 function totalUsd(plan) {
+  if (isBalancePlan(plan)) return usd(plan.SettlementUSDCents)
   if (plan.QuotaPeriod === 'public') return usd(plan.SettlementUSDCents)
   const units = plan.QuotaPeriod === 'daily' ? (plan.DurationDays || 1) : planWeeks(plan)
   return `$${(((plan.SettlementUSDCents || 0) / 100) * units).toFixed(0)}`
@@ -3617,6 +3650,7 @@ function submitModal() {
                 { label: '日套餐', value: 'daily' },
                 { label: '周套餐', value: 'weekly' },
                 { label: '活动套餐', value: 'public' },
+                { label: '余额套餐', value: 'balance' },
                 { label: '免费套餐', value: 'free' },
                 { label: '抽奖套餐', value: 'lottery' }
               ]"
@@ -3659,9 +3693,9 @@ function submitModal() {
                 <el-table-column label="额度" min-width="210">
                   <template #default="{ row: plan }">
                     <div class="plan-quota-cell">
-                      <span>{{ quotaPeriodLabel(plan.QuotaPeriod) }}美元额度</span>
+                      <span>{{ isBalancePlan(plan) ? '到账余额' : `${quotaPeriodLabel(plan.QuotaPeriod)}美元额度` }}</span>
                       <strong>{{ usd(plan.SettlementUSDCents) }}</strong>
-                      <small>预计总额 {{ totalUsd(plan) }}</small>
+                      <small>{{ isBalancePlan(plan) ? '需审核绑定余额上游' : `预计总额 ${totalUsd(plan)}` }}</small>
                       <small v-if="plan.PriceCents === 0">已领取 {{ plan.FreeClaimedCount || 0 }} / {{ plan.FreeTotalLimit || '不限' }}</small>
                     </div>
                   </template>
@@ -3671,6 +3705,7 @@ function submitModal() {
                     <div class="plan-delivery-cell">
                       <span v-if="plan.IsLottery">{{ plan.LotteryURL || '未设置跳转地址' }}</span>
                       <small v-if="plan.IsLottery && plan.LotteryDrawn">{{ plan.LotteryWinnerMask ? `中奖人 ${plan.LotteryWinnerMask}` : '流拍抽奖' }}</small>
+                      <span v-else-if="isBalancePlan(plan)">余额套餐 · 审核开通</span>
                       <span v-else-if="plan.QuotaPeriod === 'public'">{{ publicChannelName(plan) }} · {{ publicPlanDurationText(plan) }}</span>
                       <span v-else>{{ plan.DurationDays }} 天</span>
                       <el-tag :type="plan.Enabled ? 'success' : 'info'">{{ plan.Enabled ? '已启用' : '已停用' }}</el-tag>
@@ -4845,6 +4880,9 @@ function submitModal() {
               <el-form-item class="md:col-span-2" label="余额充值汇率（RMB / 1 USD）">
                 <el-input-number v-model="settings.balance_recharge_rate_rmb_per_usd" class="w-full" :min="0.01" :step="0.01" />
               </el-form-item>
+              <el-form-item class="md:col-span-2" label="控制台余额充值仅使用余额套餐">
+                <el-switch v-model="settings.balance_recharge_package_only" active-text="跳转余额套餐" inactive-text="自定义充值" />
+              </el-form-item>
               <el-form-item class="md:col-span-2" label="接口网址">
                 <el-input v-model="settings.epay_submit_url" placeholder="https://mapi.example.com/" />
               </el-form-item>
@@ -4933,6 +4971,7 @@ function submitModal() {
               <el-option label="日限额套餐" value="daily" />
               <el-option label="周限额套餐" value="weekly" />
               <el-option label="公共渠道" value="public" />
+              <el-option label="余额套餐" value="balance" />
             </el-select>
           </el-form-item>
           <el-form-item v-if="planForm.quota_period === 'public'" label="供给来源" required>
@@ -4957,11 +4996,11 @@ function submitModal() {
           <el-form-item v-if="!planForm.is_lottery && !planForm.is_free" label="售价（RMB）"><el-input v-model.number="planForm.price_rmb" type="number" min="0.01" step="0.01" required /></el-form-item>
           <el-form-item v-if="planForm.is_free" label="每人领取上限"><el-input v-model.number="planForm.free_per_user_limit" type="number" min="1" step="1" required /></el-form-item>
           <el-form-item v-if="planForm.is_free" label="总领取上限"><el-input v-model.number="planForm.free_total_limit" type="number" min="0" step="1" placeholder="0 表示不限" /></el-form-item>
-          <el-form-item :label="planForm.quota_period === 'public' ? '预计总美元额度' : (planForm.quota_period === 'daily' ? '每日美元额度' : '每周美元额度')"><el-input v-model.number="planForm.period_usd_quota" type="number" min="0" step="0.01" /></el-form-item>
+          <el-form-item :label="planForm.quota_period === 'balance' ? '到账余额（USD）' : (planForm.quota_period === 'public' ? '预计总美元额度' : (planForm.quota_period === 'daily' ? '每日美元额度' : '每周美元额度'))"><el-input v-model.number="planForm.period_usd_quota" type="number" min="0" step="0.01" /></el-form-item>
           <el-form-item v-if="planForm.quota_period === 'public'" label="设定有效期"><el-switch v-model="planForm.public_expires_enabled" active-text="启用" inactive-text="用完即止" /></el-form-item>
           <el-form-item v-if="planForm.quota_period === 'public' && planForm.public_expires_enabled" label="有效期（天）"><el-input v-model.number="planForm.duration_days" type="number" min="1" required /></el-form-item>
-          <el-form-item v-if="planForm.quota_period !== 'public'" label="有效期（天）"><el-input v-model.number="planForm.duration_days" type="number" min="1" required /></el-form-item>
-          <el-form-item v-if="planForm.quota_period !== 'public'" label="预计总美元额度"><el-input :model-value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></el-form-item>
+          <el-form-item v-if="planForm.quota_period !== 'public' && planForm.quota_period !== 'balance'" label="有效期（天）"><el-input v-model.number="planForm.duration_days" type="number" min="1" required /></el-form-item>
+          <el-form-item v-if="planForm.quota_period !== 'public' && planForm.quota_period !== 'balance'" label="预计总美元额度"><el-input :model-value="totalUsd({ SettlementUSDCents: amountToCents(planForm.period_usd_quota), DurationDays: planForm.duration_days, QuotaPeriod: planForm.quota_period })" readonly /></el-form-item>
           <el-form-item class="md:col-span-2" label="绑定模型">
             <el-select v-model="planForm.model_names" multiple filterable collapse-tags collapse-tags-tooltip placeholder="请选择套餐支持的模型">
               <el-option v-for="item in planModelOptions" :key="modelOptionName(item)" :label="modelOptionLabel(item)" :value="modelOptionName(item)" />
@@ -5371,7 +5410,7 @@ function submitModal() {
           </div>
           <div v-if="approve.planType === 'balance'" class="order-flow-note md:col-span-2">
             <strong>余额充值审核</strong>
-            <span>审核通过后会增加用户余额，并按下方上游渠道绑定逻辑开通调用能力。</span>
+            <span>审核通过后会增加用户余额，并绑定余额上游渠道；余额套餐只需要填写上游 API Key。</span>
           </div>
           <el-form-item v-if="!approveOrderUsesPublicChannel()" label="上游渠道">
             <el-select v-model="approve.channelId" required @change="syncApproveChannel">
@@ -5379,8 +5418,8 @@ function submitModal() {
               <el-option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID" :label="channel.Name" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="!approveOrderUsesPublicChannel()" label="上游账号"><el-input v-model="approve.username" required /></el-form-item>
-          <el-form-item v-if="!approveOrderUsesPublicChannel()" label="上游密码"><el-input v-model="approve.password" type="text" required /></el-form-item>
+          <el-form-item v-if="!approveOrderUsesPublicChannel() && approve.planType !== 'balance'" label="上游账号"><el-input v-model="approve.username" required /></el-form-item>
+          <el-form-item v-if="!approveOrderUsesPublicChannel() && approve.planType !== 'balance'" label="上游密码"><el-input v-model="approve.password" type="text" required /></el-form-item>
           <el-form-item v-if="!approveOrderUsesPublicChannel()" class="md:col-span-2" label="上游 API Key"><el-input v-model="approve.apiKey" type="text" required /></el-form-item>
           <el-form-item class="md:col-span-2" label="审核备注"><el-input v-model="approve.adminNote" type="textarea" :rows="3" /></el-form-item>
         </div>

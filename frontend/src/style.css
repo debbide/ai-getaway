@@ -10265,6 +10265,15 @@ html[data-theme="dark"] .api-online-widget {
   gap: 12px;
 }
 
+.balance-package-only {
+  display: grid;
+  gap: 12px;
+}
+
+.balance-package-only .primary-button {
+  width: 100%;
+}
+
 .balance-amount-row,
 .balance-pay-preview {
   display: flex;

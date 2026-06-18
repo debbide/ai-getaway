@@ -30,7 +30,7 @@ const defaultSettings = {
   pricing_title: '简单透明的定价',
   pricing_subtitle: '保质保量无降智不掺假',
   pricing_notice: '本站仅支持 GPT 模型使用，具体型号请查看 /models 页面；',
-  pricing_visible_tabs: '["daily","weekly","public","free","lottery"]',
+  pricing_visible_tabs: '["daily","weekly","public","balance","free","lottery"]',
   allow_registration: true,
   email_whitelist: '[]',
   online_payment_enabled: true,
@@ -100,15 +100,17 @@ const navItems = computed(() => parseNavigation(publicSettings.value.navigation_
 const activeThemeLabel = computed(() => ({ light: '浅色', dark: '深色', system: '系统' })[themeMode.value] || '深色')
 const accountEmail = computed(() => auth.user?.email || '')
 const accountName = computed(() => auth.user?.username || accountEmail.value.split('@')[0] || '用户')
-const dailyPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && !isFreePlan(plan) && plan.QuotaPeriod === 'daily' && plan.PlanType !== 'public'))
-const weeklyPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && !isFreePlan(plan) && plan.QuotaPeriod !== 'daily' && plan.QuotaPeriod !== 'public' && plan.PlanType !== 'public'))
+const dailyPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && !isFreePlan(plan) && !isBalancePlan(plan) && plan.QuotaPeriod === 'daily' && plan.PlanType !== 'public'))
+const weeklyPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && !isFreePlan(plan) && !isBalancePlan(plan) && plan.QuotaPeriod !== 'daily' && plan.QuotaPeriod !== 'public' && plan.PlanType !== 'public'))
 const publicPlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && !isFreePlan(plan) && (plan.QuotaPeriod === 'public' || plan.PlanType === 'public')))
+const balancePlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && !isFreePlan(plan) && isBalancePlan(plan)))
 const freePlans = computed(() => plans.value.filter((plan) => !isLotteryPlan(plan) && Number(plan.PriceCents || 0) === 0))
 const lotteryPlans = computed(() => plans.value.filter((plan) => isLotteryPlan(plan)))
 const pricingTabOptions = [
   { value: 'daily', label: '日套餐', plans: dailyPlans },
   { value: 'weekly', label: '周套餐', plans: weeklyPlans },
   { value: 'public', label: '活动套餐', plans: publicPlans },
+  { value: 'balance', label: '余额套餐', plans: balancePlans },
   { value: 'free', label: '免费套餐', plans: freePlans },
   { value: 'lottery', label: '抽奖套餐', plans: lotteryPlans }
 ]
@@ -181,6 +183,15 @@ async function loadPlans() {
   }
 }
 
+function applyPreferredPricingTab() {
+  const preferred = sessionStorage.getItem('preferredPricingTab')
+  if (!preferred) return
+  sessionStorage.removeItem('preferredPricingTab')
+  if (visiblePricingTabs.value.some((tab) => tab.value === preferred)) {
+    pricingTab.value = preferred
+  }
+}
+
 async function loadPublicSettings() {
   try {
     const res = await api.get('/settings/public')
@@ -192,7 +203,7 @@ async function loadPublicSettings() {
 }
 
 function parsePricingVisibleTabs(value) {
-  const defaultTabs = ['daily', 'weekly', 'public', 'free', 'lottery']
+  const defaultTabs = ['daily', 'weekly', 'public', 'balance', 'free', 'lottery']
   try {
     const parsed = Array.isArray(value) ? value : JSON.parse(value || '[]')
     const allowed = new Set(defaultTabs)
@@ -205,6 +216,7 @@ function parsePricingVisibleTabs(value) {
 
 async function refreshAppData() {
   await Promise.allSettled([loadPublicSettings(), loadPlans(), auth.loadMe(), loadOAuthAccounts()])
+  if (isPlansPage.value) applyPreferredPricingTab()
 }
 
 watch(accountMenuOpen, (open) => {
@@ -595,11 +607,13 @@ function periodUsd(plan) {
 
 function quotaPeriodLabel(plan) {
   if (isLotteryPlan(plan)) return '抽奖套餐'
+  if (isBalancePlan(plan)) return '余额套餐'
   if (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') return '公共套餐'
   return plan.QuotaPeriod === 'daily' ? '日限额度' : '周限额度'
 }
 
 function totalUsd(plan) {
+  if (isBalancePlan(plan)) return usdDisplay(plan.SettlementUSDCents || 0)
   if (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') return usdDisplay(plan.SettlementUSDCents || 0)
   const units = plan.QuotaPeriod === 'daily' ? (plan.DurationDays || 1) : Math.max(1, Math.round((plan.DurationDays || 30) / 7))
   return usdDisplay(Number(plan.SettlementUSDCents || 0) * units)
@@ -607,6 +621,7 @@ function totalUsd(plan) {
 
 function planPeriod(plan) {
   if (isLotteryPlan(plan)) return '活动'
+  if (isBalancePlan(plan)) return '次'
   if (plan.QuotaPeriod === 'public' || plan.PlanType === 'public') return '次'
   if ((plan.DurationDays || 0) <= 1) return '天'
   if ((plan.DurationDays || 0) >= 28) return '月'
@@ -634,6 +649,10 @@ function lotteryWinnerText(plan) {
 
 function isPublicPlan(plan) {
   return plan?.QuotaPeriod === 'public' || plan?.PlanType === 'public' || plan?.quota_period === 'public' || plan?.plan_type === 'public'
+}
+
+function isBalancePlan(plan) {
+  return plan?.QuotaPeriod === 'balance' || plan?.PlanType === 'balance' || plan?.quota_period === 'balance' || plan?.plan_type === 'balance'
 }
 
 function isFreePlan(plan) {
@@ -716,6 +735,7 @@ function activePublicPlanQuotaUsedUp() {
 }
 
 function planSubscriptionAction(plan) {
+  if (isBalancePlan(plan)) return 'purchase'
   if (!auth.loggedIn || !hasActiveUserPlan()) return 'purchase'
   if (isFreePlan(plan)) return 'blocked'
   if (isCurrentPlanFree()) return 'purchase'
@@ -760,7 +780,7 @@ function openPlanAction(plan) {
     openUpgradeModal(plan)
     return
   }
-  if (!isFreePlan(plan) && isCurrentPlanFree()) {
+  if (!isFreePlan(plan) && !isBalancePlan(plan) && isCurrentPlanFree()) {
     openFreeOverrideModal(plan)
     return
   }
@@ -1149,10 +1169,11 @@ function planSubtitle(index) {
               <span>/{{ planPeriod(plan) }}</span>
             </div>
             <div class="subscription-facts">
-              <div><span class="fact-icon">▣</span><span>{{ quotaPeriodLabel(plan) }}：${{ plan.QuotaPeriod === 'public' ? totalUsd(plan) : periodUsd(plan) }}</span></div>
+              <div><span class="fact-icon">▣</span><span>{{ isBalancePlan(plan) ? '到账余额' : quotaPeriodLabel(plan) }}：${{ (plan.QuotaPeriod === 'public' || isBalancePlan(plan)) ? totalUsd(plan) : periodUsd(plan) }}</span></div>
               <div v-if="plan.QuotaPeriod === 'public' && !isLotteryPlan(plan)"><span class="fact-icon">□</span><span>公共渠道剩余：${{ publicRemainingUsd(plan) }}</span></div>
+              <div v-else-if="isBalancePlan(plan)"><span class="fact-icon">□</span><span>审核通过后到账</span></div>
               <div v-else><span class="fact-icon">□</span><span>套餐时长：{{ plan.DurationDays }} 天</span></div>
-              <div><span class="fact-icon">↗</span><span>总额度：约${{ totalUsd(plan) }}</span></div>
+              <div><span class="fact-icon">↗</span><span>{{ isBalancePlan(plan) ? '余额额度' : '总额度' }}：约${{ totalUsd(plan) }}</span></div>
             </div>
             <div class="plan-protocol-tags">
               <span v-for="tag in planProtocolTags(plan)" :key="tag">{{ tag }}</span>
@@ -1308,8 +1329,8 @@ function planSubtitle(index) {
               </div>
               <dl>
                 <div><dt>价格</dt><dd>{{ orderDisplayPrice(orderModal.plan) }}</dd></div>
-                <div><dt>额度</dt><dd>${{ orderModal.plan.QuotaPeriod === 'public' ? totalUsd(orderModal.plan) : periodUsd(orderModal.plan) }}</dd></div>
-                <div v-if="orderModal.plan.QuotaPeriod !== 'public'"><dt>有效期</dt><dd>{{ orderModal.plan.DurationDays }} 天</dd></div>
+                <div><dt>额度</dt><dd>${{ (orderModal.plan.QuotaPeriod === 'public' || isBalancePlan(orderModal.plan)) ? totalUsd(orderModal.plan) : periodUsd(orderModal.plan) }}</dd></div>
+                <div v-if="orderModal.plan.QuotaPeriod !== 'public' && !isBalancePlan(orderModal.plan)"><dt>有效期</dt><dd>{{ orderModal.plan.DurationDays }} 天</dd></div>
               </dl>
             </section>
 
