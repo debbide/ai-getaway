@@ -100,6 +100,21 @@ func ensureBalanceColumns(db *gorm.DB) {
 			log.Printf("add balance_usd_cents column failed: %v", err)
 		}
 	}
+	if db.Migrator().HasTable(&model.User{}) && !db.Migrator().HasColumn(&model.User{}, "balance_billing_group_id") {
+		if err := db.Exec("ALTER TABLE `users` ADD COLUMN `balance_billing_group_id` BIGINT UNSIGNED DEFAULT NULL").Error; err != nil {
+			log.Printf("add balance_billing_group_id column failed: %v", err)
+		}
+	}
+	if db.Migrator().HasTable(&model.BillingGroup{}) && !db.Migrator().HasColumn(&model.BillingGroup{}, "public_selectable") {
+		if err := db.Exec("ALTER TABLE `billing_groups` ADD COLUMN `public_selectable` BOOLEAN DEFAULT FALSE").Error; err != nil {
+			log.Printf("add billing group public_selectable column failed: %v", err)
+		}
+	}
+	if db.Migrator().HasTable(&model.BillingGroup{}) && !db.Migrator().HasColumn(&model.BillingGroup{}, "is_default") {
+		if err := db.Exec("ALTER TABLE `billing_groups` ADD COLUMN `is_default` BOOLEAN DEFAULT FALSE").Error; err != nil {
+			log.Printf("add billing group is_default column failed: %v", err)
+		}
+	}
 }
 
 func ensureOrderPlanIDNullable(db *gorm.DB) {

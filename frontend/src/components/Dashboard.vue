@@ -16,6 +16,7 @@ const auth = useAuthStore()
 const orders = ref([])
 const keys = ref([])
 const announcements = ref([])
+const balanceBillingGroups = ref([])
 const announcementExpanded = ref(localStorage.getItem('announcementExpanded') !== 'false')
 const historyModalOpen = ref(false)
 const orderHistoryOpen = ref(false)
@@ -33,6 +34,7 @@ const loading = reactive({ announcements: false, keys: false, orders: false, pla
 const endpointSpeedStates = reactive({})
 const redeemForm = reactive({ code: '' })
 const balanceForm = reactive({ amountUsd: 100, paymentMethod: 'online', rateRmbPerUsd: 0.7 })
+const balanceBillingGroupForm = reactive({ billingGroupId: '' })
 const redeeming = ref(false)
 const orderPage = ref(1)
 const nowMs = ref(Date.now())
@@ -63,6 +65,14 @@ const currentBalanceUSDCents = computed(() => Number(auth.user?.balance_usd_cent
 const balanceRechargeUSDCents = computed(() => Math.max(0, Math.round(Number(balanceForm.amountUsd || 0) * 100)))
 const balanceRechargeRMBCents = computed(() => Math.max(0, Math.round(balanceRechargeUSDCents.value * Number(balanceForm.rateRmbPerUsd || 0.7))))
 const balanceRechargePackageOnly = ref(false)
+const selectedBalanceBillingGroup = computed(() => {
+  const id = Number(auth.user?.balance_billing_group_id || 0)
+  return balanceBillingGroups.value.find((group) => Number(group.id) === id) || null
+})
+const balanceBillingGroupLabel = computed(() => {
+  const group = selectedBalanceBillingGroup.value
+  return group ? `${group.name} · ${Number(group.multiplier || 1).toFixed(2)}x` : '默认分组'
+})
 
 const planPeriodStartIso = computed(() => {
   const u = auth.user
@@ -137,10 +147,11 @@ async function loadAll() {
   loading.plan = true
   error.value = ''
   try {
-    const [orderRes, keyRes, announcementRes, settingsRes] = await Promise.all([api.get('/orders'), api.get('/keys'), api.get('/announcements'), api.get('/settings/public')])
+    const [orderRes, keyRes, announcementRes, settingsRes, balanceGroupsRes] = await Promise.all([api.get('/orders'), api.get('/keys'), api.get('/announcements'), api.get('/settings/public'), api.get('/balance/billing-groups')])
     orders.value = orderRes.data || []
     keys.value = keyRes.data || []
     announcements.value = announcementRes.data || []
+    balanceBillingGroups.value = balanceGroupsRes.data?.items || []
     balanceForm.rateRmbPerUsd = Number(settingsRes.data?.balance_recharge_rate_rmb_per_usd || 0.7)
     balanceRechargePackageOnly.value = settingsRes.data?.balance_recharge_package_only === true
     if (orderPage.value > totalOrderPages.value) orderPage.value = totalOrderPages.value
@@ -483,7 +494,8 @@ function submitModal() {
     'manual-pay-order': submitManualPayment,
     'create-key': createKey,
     'rotate-key': rotateKey,
-    'disable-key': disableKey
+    'disable-key': disableKey,
+    'balance-billing-group': saveBalanceBillingGroup
   }
   actions[modal.type]?.()
 }
@@ -520,6 +532,20 @@ function renewPlan() {
 function openBalancePackages() {
   sessionStorage.setItem('preferredPricingTab', 'balance')
   emit('navigate', '/plans')
+}
+
+function openBalanceBillingGroupModal() {
+  balanceBillingGroupForm.billingGroupId = auth.user?.balance_billing_group_id ? String(auth.user.balance_billing_group_id) : ''
+  showModal('balance-billing-group', '选择余额分组', '保存分组')
+}
+
+async function saveBalanceBillingGroup() {
+  await runAction(async () => {
+    await api.put('/balance/billing-group', {
+      billing_group_id: balanceBillingGroupForm.billingGroupId ? Number(balanceBillingGroupForm.billingGroupId) : null
+    })
+    showNotice('余额分组已保存', 'success')
+  })
 }
 
 function openOrderHistory() {
@@ -970,7 +996,14 @@ function statusLabel(value) {
             <div class="balance-card-body">
               <div class="balance-amount-row">
                 <span>当前余额</span>
-                <strong>{{ usd(currentBalanceUSDCents) }}</strong>
+                <div class="balance-amount-actions">
+                  <strong>{{ usd(currentBalanceUSDCents) }}</strong>
+                  <button type="button" class="ghost-button small" @click="openBalanceBillingGroupModal">选择分组</button>
+                </div>
+              </div>
+              <div class="balance-group-row">
+                <span>余额扣费分组</span>
+                <strong>{{ balanceBillingGroupLabel }}</strong>
               </div>
               <div v-if="balanceRechargePackageOnly" class="balance-package-only">
                 <p class="text-muted">当前仅开放余额套餐充值，购买后等待审核通过即可到账。</p>
@@ -1236,6 +1269,19 @@ function statusLabel(value) {
         <div v-if="modal.type === 'disable-key'" class="modal-body confirm-copy">
           <strong>确定禁用「{{ modal.payload?.key?.name }}」吗？</strong>
           <p>禁用后该 Key 将不能继续调用网关接口。</p>
+        </div>
+
+        <div v-if="modal.type === 'balance-billing-group'" class="modal-body">
+          <el-form-item label="余额扣费分组">
+            <el-select v-model="balanceBillingGroupForm.billingGroupId" clearable placeholder="默认分组">
+              <el-option label="默认分组" value="" />
+              <el-option v-for="group in balanceBillingGroups" :key="group.id" :label="`${group.name}（${Number(group.multiplier || 1).toFixed(2)}x）`" :value="String(group.id)" />
+            </el-select>
+          </el-form-item>
+          <div class="order-flow-note">
+            <strong>仅影响余额扣费</strong>
+            <span>使用订阅套餐或公共渠道时仍按对应套餐/渠道分组计费。</span>
+          </div>
         </div>
 
       </el-form>

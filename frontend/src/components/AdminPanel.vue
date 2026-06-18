@@ -1014,6 +1014,8 @@ function emptyBillingGroup() {
     id: null,
     name: '',
     multiplier: 1,
+    public_selectable: false,
+    is_default: false,
     enabled: true
   }
 }
@@ -1329,6 +1331,8 @@ function openBillingGroupModal(group = null) {
       id: group.ID,
       name: group.Name || '',
       multiplier: Number(group.Multiplier || 1),
+      public_selectable: group.PublicSelectable === true,
+      is_default: group.IsDefault === true,
       enabled: group.Enabled !== false
     })
   }
@@ -1339,6 +1343,8 @@ async function submitBillingGroup() {
   const payload = {
     name: billingGroupForm.name.trim(),
     multiplier: Number(billingGroupForm.multiplier || 1),
+    public_selectable: Boolean(billingGroupForm.public_selectable),
+    is_default: Boolean(billingGroupForm.is_default),
     enabled: Boolean(billingGroupForm.enabled)
   }
   await runAction(async () => {
@@ -3991,6 +3997,8 @@ function submitModal() {
               <el-table :data="billingGroups" border>
                 <el-table-column label="分组名称" min-width="220" prop="Name" />
                 <el-table-column label="倍率" width="140"><template #default="{ row }">{{ Number(row.Multiplier || 1).toFixed(2) }}x</template></el-table-column>
+                <el-table-column label="默认" width="100"><template #default="{ row }"><el-tag :type="row.IsDefault ? 'success' : 'info'">{{ row.IsDefault ? '默认' : '否' }}</el-tag></template></el-table-column>
+                <el-table-column label="前台展示" width="120"><template #default="{ row }"><el-tag :type="row.PublicSelectable ? 'success' : 'info'">{{ row.PublicSelectable ? '展示' : '隐藏' }}</el-tag></template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.Enabled ? 'success' : 'info'">{{ row.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="112" :fixed="isMobileLayout ? false : 'right'"><template #default="{ row }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" @click="openBillingGroupModal(row)" /><el-button type="danger" size="small" :icon="Delete" @click="confirmDeleteBillingGroup(row)" /></div></template></el-table-column>
               </el-table>
@@ -5060,7 +5068,9 @@ function submitModal() {
         <div v-if="modal.type === 'create-billing-group' || modal.type === 'edit-billing-group'" class="modal-body form-grid">
           <el-form-item label="分组名称" required><el-input v-model="billingGroupForm.name" placeholder="例如：官方渠道 / 代理渠道 / 专属渠道" /></el-form-item>
           <el-form-item label="倍率" required><el-input v-model.number="billingGroupForm.multiplier" type="number" min="0.0001" step="0.01" /></el-form-item>
-          <el-form-item class="md:col-span-2" label="启用分组"><el-switch v-model="billingGroupForm.enabled" /></el-form-item>
+          <el-form-item label="默认分组"><el-switch v-model="billingGroupForm.is_default" active-text="余额默认扣费分组" /></el-form-item>
+          <el-form-item label="前台展示"><el-switch v-model="billingGroupForm.public_selectable" active-text="允许用户选择" /></el-form-item>
+          <el-form-item label="启用分组"><el-switch v-model="billingGroupForm.enabled" /></el-form-item>
         </div>
 
         <div v-if="modal.type === 'create-channel-monitor' || modal.type === 'edit-channel-monitor'" class="modal-body form-grid">

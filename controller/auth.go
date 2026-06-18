@@ -56,6 +56,10 @@ type changePasswordRequest struct {
 	ConfirmPassword string `json:"confirm_password" binding:"required"`
 }
 
+type updateBalanceBillingGroupRequest struct {
+	BillingGroupID *uint `json:"billing_group_id"`
+}
+
 func (a *AuthController) SendEmailCode(c *gin.Context) {
 	if err := ensureSystemSettingColumns(a.db); err != nil {
 		response.Error(c, 500, "failed to load settings")
@@ -286,16 +290,57 @@ func (a *AuthController) ChangePassword(c *gin.Context) {
 	response.OK(c, nil)
 }
 
+func (a *AuthController) BalanceBillingGroups(c *gin.Context) {
+	var groups []model.BillingGroup
+	if err := a.db.Where("enabled = ? AND public_selectable = ?", true, true).Order("name asc").Find(&groups).Error; err != nil {
+		response.Error(c, 500, "failed to list billing groups")
+		return
+	}
+	items := make([]gin.H, 0, len(groups))
+	for _, group := range groups {
+		items = append(items, gin.H{
+			"id":         group.ID,
+			"name":       group.Name,
+			"multiplier": group.Multiplier,
+		})
+	}
+	response.OK(c, gin.H{"items": items})
+}
+
+func (a *AuthController) UpdateBalanceBillingGroup(c *gin.Context) {
+	user := c.MustGet("user").(model.User)
+	var req updateBalanceBillingGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	updates := map[string]interface{}{"balance_billing_group_id": nil}
+	if req.BillingGroupID != nil && *req.BillingGroupID > 0 {
+		var group model.BillingGroup
+		if err := a.db.Where("id = ? AND enabled = ? AND public_selectable = ?", *req.BillingGroupID, true, true).First(&group).Error; err != nil {
+			response.Error(c, 404, "billing group not found")
+			return
+		}
+		updates["balance_billing_group_id"] = group.ID
+	}
+	if err := a.db.Model(&model.User{}).Where("id = ?", user.ID).Updates(updates).Error; err != nil {
+		response.Error(c, 500, "failed to update billing group")
+		return
+	}
+	response.OK(c, nil)
+}
+
 func publicUser(user model.User) gin.H {
 	body := gin.H{
-		"id":                user.ID,
-		"username":          user.Username,
-		"email":             user.Email,
-		"role":              user.Role,
-		"status":            user.Status,
-		"balance_usd_cents": user.BalanceUSDCents,
-		"expires_at":        user.ExpiresAt,
-		"email_verified":    user.EmailVerified,
+		"id":                       user.ID,
+		"username":                 user.Username,
+		"email":                    user.Email,
+		"role":                     user.Role,
+		"status":                   user.Status,
+		"balance_usd_cents":        user.BalanceUSDCents,
+		"balance_billing_group_id": user.BalanceBillingGroupID,
+		"expires_at":               user.ExpiresAt,
+		"email_verified":           user.EmailVerified,
 	}
 	if service.HasActiveSubscription(user, time.Now()) && user.Plan != nil {
 		body["plan"] = gin.H{

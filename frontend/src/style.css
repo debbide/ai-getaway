@@ -10275,6 +10275,7 @@ html[data-theme="dark"] .api-online-widget {
 }
 
 .balance-amount-row,
+.balance-group-row,
 .balance-pay-preview {
   display: flex;
   align-items: center;
@@ -10283,8 +10284,27 @@ html[data-theme="dark"] .api-online-widget {
 }
 
 .balance-amount-row strong,
+.balance-group-row strong,
 .balance-pay-preview strong {
   font-size: 1.25rem;
+}
+
+.balance-amount-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.balance-group-row {
+  color: var(--muted);
+}
+
+.balance-group-row strong {
+  color: var(--text);
+  font-size: 0.95rem;
+  text-align: right;
 }
 
 .balance-pay-preview {

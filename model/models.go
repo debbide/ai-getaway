@@ -91,6 +91,8 @@ type User struct {
 	PublicChannel         *PublicChannel
 	PublicChannelPeriod   string `gorm:"size:16;default:'';index"`
 	BalanceUSDCents       int64  `gorm:"default:0;index"`
+	BalanceBillingGroupID *uint  `gorm:"index"`
+	BalanceBillingGroup   *BillingGroup
 	ExpiresAt             *time.Time
 	SubscriptionStartedAt *time.Time
 	QuotaResetAt          *time.Time
@@ -200,9 +202,11 @@ type UpstreamAccount struct {
 
 type BillingGroup struct {
 	gorm.Model
-	Name       string  `gorm:"size:64;uniqueIndex;not null"`
-	Multiplier float64 `gorm:"default:1"`
-	Enabled    bool    `gorm:"default:true;index"`
+	Name             string  `gorm:"size:64;uniqueIndex;not null"`
+	Multiplier       float64 `gorm:"default:1"`
+	PublicSelectable bool    `gorm:"default:false;index"`
+	IsDefault        bool    `gorm:"default:false;index"`
+	Enabled          bool    `gorm:"default:true;index"`
 }
 
 type UpstreamChannel struct {

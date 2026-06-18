@@ -225,9 +225,11 @@ type pollingPoolAccountRequest struct {
 }
 
 type billingGroupRequest struct {
-	Name       string  `json:"name" binding:"required,min=2,max=64"`
-	Multiplier float64 `json:"multiplier" binding:"required,min=0.0001"`
-	Enabled    bool    `json:"enabled"`
+	Name             string  `json:"name" binding:"required,min=2,max=64"`
+	Multiplier       float64 `json:"multiplier" binding:"required,min=0.0001"`
+	PublicSelectable bool    `json:"public_selectable"`
+	IsDefault        bool    `json:"is_default"`
+	Enabled          bool    `json:"enabled"`
 }
 
 type openAIOAuthExchangeRequest struct {
@@ -361,12 +363,14 @@ type adminPollingPoolAccountResponse struct {
 }
 
 type adminBillingGroupResponse struct {
-	ID         uint      `json:"ID"`
-	Name       string    `json:"Name"`
-	Multiplier float64   `json:"Multiplier"`
-	Enabled    bool      `json:"Enabled"`
-	CreatedAt  time.Time `json:"CreatedAt"`
-	UpdatedAt  time.Time `json:"UpdatedAt"`
+	ID               uint      `json:"ID"`
+	Name             string    `json:"Name"`
+	Multiplier       float64   `json:"Multiplier"`
+	PublicSelectable bool      `json:"PublicSelectable"`
+	IsDefault        bool      `json:"IsDefault"`
+	Enabled          bool      `json:"Enabled"`
+	CreatedAt        time.Time `json:"CreatedAt"`
+	UpdatedAt        time.Time `json:"UpdatedAt"`
 }
 
 type adminChannelMonitorResponse struct {
@@ -2449,17 +2453,10 @@ func (a *AdminController) ModelPricings(c *gin.Context) {
 
 func (a *AdminController) BillingGroups(c *gin.Context) {
 	var groups []model.BillingGroup
-	a.db.Order("enabled desc, name asc").Find(&groups)
+	a.db.Order("is_default desc, enabled desc, name asc").Find(&groups)
 	items := make([]adminBillingGroupResponse, 0, len(groups))
 	for _, group := range groups {
-		items = append(items, adminBillingGroupResponse{
-			ID:         group.ID,
-			Name:       group.Name,
-			Multiplier: group.Multiplier,
-			Enabled:    group.Enabled,
-			CreatedAt:  group.CreatedAt,
-			UpdatedAt:  group.UpdatedAt,
-		})
+		items = append(items, billingGroupResponse(group))
 	}
 	response.OK(c, gin.H{"items": items})
 }
@@ -2471,22 +2468,24 @@ func (a *AdminController) CreateBillingGroup(c *gin.Context) {
 		return
 	}
 	group := model.BillingGroup{
-		Name:       strings.TrimSpace(req.Name),
-		Multiplier: fallbackMultiplier(req.Multiplier),
-		Enabled:    req.Enabled,
+		Name:             strings.TrimSpace(req.Name),
+		Multiplier:       fallbackMultiplier(req.Multiplier),
+		PublicSelectable: req.PublicSelectable,
+		IsDefault:        req.IsDefault,
+		Enabled:          req.Enabled,
 	}
-	if err := a.db.Create(&group).Error; err != nil {
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if group.IsDefault {
+			if err := tx.Model(&model.BillingGroup{}).Where("is_default = ?", true).Update("is_default", false).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&group).Error
+	}); err != nil {
 		response.Error(c, 500, "failed to create billing group")
 		return
 	}
-	response.Created(c, adminBillingGroupResponse{
-		ID:         group.ID,
-		Name:       group.Name,
-		Multiplier: group.Multiplier,
-		Enabled:    group.Enabled,
-		CreatedAt:  group.CreatedAt,
-		UpdatedAt:  group.UpdatedAt,
-	})
+	response.Created(c, billingGroupResponse(group))
 }
 
 func (a *AdminController) UpdateBillingGroup(c *gin.Context) {
@@ -2496,15 +2495,37 @@ func (a *AdminController) UpdateBillingGroup(c *gin.Context) {
 		return
 	}
 	updates := map[string]interface{}{
-		"name":       strings.TrimSpace(req.Name),
-		"multiplier": fallbackMultiplier(req.Multiplier),
-		"enabled":    req.Enabled,
+		"name":              strings.TrimSpace(req.Name),
+		"multiplier":        fallbackMultiplier(req.Multiplier),
+		"public_selectable": req.PublicSelectable,
+		"is_default":        req.IsDefault,
+		"enabled":           req.Enabled,
 	}
-	if err := a.db.Model(&model.BillingGroup{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if req.IsDefault {
+			if err := tx.Model(&model.BillingGroup{}).Where("id <> ? AND is_default = ?", c.Param("id"), true).Update("is_default", false).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Model(&model.BillingGroup{}).Where("id = ?", c.Param("id")).Updates(updates).Error
+	}); err != nil {
 		response.Error(c, 500, "failed to update billing group")
 		return
 	}
 	response.OK(c, nil)
+}
+
+func billingGroupResponse(group model.BillingGroup) adminBillingGroupResponse {
+	return adminBillingGroupResponse{
+		ID:               group.ID,
+		Name:             group.Name,
+		Multiplier:       group.Multiplier,
+		PublicSelectable: group.PublicSelectable,
+		IsDefault:        group.IsDefault,
+		Enabled:          group.Enabled,
+		CreatedAt:        group.CreatedAt,
+		UpdatedAt:        group.UpdatedAt,
+	}
 }
 
 func (a *AdminController) DeleteBillingGroup(c *gin.Context) {

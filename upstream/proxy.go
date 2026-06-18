@@ -228,7 +228,26 @@ func selectProxyUpstream(db *gorm.DB, apiKey model.APIKey, accessSource string, 
 		upstream.GroupMultipliers = loadUpstreamGroupMultipliers(db, upstream)
 	}
 	db.Model(&upstream).Updates(map[string]interface{}{"last_used_at": &now})
-	return upstream.BaseURL, upstream.APIKey, service.BillingContext{GroupID: upstream.BillingGroupID, LegacyMultipliers: upstream.GroupMultipliers}, nil
+	groupID := upstream.BillingGroupID
+	if proxyAccessSource(accessSource) == model.AccessSourceBalance {
+		if apiKey.User.BalanceBillingGroupID != nil {
+			groupID = apiKey.User.BalanceBillingGroupID
+		} else if defaultGroupID := loadDefaultBalanceBillingGroupID(db); defaultGroupID != nil {
+			groupID = defaultGroupID
+		}
+	}
+	return upstream.BaseURL, upstream.APIKey, service.BillingContext{GroupID: groupID, LegacyMultipliers: upstream.GroupMultipliers}, nil
+}
+
+func loadDefaultBalanceBillingGroupID(db *gorm.DB) *uint {
+	if db == nil {
+		return nil
+	}
+	var group model.BillingGroup
+	if err := db.Select("id").Where("is_default = ? AND enabled = ?", true, true).Order("id asc").First(&group).Error; err != nil {
+		return nil
+	}
+	return &group.ID
 }
 
 func loadUserUpstreamForAccess(db *gorm.DB, userID uint, accessType string) (model.UpstreamAccount, error) {
