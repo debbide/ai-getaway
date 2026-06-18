@@ -292,13 +292,13 @@ func (a *AuthController) ChangePassword(c *gin.Context) {
 
 func (a *AuthController) BalanceBillingGroups(c *gin.Context) {
 	var groups []model.BillingGroup
-	if err := a.db.Where("enabled = ? AND public_selectable = ?", true, true).Order("name asc").Find(&groups).Error; err != nil {
+	if err := a.db.Where("enabled = ? AND public_selectable = ? AND balance_channel_id IS NOT NULL AND balance_api_key <> ?", true, true, "").Order("name asc").Find(&groups).Error; err != nil {
 		response.Error(c, 500, "failed to list billing groups")
 		return
 	}
 	var defaultGroup *gin.H
 	var group model.BillingGroup
-	if err := a.db.Where("enabled = ? AND is_default = ?", true, true).Order("id asc").First(&group).Error; err == nil {
+	if err := a.db.Where("enabled = ? AND is_default = ? AND balance_channel_id IS NOT NULL AND balance_api_key <> ?", true, true, "").Order("id asc").First(&group).Error; err == nil {
 		defaultGroup = &gin.H{
 			"id":         group.ID,
 			"name":       group.Name,

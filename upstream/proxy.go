@@ -214,6 +214,15 @@ func selectProxyUpstream(db *gorm.DB, apiKey model.APIKey, accessSource string, 
 		}
 	}
 
+	if proxyAccessSource(accessSource) == model.AccessSourceBalance {
+		groupID := resolveBalanceBillingGroupID(db, apiKey.User.BalanceBillingGroupID)
+		if groupID != nil {
+			if groupUpstream, ok := loadBalanceBillingGroupUpstream(db, *groupID, protocol); ok {
+				return groupUpstream.BaseURL, groupUpstream.APIKey, service.BillingContext{GroupID: groupID, LegacyMultipliers: groupUpstream.GroupMultipliers}, nil
+			}
+		}
+	}
+
 	upstream, err := loadUserUpstreamForAccess(db, apiKey.UserID, accessSource)
 	if err != nil && accessSource == model.AccessSourcePlan {
 		upstream, err = loadUserUpstreamForAccess(db, apiKey.UserID, model.AccessSourceBalance)
@@ -237,6 +246,37 @@ func selectProxyUpstream(db *gorm.DB, apiKey model.APIKey, accessSource string, 
 		}
 	}
 	return upstream.BaseURL, upstream.APIKey, service.BillingContext{GroupID: groupID, LegacyMultipliers: upstream.GroupMultipliers}, nil
+}
+
+func resolveBalanceBillingGroupID(db *gorm.DB, userGroupID *uint) *uint {
+	if userGroupID != nil {
+		return userGroupID
+	}
+	return loadDefaultBalanceBillingGroupID(db)
+}
+
+type balanceBillingGroupUpstream struct {
+	BaseURL          string
+	APIKey           string
+	GroupMultipliers string
+}
+
+func loadBalanceBillingGroupUpstream(db *gorm.DB, groupID uint, protocol string) (balanceBillingGroupUpstream, bool) {
+	var group model.BillingGroup
+	if err := db.Preload("BalanceChannel").Where("id = ? AND enabled = ?", groupID, true).First(&group).Error; err != nil {
+		return balanceBillingGroupUpstream{}, false
+	}
+	if group.BalanceChannel == nil || strings.TrimSpace(group.BalanceAPIKey) == "" || !group.BalanceChannel.Enabled {
+		return balanceBillingGroupUpstream{}, false
+	}
+	if !service.SupportsProtocol(group.BalanceChannel.SupportsGPT, group.BalanceChannel.SupportsClaude, protocol) {
+		return balanceBillingGroupUpstream{}, false
+	}
+	return balanceBillingGroupUpstream{
+		BaseURL:          group.BalanceChannel.BaseURL,
+		APIKey:           strings.TrimSpace(group.BalanceAPIKey),
+		GroupMultipliers: group.BalanceChannel.GroupMultipliers,
+	}, true
 }
 
 func loadDefaultBalanceBillingGroupID(db *gorm.DB) *uint {

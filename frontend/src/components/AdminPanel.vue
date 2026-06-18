@@ -815,8 +815,12 @@ async function loadModelsData() {
 }
 
 async function loadBillingGroupsData() {
-  const res = await api.get('/admin/billing-groups')
+  const [res, channelsRes] = await Promise.all([
+    api.get('/admin/billing-groups'),
+    api.get('/admin/upstream-channels', upstreamChannelFilterParams())
+  ])
   billingGroups.value = res.data?.items || []
+  applyListData('upstreamChannels', channels, channelsRes.data || { items: [] })
 }
 
 async function loadChannelsData() {
@@ -1016,6 +1020,8 @@ function emptyBillingGroup() {
     multiplier: 1,
     public_selectable: false,
     is_default: false,
+    balance_channel_id: '',
+    balance_api_key: '',
     enabled: true
   }
 }
@@ -1333,6 +1339,8 @@ function openBillingGroupModal(group = null) {
       multiplier: Number(group.Multiplier || 1),
       public_selectable: group.PublicSelectable === true,
       is_default: group.IsDefault === true,
+      balance_channel_id: group.BalanceChannelID || '',
+      balance_api_key: group.BalanceAPIKey || '',
       enabled: group.Enabled !== false
     })
   }
@@ -1345,6 +1353,8 @@ async function submitBillingGroup() {
     multiplier: Number(billingGroupForm.multiplier || 1),
     public_selectable: Boolean(billingGroupForm.public_selectable),
     is_default: Boolean(billingGroupForm.is_default),
+    balance_channel_id: billingGroupForm.balance_channel_id ? Number(billingGroupForm.balance_channel_id) : null,
+    balance_api_key: String(billingGroupForm.balance_api_key || ''),
     enabled: Boolean(billingGroupForm.enabled)
   }
   await runAction(async () => {
@@ -2009,16 +2019,19 @@ async function approveOrder() {
     })
     return
   }
-  await runAction(async () => {
-    await api.post(`/admin/orders/${approve.orderId}/approve`, {
+  const payload = { admin_note: approve.adminNote }
+  if (approve.planType !== 'balance') {
+    Object.assign(payload, {
       channel_id: Number(approve.channelId) || undefined,
       channel: approve.channel,
       base_url: approve.baseUrl,
       username: approve.username,
       password: approve.password,
-      api_key: approve.apiKey,
-      admin_note: approve.adminNote
+      api_key: approve.apiKey
     })
+  }
+  await runAction(async () => {
+    await api.post(`/admin/orders/${approve.orderId}/approve`, payload)
     notice.value = '订单已审核通过'
   })
 }
@@ -3701,7 +3714,7 @@ function submitModal() {
                     <div class="plan-quota-cell">
                       <span>{{ isBalancePlan(plan) ? '到账余额' : `${quotaPeriodLabel(plan.QuotaPeriod)}美元额度` }}</span>
                       <strong>{{ usd(plan.SettlementUSDCents) }}</strong>
-                      <small>{{ isBalancePlan(plan) ? '需审核绑定余额上游' : `预计总额 ${totalUsd(plan)}` }}</small>
+                      <small>{{ isBalancePlan(plan) ? '需审核到账' : `预计总额 ${totalUsd(plan)}` }}</small>
                       <small v-if="plan.PriceCents === 0">已领取 {{ plan.FreeClaimedCount || 0 }} / {{ plan.FreeTotalLimit || '不限' }}</small>
                     </div>
                   </template>
@@ -3998,6 +4011,7 @@ function submitModal() {
                 <el-table-column label="分组名称" min-width="220" prop="Name" />
                 <el-table-column label="倍率" width="140"><template #default="{ row }">{{ Number(row.Multiplier || 1).toFixed(2) }}x</template></el-table-column>
                 <el-table-column label="默认" width="100"><template #default="{ row }"><el-tag :type="row.IsDefault ? 'success' : 'info'">{{ row.IsDefault ? '默认' : '否' }}</el-tag></template></el-table-column>
+                <el-table-column label="余额上游" min-width="180"><template #default="{ row }">{{ row.BalanceChannel || '-' }}</template></el-table-column>
                 <el-table-column label="前台展示" width="120"><template #default="{ row }"><el-tag :type="row.PublicSelectable ? 'success' : 'info'">{{ row.PublicSelectable ? '展示' : '隐藏' }}</el-tag></template></el-table-column>
                 <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.Enabled ? 'success' : 'info'">{{ row.Enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column>
                 <el-table-column label="操作" width="112" :fixed="isMobileLayout ? false : 'right'"><template #default="{ row }"><div class="table-actions admin-table-actions"><el-button size="small" :icon="Edit" @click="openBillingGroupModal(row)" /><el-button type="danger" size="small" :icon="Delete" @click="confirmDeleteBillingGroup(row)" /></div></template></el-table-column>
@@ -5068,6 +5082,13 @@ function submitModal() {
         <div v-if="modal.type === 'create-billing-group' || modal.type === 'edit-billing-group'" class="modal-body form-grid">
           <el-form-item label="分组名称" required><el-input v-model="billingGroupForm.name" placeholder="例如：官方渠道 / 代理渠道 / 专属渠道" /></el-form-item>
           <el-form-item label="倍率" required><el-input v-model.number="billingGroupForm.multiplier" type="number" min="0.0001" step="0.01" /></el-form-item>
+          <el-form-item label="余额上游渠道">
+            <el-select v-model="billingGroupForm.balance_channel_id" clearable placeholder="不绑定则回退用户余额上游">
+              <el-option value="" label="不绑定" />
+              <el-option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID" :label="channel.Name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="余额上游 API Key"><el-input v-model="billingGroupForm.balance_api_key" type="text" placeholder="该分组余额扣费使用的上游 API Key" /></el-form-item>
           <el-form-item label="默认分组"><el-switch v-model="billingGroupForm.is_default" active-text="余额默认扣费分组" /></el-form-item>
           <el-form-item label="前台展示"><el-switch v-model="billingGroupForm.public_selectable" active-text="允许用户选择" /></el-form-item>
           <el-form-item label="启用分组"><el-switch v-model="billingGroupForm.enabled" /></el-form-item>
@@ -5420,9 +5441,9 @@ function submitModal() {
           </div>
           <div v-if="approve.planType === 'balance'" class="order-flow-note md:col-span-2">
             <strong>余额充值审核</strong>
-            <span>审核通过后会增加用户余额，并绑定余额上游渠道；余额套餐只需要填写上游 API Key。</span>
+            <span>审核通过后会增加用户余额；余额调用会按用户选择的分组使用后台绑定的上游渠道和 API Key。</span>
           </div>
-          <el-form-item v-if="!approveOrderUsesPublicChannel()" label="上游渠道">
+          <el-form-item v-if="!approveOrderUsesPublicChannel() && approve.planType !== 'balance'" label="上游渠道">
             <el-select v-model="approve.channelId" required @change="syncApproveChannel">
               <el-option value="" label="请选择渠道" />
               <el-option v-for="channel in channels.filter((item) => item.Enabled)" :key="channel.ID" :value="channel.ID" :label="channel.Name" />
@@ -5430,7 +5451,7 @@ function submitModal() {
           </el-form-item>
           <el-form-item v-if="!approveOrderUsesPublicChannel() && approve.planType !== 'balance'" label="上游账号"><el-input v-model="approve.username" required /></el-form-item>
           <el-form-item v-if="!approveOrderUsesPublicChannel() && approve.planType !== 'balance'" label="上游密码"><el-input v-model="approve.password" type="text" required /></el-form-item>
-          <el-form-item v-if="!approveOrderUsesPublicChannel()" class="md:col-span-2" label="上游 API Key"><el-input v-model="approve.apiKey" type="text" required /></el-form-item>
+          <el-form-item v-if="!approveOrderUsesPublicChannel() && approve.planType !== 'balance'" class="md:col-span-2" label="上游 API Key"><el-input v-model="approve.apiKey" type="text" required /></el-form-item>
           <el-form-item class="md:col-span-2" label="审核备注"><el-input v-model="approve.adminNote" type="textarea" :rows="3" /></el-form-item>
         </div>
 

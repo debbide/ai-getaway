@@ -115,6 +115,16 @@ func ensureBalanceColumns(db *gorm.DB) {
 			log.Printf("add billing group is_default column failed: %v", err)
 		}
 	}
+	if db.Migrator().HasTable(&model.BillingGroup{}) && !db.Migrator().HasColumn(&model.BillingGroup{}, "balance_channel_id") {
+		if err := db.Exec("ALTER TABLE `billing_groups` ADD COLUMN `balance_channel_id` BIGINT UNSIGNED DEFAULT NULL").Error; err != nil {
+			log.Printf("add billing group balance_channel_id column failed: %v", err)
+		}
+	}
+	if db.Migrator().HasTable(&model.BillingGroup{}) && !db.Migrator().HasColumn(&model.BillingGroup{}, "balance_api_key") {
+		if err := db.Exec("ALTER TABLE `billing_groups` ADD COLUMN `balance_api_key` VARCHAR(512) DEFAULT ''").Error; err != nil {
+			log.Printf("add billing group balance_api_key column failed: %v", err)
+		}
+	}
 }
 
 func ensureOrderPlanIDNullable(db *gorm.DB) {

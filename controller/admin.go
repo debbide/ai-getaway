@@ -229,6 +229,8 @@ type billingGroupRequest struct {
 	Multiplier       float64 `json:"multiplier" binding:"required,min=0.0001"`
 	PublicSelectable bool    `json:"public_selectable"`
 	IsDefault        bool    `json:"is_default"`
+	BalanceChannelID *uint   `json:"balance_channel_id"`
+	BalanceAPIKey    string  `json:"balance_api_key"`
 	Enabled          bool    `json:"enabled"`
 }
 
@@ -368,6 +370,10 @@ type adminBillingGroupResponse struct {
 	Multiplier       float64   `json:"Multiplier"`
 	PublicSelectable bool      `json:"PublicSelectable"`
 	IsDefault        bool      `json:"IsDefault"`
+	BalanceChannelID *uint     `json:"BalanceChannelID"`
+	BalanceChannel   string    `json:"BalanceChannel"`
+	BalanceBaseURL   string    `json:"BalanceBaseURL"`
+	BalanceAPIKey    string    `json:"BalanceAPIKey"`
 	Enabled          bool      `json:"Enabled"`
 	CreatedAt        time.Time `json:"CreatedAt"`
 	UpdatedAt        time.Time `json:"UpdatedAt"`
@@ -1298,21 +1304,6 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 		return
 	}
 
-	if req.ChannelID > 0 {
-		channel, err := a.loadUpstreamChannel(req.ChannelID)
-		if err != nil {
-			response.Error(c, 404, "upstream channel not found")
-			return
-		}
-		req.Channel = channel.Name
-		req.BaseURL = channel.BaseURL
-		req.ChannelID = channel.ID
-	}
-	if req.Channel == "" || req.BaseURL == "" {
-		response.Error(c, 400, "upstream channel is required")
-		return
-	}
-
 	var order model.Order
 	if err := a.db.Preload("Plan").First(&order, c.Param("id")).Error; err != nil {
 		response.Error(c, 404, "order not found")
@@ -1322,13 +1313,29 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 		response.Error(c, 409, "order already reviewed")
 		return
 	}
-	if strings.TrimSpace(req.APIKey) == "" {
-		response.Error(c, 400, "upstream api key is required")
-		return
-	}
-	if order.OrderType != model.OrderTypeBalance && (strings.TrimSpace(req.Username) == "" || strings.TrimSpace(req.Password) == "") {
-		response.Error(c, 400, "upstream account is required")
-		return
+	if order.OrderType != model.OrderTypeBalance {
+		if req.ChannelID > 0 {
+			channel, err := a.loadUpstreamChannel(req.ChannelID)
+			if err != nil {
+				response.Error(c, 404, "upstream channel not found")
+				return
+			}
+			req.Channel = channel.Name
+			req.BaseURL = channel.BaseURL
+			req.ChannelID = channel.ID
+		}
+		if req.Channel == "" || req.BaseURL == "" {
+			response.Error(c, 400, "upstream channel is required")
+			return
+		}
+		if strings.TrimSpace(req.APIKey) == "" {
+			response.Error(c, 400, "upstream api key is required")
+			return
+		}
+		if strings.TrimSpace(req.Username) == "" || strings.TrimSpace(req.Password) == "" {
+			response.Error(c, 400, "upstream account is required")
+			return
+		}
 	}
 
 	now := time.Now()
@@ -1363,13 +1370,12 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 			}
 		}
 
-		accessType := model.AccessSourcePlan
 		if order.OrderType == model.OrderTypeBalance {
-			accessType = model.AccessSourceBalance
+			return nil
 		}
 		upstream := model.UpstreamAccount{
 			UserID:         order.UserID,
-			AccessType:     accessType,
+			AccessType:     model.AccessSourcePlan,
 			ChannelID:      nil,
 			Channel:        req.Channel,
 			BaseURL:        req.BaseURL,
@@ -1389,7 +1395,7 @@ func (a *AdminController) ApproveOrder(c *gin.Context) {
 				upstream.GroupMultipliers = channel.GroupMultipliers
 			}
 		}
-		return tx.Where(model.UpstreamAccount{UserID: order.UserID, AccessType: accessType}).Assign(upstream).FirstOrCreate(&upstream).Error
+		return tx.Where(model.UpstreamAccount{UserID: order.UserID, AccessType: model.AccessSourcePlan}).Assign(upstream).FirstOrCreate(&upstream).Error
 	})
 	if err != nil {
 		response.Error(c, 500, "failed to approve order")
@@ -2453,7 +2459,7 @@ func (a *AdminController) ModelPricings(c *gin.Context) {
 
 func (a *AdminController) BillingGroups(c *gin.Context) {
 	var groups []model.BillingGroup
-	a.db.Order("is_default desc, enabled desc, name asc").Find(&groups)
+	a.db.Preload("BalanceChannel").Order("is_default desc, enabled desc, name asc").Find(&groups)
 	items := make([]adminBillingGroupResponse, 0, len(groups))
 	for _, group := range groups {
 		items = append(items, billingGroupResponse(group))
@@ -2472,6 +2478,8 @@ func (a *AdminController) CreateBillingGroup(c *gin.Context) {
 		Multiplier:       fallbackMultiplier(req.Multiplier),
 		PublicSelectable: req.PublicSelectable,
 		IsDefault:        req.IsDefault,
+		BalanceChannelID: req.BalanceChannelID,
+		BalanceAPIKey:    strings.TrimSpace(req.BalanceAPIKey),
 		Enabled:          req.Enabled,
 	}
 	if err := a.db.Transaction(func(tx *gorm.DB) error {
@@ -2495,11 +2503,13 @@ func (a *AdminController) UpdateBillingGroup(c *gin.Context) {
 		return
 	}
 	updates := map[string]interface{}{
-		"name":              strings.TrimSpace(req.Name),
-		"multiplier":        fallbackMultiplier(req.Multiplier),
-		"public_selectable": req.PublicSelectable,
-		"is_default":        req.IsDefault,
-		"enabled":           req.Enabled,
+		"name":               strings.TrimSpace(req.Name),
+		"multiplier":         fallbackMultiplier(req.Multiplier),
+		"public_selectable":  req.PublicSelectable,
+		"is_default":         req.IsDefault,
+		"balance_channel_id": req.BalanceChannelID,
+		"balance_api_key":    strings.TrimSpace(req.BalanceAPIKey),
+		"enabled":            req.Enabled,
 	}
 	if err := a.db.Transaction(func(tx *gorm.DB) error {
 		if req.IsDefault {
@@ -2516,16 +2526,23 @@ func (a *AdminController) UpdateBillingGroup(c *gin.Context) {
 }
 
 func billingGroupResponse(group model.BillingGroup) adminBillingGroupResponse {
-	return adminBillingGroupResponse{
+	body := adminBillingGroupResponse{
 		ID:               group.ID,
 		Name:             group.Name,
 		Multiplier:       group.Multiplier,
 		PublicSelectable: group.PublicSelectable,
 		IsDefault:        group.IsDefault,
+		BalanceChannelID: group.BalanceChannelID,
+		BalanceAPIKey:    group.BalanceAPIKey,
 		Enabled:          group.Enabled,
 		CreatedAt:        group.CreatedAt,
 		UpdatedAt:        group.UpdatedAt,
 	}
+	if group.BalanceChannel != nil {
+		body.BalanceChannel = group.BalanceChannel.Name
+		body.BalanceBaseURL = group.BalanceChannel.BaseURL
+	}
+	return body
 }
 
 func (a *AdminController) DeleteBillingGroup(c *gin.Context) {

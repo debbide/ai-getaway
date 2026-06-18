@@ -202,11 +202,14 @@ type UpstreamAccount struct {
 
 type BillingGroup struct {
 	gorm.Model
-	Name             string  `gorm:"size:64;uniqueIndex;not null"`
-	Multiplier       float64 `gorm:"default:1"`
-	PublicSelectable bool    `gorm:"default:false;index"`
-	IsDefault        bool    `gorm:"default:false;index"`
-	Enabled          bool    `gorm:"default:true;index"`
+	Name             string `gorm:"size:64;uniqueIndex;not null"`
+	Multiplier       float64
+	PublicSelectable bool `gorm:"default:false;index"`
+	IsDefault        bool `gorm:"default:false;index"`
+	BalanceChannelID *uint
+	BalanceChannel   *UpstreamChannel
+	BalanceAPIKey    string `gorm:"size:512" json:"-"`
+	Enabled          bool   `gorm:"default:true;index"`
 }
 
 type UpstreamChannel struct {
