@@ -17,6 +17,7 @@ const orders = ref([])
 const keys = ref([])
 const announcements = ref([])
 const balanceBillingGroups = ref([])
+const defaultBalanceBillingGroup = ref(null)
 const announcementExpanded = ref(localStorage.getItem('announcementExpanded') !== 'false')
 const historyModalOpen = ref(false)
 const orderHistoryOpen = ref(false)
@@ -71,7 +72,11 @@ const selectedBalanceBillingGroup = computed(() => {
 })
 const balanceBillingGroupLabel = computed(() => {
   const group = selectedBalanceBillingGroup.value
-  return group ? `${group.name} · ${Number(group.multiplier || 1).toFixed(2)}x` : '默认分组'
+  return group ? `${group.name} · ${Number(group.multiplier || 1).toFixed(2)}x` : defaultBalanceBillingGroupLabel.value
+})
+const defaultBalanceBillingGroupLabel = computed(() => {
+  const group = defaultBalanceBillingGroup.value
+  return group ? `默认：${group.name} · ${Number(group.multiplier || 1).toFixed(2)}x` : '默认分组'
 })
 
 const planPeriodStartIso = computed(() => {
@@ -152,6 +157,7 @@ async function loadAll() {
     keys.value = keyRes.data || []
     announcements.value = announcementRes.data || []
     balanceBillingGroups.value = balanceGroupsRes.data?.items || []
+    defaultBalanceBillingGroup.value = balanceGroupsRes.data?.default_group || null
     balanceForm.rateRmbPerUsd = Number(settingsRes.data?.balance_recharge_rate_rmb_per_usd || 0.7)
     balanceRechargePackageOnly.value = settingsRes.data?.balance_recharge_package_only === true
     if (orderPage.value > totalOrderPages.value) orderPage.value = totalOrderPages.value
@@ -1273,8 +1279,8 @@ function statusLabel(value) {
 
         <div v-if="modal.type === 'balance-billing-group'" class="modal-body">
           <el-form-item label="余额扣费分组">
-            <el-select v-model="balanceBillingGroupForm.billingGroupId" clearable placeholder="默认分组">
-              <el-option label="默认分组" value="" />
+            <el-select v-model="balanceBillingGroupForm.billingGroupId" clearable :placeholder="defaultBalanceBillingGroupLabel">
+              <el-option :label="defaultBalanceBillingGroupLabel" value="" />
               <el-option v-for="group in balanceBillingGroups" :key="group.id" :label="`${group.name}（${Number(group.multiplier || 1).toFixed(2)}x）`" :value="String(group.id)" />
             </el-select>
           </el-form-item>

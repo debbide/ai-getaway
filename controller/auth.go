@@ -296,6 +296,15 @@ func (a *AuthController) BalanceBillingGroups(c *gin.Context) {
 		response.Error(c, 500, "failed to list billing groups")
 		return
 	}
+	var defaultGroup *gin.H
+	var group model.BillingGroup
+	if err := a.db.Where("enabled = ? AND is_default = ?", true, true).Order("id asc").First(&group).Error; err == nil {
+		defaultGroup = &gin.H{
+			"id":         group.ID,
+			"name":       group.Name,
+			"multiplier": group.Multiplier,
+		}
+	}
 	items := make([]gin.H, 0, len(groups))
 	for _, group := range groups {
 		items = append(items, gin.H{
@@ -304,7 +313,7 @@ func (a *AuthController) BalanceBillingGroups(c *gin.Context) {
 			"multiplier": group.Multiplier,
 		})
 	}
-	response.OK(c, gin.H{"items": items})
+	response.OK(c, gin.H{"items": items, "default_group": defaultGroup})
 }
 
 func (a *AuthController) UpdateBalanceBillingGroup(c *gin.Context) {
