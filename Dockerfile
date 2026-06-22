@@ -22,6 +22,7 @@ RUN go mod download
 # Copy backend source
 COPY . .
 # Build the binary
+RUN go mod tidy
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o ai-getaway .
 
 # Stage 3: Final Alpine Image
