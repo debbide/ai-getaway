@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  ai-getaway:
+    # IMPORTANT: Change this to your actual github username or the repo owner's name
+    image: ghcr.io/YOUR_GITHUB_USERNAME/ai-getaway:latest
+    container_name: ai-getaway
+    restart: always
+    ports:
+      - "8080:80"
+    environment:
+      - APP_ENV=production
+      # Connecting to the mysql container via container name 'ai-getaway-mysql'
+      - DB_DSN=root:your_mysql_password@tcp(ai-getaway-mysql:3306)/ai_gateway?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai
+      - REDIS_ADDR=ai-getaway-redis:6379
+      - REDIS_PASSWORD=your_redis_password
+      - REDIS_DB=0
+      - JWT_SECRET=change_this_to_a_random_string_in_production
+      - DEFAULT_ADMIN_EMAIL=admin@example.com
+      - DEFAULT_ADMIN_PASSWORD=admin123456
+      - PUBLIC_BASE_URL=http://your_domain.com
+      - ALLOWED_ORIGINS=*
+    depends_on:
+      - ai-getaway-mysql
+      - ai-getaway-redis
+    networks:
+      - ai_network
+
+  ai-getaway-mysql:
+    image: mariadb:10.5
+    container_name: ai-getaway-mysql
+    restart: always
+    environment:
+      - MYSQL_ROOT_PASSWORD=your_mysql_password
+      - MYSQL_DATABASE=ai_gateway
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+    networks:
+      - ai_network
+
+  ai-getaway-redis:
+    image: redis:6-alpine
+    container_name: ai-getaway-redis
+    restart: always
+    command: redis-server --requirepass your_redis_password
+    volumes:
+      - ./data/redis:/data
+    networks:
+      - ai_network
+
+networks:
+  ai_network:
+    driver: bridge
